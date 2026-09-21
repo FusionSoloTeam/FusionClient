@@ -2257,6 +2257,13 @@ void CGraphics_Threaded::SetForcedAspect(bool Force)
 		ResizeListener();
 }
 
+void CGraphics_Threaded::SetFrameBlendingAllowed(bool Allowed)
+{
+	if(m_pBackend == nullptr)
+		return;
+	m_pBackend->SetFrameBlendingAllowed(Allowed);
+}
+
 void CGraphics_Threaded::AdjustViewport(bool SendViewportChangeToBackend)
 {
 	// adjust the viewport to only allow certain aspect ratios

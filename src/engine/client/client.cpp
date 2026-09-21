@@ -1175,6 +1175,8 @@ const char *CClient::ErrorString() const
 
 void CClient::Render()
 {
+	Graphics()->SetFrameBlendingAllowed(true);
+
 	if(m_EditorActive)
 	{
 		m_pEditor->OnRender();
@@ -2060,7 +2062,20 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 			}
 
 			if(Target)
+			{
 				m_PredictedTime.Update(&m_InputtimeMarginGraph, Target, TimeLeft, CSmoothTime::ADJUSTDIRECTION_UP);
+				if(Now - m_PredictionSpikeLockout > time_freq() * 5 && -TimeLeft > -PredictionMarginTarget())
+				{
+					InsertPredictionSpike(-TimeLeft + PredictionMarginTarget(), Now);
+					if(-TimeLeft > 0 && m_PredictionMarginAdjust < g_Config.m_TcPredictionMarginAdjust)
+					{
+						m_PredictionMarginAdjust += -TimeLeft;
+						if(m_PredictionMarginAdjust > g_Config.m_TcPredictionMarginAdjust)
+							m_PredictionMarginAdjust = g_Config.m_TcPredictionMarginAdjust;
+						m_PredictionMarginAdjustLastTime = Now;
+					}
+				}
+			}
 		}
 		else if(Msg == NETMSG_SNAP || Msg == NETMSG_SNAPSINGLE || Msg == NETMSG_SNAPEMPTY)
 		{
@@ -2299,6 +2314,15 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 						if(Conn == CONN_MAIN)
 						{
 							DemoRecorder_HandleAutoStart();
+							m_PredictionSpikeLockout = time_get();
+							if(!Dummy)
+							{
+								for(int i = 0; i < 20; i++)
+								{
+									m_PredictionSpikeValues[i] = 0;
+									m_PredictionSpikeTimes[i] = 0;
+								}
+							}
 						}
 					}
 
@@ -3080,6 +3104,43 @@ void CClient::Update()
 		m_ReconnectTime = 0;
 	}
 
+	int64_t Now = time_get();
+	for(int i = 0; i < 20; i++)
+	{
+		if(m_PredictionSpikeValues[i] <= 0)
+			break;
+		if(Now - m_PredictionSpikeTimes[i] > time_freq() * 2)
+		{
+			for(int j = i + 1; j < 20; j++)
+				m_PredictionSpikeValues[j - 1] = m_PredictionSpikeValues[j], m_PredictionSpikeTimes[j - 1] = m_PredictionSpikeTimes[j];
+			m_PredictionSpikeValues[20 - 1] = 0;
+			i--;
+			continue;
+		}
+	}
+	if(m_PredictionSpikeValues[0] > PredictionMarginTarget() && m_PredictionMarginAdjust < g_Config.m_TcPredictionMarginAdjust)
+	{
+		m_PredictionMarginAdjust += m_PredictionSpikeValues[0] - PredictionMarginTarget();
+		if(m_PredictionMarginAdjust > g_Config.m_TcPredictionMarginAdjust)
+			m_PredictionMarginAdjust = g_Config.m_TcPredictionMarginAdjust;
+		m_PredictionMarginAdjustLastTime = Now;
+	}
+	else if(m_PredictionMarginAdjust > 0 && PredictionMarginTarget() > m_PredictionSpikeValues[0] && Now - m_PredictionMarginAdjustLastTime > time_freq())
+	{
+		m_PredictionMarginAdjust--;
+		m_PredictionMarginAdjustLastTime = Now;
+	}
+
+	// smooth the prediction margin so freeze/unfreeze transitions are gradual,
+	// using a frame-rate-independent exponential approach (~0.1s time constant)
+	{
+		float dt = minimum((Now - m_PredictionMarginSmoothLastTime) / (float)time_freq(), 1.0f);
+		dt = maximum(dt, 0.0f);
+		m_PredictionMarginSmoothLastTime = Now;
+		const float Tau = 0.1f;
+		m_PredictionMarginSmoothed += (PredictionMarginTarget() - m_PredictionMarginSmoothed) * (dt / (dt + Tau));
+	}
+
 	m_PredictedTime.UpdateMargin(PredictionMargin() * time_freq() / 1000);
 }
 
@@ -3325,6 +3386,8 @@ void CClient::Run()
 				HandleDemoPath(aFile);
 			else if(str_endswith(aFile, ".map"))
 				HandleMapPath(aFile);
+			else if(m_pGameClient)
+				m_pGameClient->OnFileDrop(aFile);
 		}
 
 #if defined(CONF_AUTOUPDATE)
@@ -5278,7 +5341,32 @@ int CClient::MaxLatencyTicks() const
 
 int CClient::PredictionMargin() const
 {
-	return m_ServerCapabilities.m_SyncWeaponInput ? g_Config.m_ClPredictionMargin : 10;
+	if(!m_ServerCapabilities.m_SyncWeaponInput)
+		return 10;
+	return round_to_int(m_PredictionMarginSmoothed);
+}
+
+int CClient::PredictionMarginTarget() const
+{
+	if(!m_ServerCapabilities.m_SyncWeaponInput)
+		return 10;
+	if(g_Config.m_TcPredMarginInFreeze && m_IsLocalFrozen)
+	{
+		return g_Config.m_TcPredMarginInFreezeAmount;
+	}
+	return g_Config.m_ClPredictionMargin + m_PredictionMarginAdjust;
+}
+
+void CClient::InsertPredictionSpike(int Spike, int64_t Time)
+{
+	for(int i = 0; i < 20; i++)
+	{
+		if(m_PredictionSpikeValues[i] > Spike)
+			continue;
+		for(int j = i + 1; j < 20; j++)
+			m_PredictionSpikeValues[j] = m_PredictionSpikeValues[j - 1], m_PredictionSpikeTimes[j] = m_PredictionSpikeTimes[j - 1];
+		m_PredictionSpikeValues[i] = Spike, m_PredictionSpikeTimes[i] = Time;
+	}
 }
 
 int CClient::UdpConnectivity(int NetType)

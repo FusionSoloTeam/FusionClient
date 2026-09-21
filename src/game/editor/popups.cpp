@@ -14,6 +14,7 @@
 #include <engine/storage.h>
 
 #include <game/client/gameclient.h>
+#include <game/client/ui_listbox.h>
 #include <game/client/ui_scrollregion.h>
 #include <game/editor/mapitems/image.h>
 #include <game/editor/mapitems/sound.h>
@@ -149,6 +150,198 @@ CUi::EPopupMenuFunctionResult CEditor::PopupMenuFile(void *pContext, CUIRect Vie
 	return CUi::POPUP_KEEP_OPEN;
 }
 
+struct SUnusedTeleportEntry
+{
+	char m_aText[64];
+	bool m_Unpaired;
+	std::vector<ivec2> m_vPositions;
+};
+
+static std::vector<SUnusedTeleportEntry> s_vUnusedTeleportEntries;
+
+static void RebuildUnusedTeleports(CEditor *pEditor)
+{
+	s_vUnusedTeleportEntries.clear();
+
+	std::vector<std::vector<ivec2>> aFromTiles(256);
+	std::vector<std::vector<ivec2>> aToTiles(256);
+	std::vector<std::vector<ivec2>> aCheckpointTiles(256);
+	std::vector<std::vector<ivec2>> aCtoTiles(256);
+
+	for(const auto &pGroup : pEditor->Map()->m_vpGroups)
+	{
+		for(const auto &pLayer : pGroup->m_vpLayers)
+		{
+			if(pLayer->m_Type != LAYERTYPE_TILES)
+				continue;
+			if(!static_cast<CLayerTiles *>(pLayer.get())->m_HasTele)
+				continue;
+			CLayerTele *pTeleLayer = static_cast<CLayerTele *>(pLayer.get());
+			for(int y = 0; y < pTeleLayer->m_Height; y++)
+			{
+				for(int x = 0; x < pTeleLayer->m_Width; x++)
+				{
+					const int Index = y * pTeleLayer->m_Width + x;
+					const int Type = pTeleLayer->m_pTeleTile[Index].m_Type;
+					const int Number = pTeleLayer->m_pTeleTile[Index].m_Number;
+					if(Number <= 0)
+						continue;
+					if(Type == TILE_TELEIN || Type == TILE_TELEINEVIL)
+						aFromTiles[Number].emplace_back(x, y);
+					else if(Type == TILE_TELEOUT)
+						aToTiles[Number].emplace_back(x, y);
+					else if(Type == TILE_TELECHECK)
+						aCheckpointTiles[Number].emplace_back(x, y);
+					else if(Type == TILE_TELECHECKOUT)
+						aCtoTiles[Number].emplace_back(x, y);
+				}
+			}
+		}
+	}
+
+	auto AddEntries = [&](const char *pCategory, const char *pTypeA, const char *pTypeB, const std::vector<std::vector<ivec2>> &vA, const std::vector<std::vector<ivec2>> &vB) {
+		for(int n = 1; n < 256; n++)
+		{
+			const std::vector<ivec2> &TilesA = vA[n];
+			const std::vector<ivec2> &TilesB = vB[n];
+			if(TilesA.empty() && TilesB.empty())
+				continue;
+
+			SUnusedTeleportEntry Entry;
+			Entry.m_Unpaired = TilesA.empty() || TilesB.empty();
+			Entry.m_vPositions = TilesA;
+			Entry.m_vPositions.insert(Entry.m_vPositions.end(), TilesB.begin(), TilesB.end());
+
+			if(TilesA.empty())
+				str_format(Entry.m_aText, sizeof(Entry.m_aText), "%s %d: %s without %s", pCategory, n, pTypeB, pTypeA);
+			else if(TilesB.empty())
+				str_format(Entry.m_aText, sizeof(Entry.m_aText), "%s %d: %s without %s", pCategory, n, pTypeA, pTypeB);
+			else if(TilesA.size() > 1 || TilesB.size() > 1)
+				str_format(Entry.m_aText, sizeof(Entry.m_aText), "%s %d: %s x%d - %s x%d", pCategory, n, pTypeA, (int)TilesA.size(), pTypeB, (int)TilesB.size());
+			else
+				str_format(Entry.m_aText, sizeof(Entry.m_aText), "%s %d: %s - %s", pCategory, n, pTypeA, pTypeB);
+			s_vUnusedTeleportEntries.push_back(Entry);
+		}
+	};
+
+	AddEntries("Tele", "From", "To", aFromTiles, aToTiles);
+	AddEntries("Checkpoint", "Checkpoint", "CTO", aCheckpointTiles, aCtoTiles);
+}
+
+CUi::EPopupMenuFunctionResult CEditor::PopupUnusedTeleports(void *pContext, CUIRect View, bool Active)
+{
+	CEditor *pEditor = static_cast<CEditor *>(pContext);
+
+	CUIRect Title, List, CloseButton;
+	View.HSplitTop(20.0f, &Title, &View);
+	View.HSplitBottom(3.0f, &View, nullptr);
+	View.HSplitBottom(14.0f, &View, &CloseButton);
+	View.HMargin(4.0f, &List);
+	List.VMargin(4.0f, &List);
+
+	Title.VMargin(5.0f, &Title);
+	pEditor->Ui()->DoLabel(&Title, "Teleports", 12.0f, TEXTALIGN_ML);
+
+	if(s_vUnusedTeleportEntries.empty())
+	{
+		pEditor->Ui()->DoLabel(&List, "No teleports found.", 10.0f, TEXTALIGN_ML);
+	}
+	else
+	{
+		static CListBox s_ListBox;
+		s_ListBox.SetActive(true);
+		s_ListBox.DoStart(14.0f, (int)s_vUnusedTeleportEntries.size(), 1, 16, -1, &List);
+
+		for(size_t i = 0; i < s_vUnusedTeleportEntries.size(); i++)
+		{
+			const CListboxItem Item = s_ListBox.DoNextItem(&s_vUnusedTeleportEntries[i], false);
+			if(!Item.m_Visible)
+				continue;
+
+			CUIRect Label;
+			Item.m_Rect.VMargin(5.0f, &Label);
+
+			SLabelProperties Props;
+			Props.m_MaxWidth = Label.w;
+			Props.m_EllipsisAtEnd = true;
+			if(s_vUnusedTeleportEntries[i].m_Unpaired)
+				pEditor->TextRender()->TextColor(1.0f, 0.35f, 0.35f, 1.0f);
+			else
+				pEditor->TextRender()->TextColor(pEditor->TextRender()->DefaultTextColor());
+			pEditor->Ui()->DoLabel(&Label, s_vUnusedTeleportEntries[i].m_aText, 10.0f, TEXTALIGN_ML, Props);
+			pEditor->TextRender()->TextColor(pEditor->TextRender()->DefaultTextColor());
+		}
+
+		const int ClickedIndex = s_ListBox.DoEnd();
+		if(s_ListBox.WasItemSelected() && ClickedIndex >= 0 && ClickedIndex < (int)s_vUnusedTeleportEntries.size())
+		{
+			const std::vector<ivec2> &vPositions = s_vUnusedTeleportEntries[ClickedIndex].m_vPositions;
+			if(!vPositions.empty())
+			{
+				const ivec2 Pos = vPositions[rand() % vPositions.size()];
+				pEditor->MapView()->SetWorldOffset(vec2(32.0f * Pos.x + 0.5f, 32.0f * Pos.y + 0.5f));
+			}
+			return CUi::POPUP_CLOSE_CURRENT;
+		}
+	}
+
+	static int s_CloseButton = 0;
+	if(pEditor->DoButton_Editor(&s_CloseButton, "Close", 0, &CloseButton, BUTTONFLAG_LEFT, nullptr))
+		return CUi::POPUP_CLOSE_CURRENT;
+
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+CUi::EPopupMenuFunctionResult CEditor::PopupShapes(void *pContext, CUIRect View, bool Active)
+{
+	CEditor *pEditor = static_cast<CEditor *>(pContext);
+
+	const char *apShapeNames[(int)EShapeType::NUM_SHAPES] = {"Circle", "Square", "Diamond", "Hexagon", "Octagon"};
+	const char *apShapeDescriptions[(int)EShapeType::NUM_SHAPES] = {
+		"Perfect circle. Click the map to place. [Alt+Wheel] Change size, [Ctrl+Wheel] change thickness. [Esc] Exit shape mode.",
+		"Axis-aligned square. Click the map to place. [Alt+Wheel] Change size, [Ctrl+Wheel] change thickness. [Esc] Exit shape mode.",
+		"Diamond. Click the map to place. [Alt+Wheel] Change size, [Ctrl+Wheel] change thickness. [Esc] Exit shape mode.",
+		"Hexagon. Click the map to place. [Alt+Wheel] Change size, [Ctrl+Wheel] change thickness. [Esc] Exit shape mode.",
+		"Octagon. Click the map to place. [Alt+Wheel] Change size, [Ctrl+Wheel] change thickness. [Esc] Exit shape mode.",
+	};
+
+	CUIRect Title, Info;
+	View.HSplitTop(16.0f, &Title, &View);
+	View.HSplitBottom(14.0f, &View, &Info);
+	Title.VMargin(5.0f, &Title);
+	Info.VMargin(5.0f, &Info);
+	pEditor->Ui()->DoLabel(&Title, "Add shapes", 12.0f, TEXTALIGN_ML);
+
+	static int s_aShapeButtons[(int)EShapeType::NUM_SHAPES] = {0};
+	for(int i = 0; i < (int)EShapeType::NUM_SHAPES; i++)
+	{
+		CUIRect Slot;
+		if(i > 0)
+			View.HSplitTop(2.0f, nullptr, &View);
+		View.HSplitTop(12.0f, &Slot, &View);
+		const bool IsActive = pEditor->m_ShapeEnabled && (int)pEditor->m_ShapeType == i;
+		if(pEditor->DoButton_MenuItem(&s_aShapeButtons[i], apShapeNames[i], IsActive ? 1 : 0, &Slot, BUTTONFLAG_LEFT, apShapeDescriptions[i]))
+		{
+			if(IsActive)
+			{
+				pEditor->m_ShapeEnabled = false;
+			}
+			else
+			{
+				pEditor->m_ShapeType = (EShapeType)i;
+				pEditor->m_ShapeEnabled = true;
+			}
+			return CUi::POPUP_CLOSE_CURRENT;
+		}
+	}
+
+	char aStatus[64];
+	str_format(aStatus, sizeof(aStatus), "Radius: %d  Thickness: %d", pEditor->m_ShapeRadius, pEditor->m_ShapeThickness);
+	pEditor->Ui()->DoLabel(&Info, aStatus, 10.0f, TEXTALIGN_ML);
+
+	return CUi::POPUP_KEEP_OPEN;
+}
+
 CUi::EPopupMenuFunctionResult CEditor::PopupMenuTools(void *pContext, CUIRect View, bool Active)
 {
 	CEditor *pEditor = static_cast<CEditor *>(pContext);
@@ -213,6 +406,25 @@ CUi::EPopupMenuFunctionResult CEditor::PopupMenuTools(void *pContext, CUIRect Vi
 	if(pEditor->DoButton_MenuItem(&s_QuadArtButton, "Add quad art", 0, &Slot, BUTTONFLAG_LEFT, "Generate quad art from image."))
 	{
 		pEditor->m_FileBrowser.ShowFileDialog(IStorage::TYPE_ALL, CFileBrowser::EFileType::IMAGE, "Add quad art", "Open", "mapres", "", CallbackAddQuadArt, pEditor);
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	static int s_CheckUnusedTeleportsButton = 0;
+	View.HSplitTop(2.0f, nullptr, &View);
+	View.HSplitTop(12.0f, &Slot, &View);
+	if(pEditor->DoButton_MenuItem(&s_CheckUnusedTeleportsButton, "Check for teleports", 0, &Slot, BUTTONFLAG_LEFT, "List all teleports on the map and mark teleport tiles that have no matching pair."))
+	{
+		RebuildUnusedTeleports(pEditor);
+		pEditor->m_PopupUnusedTeleportsActivated = true;
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	static int s_AddShapesButton = 0;
+	View.HSplitTop(2.0f, nullptr, &View);
+	View.HSplitTop(12.0f, &Slot, &View);
+	if(pEditor->DoButton_MenuItem(&s_AddShapesButton, "Add shapes", 0, &Slot, BUTTONFLAG_LEFT, "Place perfect shapes (circle, square, diamond, hexagon, octagon) with adjustable radius and thickness."))
+	{
+		pEditor->m_PopupShapesActivated = true;
 		return CUi::POPUP_CLOSE_CURRENT;
 	}
 

@@ -7,6 +7,7 @@
 #include <engine/shared/http.h>
 
 #include <game/client/component.h>
+#include <game/client/ui.h>
 
 #include <deque>
 
@@ -41,6 +42,15 @@ class CTClient : public CComponent
 
 	bool ServerCommandExists(const char *pCommand);
 
+	vec2 m_LastLocalPos = vec2(0, 0);
+	int m_LastSwitchTile = -1;
+	void NotifyOnSwitch();
+
+public:
+	void NotifyOnMove();
+	void SetDDNetProcessPriority(bool Set);
+	void SetDiscordProcessesNormalPriority();
+
 public:
 	CTClient();
 	int Sizeof() const override { return sizeof(*this); }
@@ -48,6 +58,7 @@ public:
 	void OnMessage(int MsgType, void *pRawMsg) override;
 	void OnConsoleInit() override;
 	void OnRender() override;
+	void OnUpdate() override;
 
 	void OnStateChange(int OldState, int NewState) override;
 	void OnNewSnapshot() override;
@@ -59,14 +70,25 @@ public:
 	void ResetTClientInfoTask();
 	bool NeedUpdate();
 
+	void RequestReloadTextures();
+	void ReloadTextures();
+	static void ConReloadTextures(IConsole::IResult *pResult, void *pUserData);
+	bool m_ReloadTexturesRequested = false;
+
 	void RenderMiniVoteHud();
 	void RenderCenterLines();
+	void RenderInfoOverlay();
+	CUIRect GetInfoOverlayHudEditorRect() const;
 	void RenderCtfFlag(vec2 Pos, float Alpha);
 
 	bool ChatDoSpecId(const char *pInput);
+	bool AntiUnSpec() const;
+	mutable bool m_ConfirmUnSpec = false;
 	bool InfoTaskDone() { return m_pTClientInfoTask && m_pTClientInfoTask->State() == EHttpState::DONE; }
 	bool m_FetchedTClientInfo = false;
 	char m_aVersionStr[10] = "0";
+
+	CUIRect m_InfoOverlayRect{};
 
 	Regex m_RegexChatIgnore;
 };

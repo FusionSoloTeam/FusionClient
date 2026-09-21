@@ -83,6 +83,7 @@ class CCommandProcessorFragment_GLBase
 protected:
 	SGfxErrorContainer m_Error;
 	SGfxWarningContainer m_Warning;
+	std::atomic<bool> m_FrameBlendingAllowed{true};
 
 	static bool Texture2DTo3D(uint8_t *pImageBuffer, int ImageWidth, int ImageHeight, size_t PixelSize, int SplitCountWidth, int SplitCountHeight, uint8_t *pTarget3DImageData, int &Target3DImageWidth, int &Target3DImageHeight);
 
@@ -94,6 +95,8 @@ public:
 
 	virtual void StartCommands(size_t CommandCount, size_t EstimatedRenderCallCount) {}
 	virtual void EndCommands() {}
+
+	void SetFrameBlendingAllowed(bool Allowed) { m_FrameBlendingAllowed = Allowed; }
 
 	const SGfxErrorContainer &GetError() { return m_Error; }
 	virtual void ErroneousCleanup() {}

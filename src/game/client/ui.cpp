@@ -16,6 +16,8 @@
 
 #include <game/localization.h>
 
+#include <game/client/components/tclient/gradient.h>
+
 #include <limits>
 
 void CUIElement::Init(CUi *pUI, int RequestedRectCount)
@@ -444,7 +446,7 @@ float CUi::ButtonColorMul(const void *pId)
 
 const CUIRect *CUi::Screen()
 {
-	m_Screen.h = 600.0f;
+	m_Screen.h = 600.0f / std::clamp(m_ScreenScale, 0.25f, 4.0f);
 	m_Screen.w = Graphics()->ScreenAspect() * m_Screen.h;
 	return &m_Screen;
 }
@@ -805,6 +807,9 @@ CLabelResult CUi::DoLabel(const CUIRect *pRect, const char *pText, float Size, i
 	Cursor.m_Flags |= Flags;
 	Cursor.m_vColorSplits = LabelProps.m_vColorSplits;
 	Cursor.m_LineWidth = (float)LabelProps.m_MaxWidth;
+	// TClient: apply animated gradient to all rendered labels when enabled
+	if(BCGradient_ApplyEverythingHook)
+		BCGradient_ApplyEverythingHook(&Cursor, pText, -1);
 	TextRender()->TextEx(&Cursor, pText, -1);
 	return CLabelResult{.m_Truncated = Cursor.m_Truncated};
 }
@@ -831,6 +836,9 @@ void CUi::DoLabel(CUIElement::SUIElementRect &RectEl, const CUIRect *pRect, cons
 	RectEl.m_TextOutlineColor = TextRender()->GetTextOutlineColor();
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
 	TextRender()->TextOutlineColor(TextRender()->DefaultTextOutlineColor());
+	// TClient: apply animated gradient to all rendered labels when enabled
+	if(BCGradient_ApplyEverythingHook)
+		BCGradient_ApplyEverythingHook(&Cursor, pText, StrLen);
 	TextRender()->CreateTextContainer(RectEl.m_UITextContainer, &Cursor, pText, StrLen);
 	TextRender()->TextColor(RectEl.m_TextColor);
 	TextRender()->TextOutlineColor(RectEl.m_TextOutlineColor);

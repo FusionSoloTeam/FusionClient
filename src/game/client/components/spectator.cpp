@@ -581,11 +581,22 @@ void CSpectator::OnRender()
 
 		RenderTools()->RenderTee(pIdleState, &TeeInfo, EMOTE_NORMAL, vec2(1.0f, 0.0f), TeeRenderPos, TeeAlpha);
 
-		if(GameClient()->m_aClients[GameClient()->m_Snap.m_apInfoByDDTeamName[i]->m_ClientId].m_Friend)
+		const int PrefixClientId = GameClient()->m_Snap.m_apInfoByDDTeamName[i]->m_ClientId;
+		if(GameClient()->m_aClients[PrefixClientId].m_Friend)
 		{
-			TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageFriendColor)));
-			TextRender()->Text(Width / 2.0f + x - TeeInfo.m_Size / 2.0f, Height / 2.0f + y + BoxMove + (LineHeight - FontSize) / 2.f, FontSize, "♥", 220.0f);
+			ColorRGBA FriendColor = GameClient()->m_HeartList.IsFriend(PrefixClientId) ? GameClient()->m_HeartList.GetFriendColor(PrefixClientId) : color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageFriendColor));
+			TextRender()->TextColor(FriendColor);
+			TextRender()->Text(Width / 2.0f + x - TeeInfo.m_Size / 2.0f, Height / 2.0f + y + BoxMove + (LineHeight - FontSize) / 2.f, FontSize, g_Config.m_TcFriendPrefix, 220.0f);
 			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+		}
+		else if(g_Config.m_TcSpecMenuPrefixes && g_Config.m_TcWarList)
+		{
+			if(GameClient()->m_WarList.GetAnyWar(PrefixClientId))
+			{
+				TextRender()->TextColor(GameClient()->m_WarList.GetPriorityColor(PrefixClientId).WithAlpha(PlayerSelected ? 1.0f : 0.5f));
+				TextRender()->Text(Width / 2.0f + x - TeeInfo.m_Size / 2.0f, Height / 2.0f + y + BoxMove + (LineHeight - FontSize) / 2.f, FontSize, g_Config.m_TcWarlistPrefix, 220.0f);
+				TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+			}
 		}
 
 		y += LineHeight;

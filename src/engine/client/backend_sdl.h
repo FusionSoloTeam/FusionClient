@@ -60,6 +60,8 @@ public:
 		virtual void ErroneousCleanup() = 0;
 
 		virtual const SGfxWarningContainer &GetWarning() const = 0;
+
+		virtual void SetFrameBlendingAllowed(bool Allowed) {}
 	};
 
 	CGraphicsBackend_Threaded(TTranslateFunc &&TranslateFunc);
@@ -187,6 +189,12 @@ public:
 	~CCommandProcessor_SDL_GL() override;
 	void RunBuffer(CCommandBuffer *pBuffer) override;
 
+	void SetFrameBlendingAllowed(bool Allowed) override
+	{
+		if(m_pGLBackend != nullptr)
+			m_pGLBackend->SetFrameBlendingAllowed(Allowed);
+	}
+
 	const SGfxErrorContainer &GetError() const override;
 	void ErroneousCleanup() override;
 
@@ -254,6 +262,11 @@ public:
 	int WindowActive() override;
 	int WindowOpen() override;
 	void SetWindowGrab(bool Grab) override;
+	void SetFrameBlendingAllowed(bool Allowed) override
+	{
+		if(m_pProcessor != nullptr)
+			m_pProcessor->SetFrameBlendingAllowed(Allowed);
+	}
 	bool ResizeWindow(int w, int h, int RefreshRate) override;
 	void GetViewportSize(int &w, int &h) override;
 	void NotifyWindow() override;

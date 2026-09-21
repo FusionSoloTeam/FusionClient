@@ -5,6 +5,7 @@
 
 #include <base/color.h>
 #include <base/math.h>
+#include <base/system.h>
 
 #include <engine/client/enums.h>
 #include <engine/demo.h>
@@ -27,6 +28,7 @@
 
 // TClient
 #include <game/client/components/tclient/rainbow.h>
+#include <game/client/components/tclient/r_jelly.h>
 #include <game/client/prediction/entities/character.h>
 
 static float CalculateHandAngle(vec2 Dir, float AngleOffset)
@@ -50,6 +52,52 @@ static vec2 CalculateHandPosition(vec2 CenterPos, vec2 Dir, vec2 PostRotOffset)
 		DirY = -DirY;
 	}
 	return CenterPos + Dir + Dir * PostRotOffset.x + DirY * PostRotOffset.y;
+}
+
+
+static bool JellyIsSolidAt(const CCollision *pCollision, vec2 Pos)
+{
+	if(pCollision == nullptr)
+		return false;
+	return pCollision->CheckPoint(Pos.x, Pos.y);
+}
+
+static float DetectJellyWallImpact(const CCollision *pCollision, vec2 Position, vec2 PrevVel, vec2 Vel, bool InAir)
+{
+	if(InAir)
+		return 0.0f;
+
+	const float PrevSpeedX = absolute(PrevVel.x);
+	const float CurSpeedX = absolute(Vel.x);
+	const float SpeedDrop = PrevSpeedX - CurSpeedX;
+	if(PrevSpeedX < 4.0f || SpeedDrop < 1.2f)
+		return 0.0f;
+
+	const float Side = PrevVel.x >= 0.0f ? 1.0f : -1.0f;
+	const float ProbeX = Position.x + Side * 16.0f;
+	const bool TouchingWall =
+		JellyIsSolidAt(pCollision, vec2(ProbeX, Position.y - 10.0f)) ||
+		JellyIsSolidAt(pCollision, vec2(ProbeX, Position.y)) ||
+		JellyIsSolidAt(pCollision, vec2(ProbeX, Position.y + 10.0f));
+
+	if(!TouchingWall)
+		return 0.0f;
+
+	return std::clamp(SpeedDrop / 7.0f, 0.0f, 1.8f);
+}
+
+static void BuildJellyExtraImpulse(const CCollision *pCollision, vec2 Position, vec2 PrevVel, vec2 Vel, bool InAir, vec2 &OutExtraDeformImpulse, float &OutExtraCompression)
+{
+	OutExtraDeformImpulse = vec2(0.0f, 0.0f);
+	OutExtraCompression = 0.0f;
+
+	const float WallImpact = DetectJellyWallImpact(pCollision, Position, PrevVel, Vel, InAir);
+	if(WallImpact > 0.0f)
+	{
+		const float BounceDir = PrevVel.x >= 0.0f ? -1.0f : 1.0f;
+		OutExtraDeformImpulse.x += BounceDir * WallImpact * 0.95f;
+		OutExtraCompression += WallImpact * 1.20f;
+	}
 }
 
 void CPlayers::RenderHand(const CTeeRenderInfo *pInfo, vec2 CenterPos, vec2 Dir, float AngleOffset, vec2 PostRotOffset, float Alpha)
@@ -391,6 +439,15 @@ void CPlayers::RenderHookCollLine(
 		vLineSegments.emplace_back(LineStartPos, BasePos + QuantizedDirection * HookLength);
 	}
 
+	// TClient: дорисовать луч до конца, даже если он во что-то упёрся
+	if(g_Config.m_TcHookCollOverlay && Local)
+	{
+		const vec2 FullEnd = BasePos + QuantizedDirection * HookLength;
+		const vec2 DrawnEnd = vLineSegments.empty() ? LineStartPos : vec2(vLineSegments.back().m_X1, vLineSegments.back().m_Y1);
+		if(distance(DrawnEnd, FullEnd) > 8.0f)
+			vLineSegments.emplace_back(LineStartPos, FullEnd);
+	}
+
 	// add a line from the player to the start position to prevent a visual gap
 	vLineSegments.emplace_back(Position, Position + StartOffset);
 
@@ -416,7 +473,7 @@ void CPlayers::RenderHookCollLine(
 		vLineQuadSegments.reserve(vLineSegments.size());
 
 		float LineWidth = 0.5f + (float)(HookCollSize - 1) * 0.25f;
-		const vec2 PerpToAngle = normalize(vec2(Direction.y, -Direction.x)) * GameClient()->m_Camera.m_Zoom;
+		const vec2 PerpToAngle = normalize(vec2(Direction.y, -Direction.x)) * GameClient()->m_Camera.m_RenderZoom;
 
 		auto ConvertLineSegments = [&](const IGraphics::CLineItem &LineSegment) {
 			vec2 DrawInitPos(LineSegment.m_X0, LineSegment.m_Y0);
@@ -971,6 +1028,12 @@ void CPlayers::RenderPlayer(
 		}
 	}
 
+	const vec2 JellyPrevVel = vec2(Prev.m_VelX / 256.0f, Prev.m_VelY / 256.0f);
+	vec2 JellyExtraDeformImpulse;
+	float JellyExtraCompression = 0.0f;
+	BuildJellyExtraImpulse(Collision(), Position, JellyPrevVel, Vel, InAir, JellyExtraDeformImpulse, JellyExtraCompression);
+	const JellyTee JellyDeform = rJelly ? rJelly->GetDeform(ClientId, JellyPrevVel, Vel, Direction, InAir, WantOtherDir, Client()->RenderFrameTime(), JellyExtraDeformImpulse, JellyExtraCompression) : JellyTee();
+
 	// render the "shadow" tee
 	if(g_Config.m_ClUnpredictedShadow == 3 || (Local && g_Config.m_ClUnpredictedShadow == 1) || (!Local && g_Config.m_ClUnpredictedShadow == 2))
 	{
@@ -981,10 +1044,10 @@ void CPlayers::RenderPlayer(
 				vec2(GameClient()->m_Snap.m_aCharacters[ClientId].m_Cur.m_X, GameClient()->m_Snap.m_aCharacters[ClientId].m_Cur.m_Y),
 				Client()->IntraGameTick(g_Config.m_ClDummy));
 
-		RenderTools()->RenderTee(&State, &RenderInfo, Player.m_Emote, Direction, ShadowPosition, g_Config.m_ClUnpredictedShadowAlpha / 100.f); // render ghost
+		RenderTools()->RenderTee(&State, &RenderInfo, Player.m_Emote, Direction, ShadowPosition, g_Config.m_ClUnpredictedShadowAlpha / 100.f, JellyDeform.m_BodyScale, JellyDeform.m_FeetScale, JellyDeform.m_BodyAngle, JellyDeform.m_FeetAngle); // render ghost
 	}
 
-	RenderTools()->RenderTee(&State, &RenderInfo, Player.m_Emote, Direction, Position, Alpha);
+	RenderTools()->RenderTee(&State, &RenderInfo, Player.m_Emote, Direction, Position, Alpha, JellyDeform.m_BodyScale, JellyDeform.m_FeetScale, JellyDeform.m_BodyAngle, JellyDeform.m_FeetAngle);
 
 	float TeeAnimScale, TeeBaseSize;
 	CRenderTools::GetRenderTeeAnimScaleAndBaseSize(&RenderInfo, TeeAnimScale, TeeBaseSize);
@@ -1024,6 +1087,20 @@ void CPlayers::RenderPlayer(
 
 		Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
 		Graphics()->QuadsSetRotation(0);
+	}
+
+	if(g_Config.m_TcShowOthersInMenu)
+	{
+		if((Player.m_PlayerFlags & PLAYERFLAG_IN_MENU) && !GameClient()->m_aClients[ClientId].m_Afk)
+		{
+			Graphics()->TextureSet(g_pData->m_aImages[IMAGE_SETTINGS_ICON].m_Id);
+
+			Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
+			Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffsetToEmoticon, Position.x + 24.f, Position.y - 40.f);
+
+			Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+			Graphics()->QuadsSetRotation(0);
+		}
 	}
 
 	if(g_Config.m_ClShowEmotes && !GameClient()->m_aClients[ClientId].m_EmoticonIgnore && GameClient()->m_aClients[ClientId].m_EmoticonStartTick != -1)
@@ -1408,7 +1485,13 @@ void CPlayers::RenderPlayerGhost(
 		}
 	}
 
-	RenderTools()->RenderTee(&State, &RenderInfo, Player.m_Emote, Direction, Position, Alpha);
+	const vec2 JellyPrevVel = vec2(Prev.m_VelX / 256.0f, Prev.m_VelY / 256.0f);
+	vec2 JellyExtraDeformImpulse;
+	float JellyExtraCompression = 0.0f;
+	BuildJellyExtraImpulse(Collision(), Position, JellyPrevVel, Vel, InAir, JellyExtraDeformImpulse, JellyExtraCompression);
+	const JellyTee JellyDeform = rJelly ? rJelly->GetDeform(ClientId, JellyPrevVel, Vel, Direction, InAir, WantOtherDir, Client()->RenderFrameTime(), JellyExtraDeformImpulse, JellyExtraCompression) : JellyTee();
+
+	RenderTools()->RenderTee(&State, &RenderInfo, Player.m_Emote, Direction, Position, Alpha, JellyDeform.m_BodyScale, JellyDeform.m_FeetScale, JellyDeform.m_BodyAngle, JellyDeform.m_FeetAngle);
 
 	float TeeAnimScale, TeeBaseSize;
 	CRenderTools::GetRenderTeeAnimScaleAndBaseSize(&RenderInfo, TeeAnimScale, TeeBaseSize);
@@ -1444,6 +1527,20 @@ void CPlayers::RenderPlayerGhost(
 
 		Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
 		Graphics()->QuadsSetRotation(0);
+	}
+
+	if(g_Config.m_TcShowOthersInMenu)
+	{
+		if((Player.m_PlayerFlags & PLAYERFLAG_IN_MENU) && !GameClient()->m_aClients[ClientId].m_Afk)
+		{
+			Graphics()->TextureSet(g_pData->m_aImages[IMAGE_SETTINGS_ICON].m_Id);
+
+			Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
+			Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffsetToEmoticon, Position.x + 24.f, Position.y - 40.f);
+
+			Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+			Graphics()->QuadsSetRotation(0);
+		}
 	}
 
 	if(g_Config.m_ClShowEmotes && !GameClient()->m_aClients[ClientId].m_EmoticonIgnore && GameClient()->m_aClients[ClientId].m_EmoticonStartTick != -1)

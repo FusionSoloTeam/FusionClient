@@ -54,6 +54,9 @@ private:
 
 	vec2 m_LastTargetPos;
 	float m_DyncamSmoothingSpeedBias;
+	float m_DynamicZoomCurrent;
+	vec2 m_DriftOffsetCurrent;
+	void UpdateTClientCameras();
 	bool m_CanUseCameraInfo;
 	bool m_UsingAutoSpecCamera;
 
@@ -75,6 +78,9 @@ public:
 	bool m_Zooming;
 	float m_Zoom;
 	float m_ZoomSmoothingTarget;
+
+	float m_RenderZoom;
+	vec2 m_DriftOffset;
 
 	bool m_AutoSpecCameraZooming;
 	bool m_AutoSpecCamera;

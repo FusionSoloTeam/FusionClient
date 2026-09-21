@@ -44,6 +44,7 @@
 #include "components/freezebars.h"
 #include "components/ghost.h"
 #include "components/hud.h"
+#include "components/tclient/hud_editor.h"
 #include "components/important_alert.h"
 #include "components/infomessages.h"
 #include "components/items.h"
@@ -68,21 +69,31 @@
 #include "components/tclient/bg_draw.h"
 #include "components/tclient/bindchat.h"
 #include "components/tclient/bindwheel.h"
+#include "components/tclient/chatbinds.h"
+#include "components/tclient/gradient.h"
 #include "components/tclient/custom_communities.h"
 #include "components/tclient/mod.h"
+#include "components/tclient/cursor_trail.h"
 #include "components/tclient/moving_tiles.h"
 #include "components/tclient/mumble.h"
 #include "components/tclient/outlines.h"
+#include "components/tclient/above_below_player.h"
 #include "components/tclient/pet.h"
 #include "components/tclient/player_indicator.h"
 #include "components/tclient/rainbow.h"
+#include "components/tclient/swaptimer.h"
 #include "components/tclient/scripting.h"
 #include "components/tclient/skinprofiles.h"
 #include "components/tclient/statusbar.h"
 #include "components/tclient/tclient.h"
 #include "components/tclient/trails.h"
 #include "components/tclient/translate.h"
+#include "components/tclient/react_bypass.h"
 #include "components/tclient/warlist.h"
+#include "components/tclient/heartlist.h"
+#include "components/tclient/notify_on_move.h"
+#include "components/tclient/afk_aura.h"
+#include "components/tclient/hover_notification.h"
 #include "components/tooltips.h"
 #include "components/touch_controls.h"
 #include "components/voting.h"
@@ -180,6 +191,7 @@ public:
 	CCountryFlags m_CountryFlags;
 	CFlow m_Flow;
 	CHud m_Hud;
+	CHudEditor m_HudEditor;
 	CImportantAlert m_ImportantAlert;
 	CDebugHud m_DebugHud;
 	CControls m_Controls;
@@ -222,18 +234,29 @@ public:
 	CBgDraw m_BgDraw;
 	CTClient m_TClient;
 	CTrails m_Trails;
+	CHoverNotification m_HoverNotification;
+	CAfkAura m_AFKAura;
 	CTranslate m_Translate;
 	CPet m_Pet;
+	CAboveBelowPlayer m_AboveBelowPlayer;
+	CSwapTimer m_SwapTimer;
+	CChatBinds m_ChatBinds;
+	CBcGradient m_BcGradient;
 	CPlayerIndicator m_PlayerIndicator;
 	COutlines m_Outlines;
 	CMumble m_Mumble;
 	CRainbow m_Rainbow;
 	CWarList m_WarList;
+	CReactBypass m_ReactBypass;
+	CHeartList m_HeartList;
+	CNotifyOnMove m_NotifyOnMove;
 	CScripting m_Scripting;
 	CMod m_Mod;
 	CCustomCommunities m_CustomCommunities;
 	CMovingTiles m_MovingTilesBackground = CMovingTiles{ false };
 	CMovingTiles m_MovingTilesForeground = CMovingTiles{ true };
+	CCursorTrail m_CursorTrailBackground = CCursorTrail{ false };
+	CCursorTrail m_CursorTrailForeground = CCursorTrail{ true };
 
 private:
 	std::vector<class CComponent *> m_vpAll;
@@ -781,6 +804,11 @@ public:
 	void LoadParticlesSkin(const char *pPath, bool AsDir = false);
 	void LoadHudSkin(const char *pPath, bool AsDir = false);
 	void LoadExtrasSkin(const char *pPath, bool AsDir = false);
+	void LoadAudioAssets(const char *pName);
+	void OnFileDrop(const char *pPath) override;
+	bool ConsumeDroppedFile(char *pOut, int OutLen);
+	char m_aDroppedFile[IO_MAX_PATH_LENGTH] = {0};
+	double m_DroppedFileTime = 0.0;
 
 	struct SClientGameSkin
 	{
@@ -948,6 +976,7 @@ public:
 	const std::vector<CSnapEntities> &SnapEntities() { return m_vSnapEntities; }
 
 	vec2 GetSmoothPos(int ClientId);
+	bool AntiPingInteractionFilter() const;
 	vec2 GetFreezePos(int ClientId);
 	vec2 GetFastInputPos(int ClientId);
 

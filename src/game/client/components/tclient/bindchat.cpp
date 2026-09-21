@@ -52,6 +52,26 @@ decltype(CBindChat::BIND_DEFAULTS) CBindChat::BIND_DEFAULTS = {
 					 {TCLocalizable("Mute:"), {"!mute", "add_foe"}},
 					 {TCLocalizable("Unmute:"), {"!unmute", "remove_foe"}},
 				 }},
+	{TCLocalizable("Player Inspector"), {
+					 {TCLocalizable("Find Player:"), {".findplayer", "tc_find_player"}},
+					 {TCLocalizable("Find Skin:"), {".findskin", "tc_find_skin"}},
+					 {TCLocalizable("Copy Skin:"), {".copyskin", "tc_copy_skin"}},
+					 {TCLocalizable("Copy Color:"), {".copycolor", "tc_copy_color"}},
+					 {TCLocalizable("Backup Profile:"), {".backupprofile", "tc_backup_player_profile"}},
+				 }},
+	{TCLocalizable("Tracker"), {
+					 {TCLocalizable("Add Tracker:"), {".trackeradd", "tc_tracker_add"}},
+					 {TCLocalizable("Remove Tracker:"), {".trackerrem", "tc_tracker_remove"}},
+					 {TCLocalizable("Reset Tracker:"), {".trackerreset", "tc_tracker_reset"}},
+				 }},
+	{TCLocalizable("Map Search"), {
+				 {TCLocalizable("Find Teleport:"), {".findtele", "tc_goto_tele_cursor"}},
+				 {TCLocalizable("Find Finish:"), {".findfinish", "tc_goto_finish_cursor"}},
+			 }},
+	{TCLocalizable("Friends"), {
+				 {TCLocalizable("Add Friend:"), {".friend", "friend"}},
+				 {TCLocalizable("Remove Friend:"), {".unfriend", "unfriend"}},
+			 }},
 };
 
 CBindChat::CBindChat()

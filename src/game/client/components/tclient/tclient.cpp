@@ -4,23 +4,42 @@
 
 #include <base/log.h>
 
+#if defined(CONF_FAMILY_WINDOWS)
+#include <windows.h>
+#undef IMAGE_CURSOR
+#undef IGNORE
+#endif
+
 #include <engine/client.h>
 #include <engine/client/enums.h>
 #include <engine/external/regex.h>
 #include <engine/external/tinyexpr.h>
 #include <engine/graphics.h>
 #include <engine/shared/config.h>
+#include <engine/shared/vram_stats.h>
 #include <engine/shared/json.h>
 
 #include <generated/client_data.h>
 
 #include <game/client/animstate.h>
 #include <game/client/components/chat.h>
+#include <game/client/components/hud_layout.h>
 #include <game/client/gameclient.h>
 #include <game/client/render.h>
 #include <game/client/ui.h>
 #include <game/localization.h>
 #include <game/version.h>
+
+#if defined(CONF_FAMILY_WINDOWS)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <tlhelp32.h>
+#endif
 
 static constexpr const char *TCLIENT_INFO_URL = "https://update.tclient.app/info.json";
 
@@ -103,6 +122,9 @@ void CTClient::OnInit()
 	TextRender()->SetCustomFace(g_Config.m_TcCustomFont);
 	m_pGraphics = Kernel()->RequestInterface<IEngineGraphics>();
 	FetchTClientInfo();
+	SetDDNetProcessPriority(g_Config.m_TcHighProcessPriority);
+	if(g_Config.m_TcDiscordNormalProcessPriority)
+		SetDiscordProcessesNormalPriority();
 
 	char aError[512] = "";
 	if(!Storage()->FileExists("tclient/gui_logo.png", IStorage::TYPE_ALL))
@@ -114,6 +136,125 @@ void CTClient::OnInit()
 		SWarning Warning(aError, TCLocalize("You have probably only installed the TClient DDNet.exe which is not supported, please use the entire TClient folder", "data_version.h"));
 		Client()->AddWarning(Warning);
 	}
+}
+
+void CTClient::SetDDNetProcessPriority(bool Set)
+{
+#if defined(CONF_FAMILY_WINDOWS)
+	if(!SetPriorityClass(GetCurrentProcess(), Set ? HIGH_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS))
+		return;
+	if(!SetThreadPriority(GetCurrentThread(), Set ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_NORMAL))
+		return;
+#endif
+}
+
+void CTClient::SetDiscordProcessesNormalPriority()
+{
+#if defined(CONF_FAMILY_WINDOWS)
+	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if(hSnapshot == INVALID_HANDLE_VALUE)
+		return;
+	PROCESSENTRY32 Entry;
+	mem_zero(&Entry, sizeof(Entry));
+	Entry.dwSize = sizeof(Entry);
+	if(Process32First(hSnapshot, &Entry))
+	{
+		do
+		{
+			char aExeName[128];
+			if(WideCharToMultiByte(CP_UTF8, 0, Entry.szExeFile, -1, aExeName, sizeof(aExeName), nullptr, nullptr) > 0 && str_find_nocase(aExeName, "discord"))
+			{
+				HANDLE hProcess = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, Entry.th32ProcessID);
+				if(hProcess)
+				{
+					SetPriorityClass(hProcess, NORMAL_PRIORITY_CLASS);
+					CloseHandle(hProcess);
+				}
+			}
+		} while(Process32Next(hSnapshot, &Entry));
+	}
+	CloseHandle(hSnapshot);
+#endif
+}
+
+void CTClient::NotifyOnMove()
+{
+	if(!g_Config.m_TcNotifyOnMove)
+		return;
+	if(Client()->State() != IClient::STATE_ONLINE)
+		return;
+	if(!m_pGraphics || m_pGraphics->WindowActive())
+		return;
+	int LocalId = GameClient()->m_Snap.m_LocalClientId;
+	if(LocalId < 0 || !GameClient()->m_aClients[LocalId].m_Active)
+		return;
+	vec2 LocalPos = GameClient()->m_aClients[LocalId].m_RenderPos;
+	if(distance(LocalPos, m_LastLocalPos) > 27.5f)
+	{
+		Client()->Notify("TClient", "current tile changed");
+		m_pGraphics->NotifyWindow();
+	}
+	m_LastLocalPos = LocalPos;
+}
+
+void CTClient::NotifyOnSwitch()
+{
+	if(!g_Config.m_TcNotifyOnSwitch)
+		return;
+	if(Client()->State() != IClient::STATE_ONLINE)
+		return;
+	if(GameClient()->m_Snap.m_SpecInfo.m_Active)
+		return;
+	const int LocalId = GameClient()->m_aLocalIds[g_Config.m_ClDummy];
+	if(LocalId < 0 || LocalId >= MAX_CLIENTS || !GameClient()->m_aClients[LocalId].m_Active)
+		return;
+
+	const vec2 Pos = GameClient()->m_aClients[LocalId].m_Predicted.m_Pos;
+	const int Index = Collision()->GetPureMapIndex(Pos);
+	const int SwitchType = Collision()->GetSwitchType(Index);
+	if(SwitchType < TILE_SWITCHTIMEDOPEN || SwitchType > TILE_SWITCHCLOSE)
+	{
+		m_LastSwitchTile = -1;
+		return;
+	}
+	if(Index == m_LastSwitchTile)
+		return;
+	m_LastSwitchTile = Index;
+
+	const char *pType = SwitchType == TILE_SWITCHTIMEDOPEN ? "activate, timed" :
+			    SwitchType == TILE_SWITCHTIMEDCLOSE ? "deactivate, timed" :
+			    SwitchType == TILE_SWITCHOPEN ? "activate" :
+			    "deactivate";
+	char aNum[16];
+	str_format(aNum, sizeof(aNum), "%d", Collision()->GetSwitchNumber(Index));
+
+	char aBuf[320];
+	int Out = 0;
+	const char *pScan = g_Config.m_TcNotifyOnSwitchText;
+	while(*pScan != '\0' && Out < (int)sizeof(aBuf) - 1)
+	{
+		const char *pAppend = nullptr;
+		if(str_comp_num(pScan, "@num", 4) == 0)
+		{
+			pAppend = aNum;
+			pScan += 4;
+		}
+		else if(str_comp_num(pScan, "@type", 5) == 0)
+		{
+			pAppend = pType;
+			pScan += 5;
+		}
+		if(pAppend != nullptr)
+		{
+			while(*pAppend != '\0' && Out < (int)sizeof(aBuf) - 1)
+				aBuf[Out++] = *pAppend++;
+		}
+		else
+			aBuf[Out++] = *pScan++;
+	}
+	aBuf[Out] = '\0';
+
+	GameClient()->Echo(aBuf);
 }
 
 static bool LineShouldHighlight(const char *pLine, const char *pName)
@@ -313,6 +454,90 @@ bool CTClient::ChatDoSpecId(const char *pInput)
 	return true;
 }
 
+bool CTClient::AntiUnSpec() const
+{
+	const int LocalClientId = GameClient()->m_Snap.m_LocalClientId;
+	if(LocalClientId < 0)
+		return false;
+	if(!g_Config.m_TcAntiUnspectate)
+		return false;
+
+	const CGameClient::CClientData &Local = GameClient()->m_aClients[LocalClientId];
+	if(!Local.m_Spec && !Local.m_Paused)
+		return false;
+
+	vec2 LocalPlayerPos = Local.m_RegularPredicted.m_Pos;
+	const char *pPosSource = "regular";
+	if(Local.m_SpecCharPresent)
+	{
+		LocalPlayerPos = Local.m_SpecChar;
+		pPosSource = "specchar";
+	}
+	else if(GameClient()->m_Snap.m_aCharacters[LocalClientId].m_Active)
+	{
+		const CNetObj_Character LocalChar = GameClient()->m_Snap.m_aCharacters[LocalClientId].m_Cur;
+		LocalPlayerPos = vec2(LocalChar.m_X, LocalChar.m_Y);
+		pPosSource = "char";
+	}
+
+	bool CanCollidePhysical = false;
+	int NearestId = -1;
+	float NearestDist = -1.0f;
+	for(int i = 0; i < MAX_CLIENTS; i++)
+	{
+		if(i == GameClient()->m_aLocalIds[g_Config.m_ClDummy] || i == GameClient()->m_aLocalIds[!g_Config.m_ClDummy])
+			continue;
+
+		const CGameClient::CClientData &Other = GameClient()->m_aClients[i];
+		if(!Other.m_Active || Other.m_Spec || Other.m_CollisionDisabled)
+			continue;
+
+		auto &CharInfo = GameClient()->m_Snap.m_aCharacters[i];
+		if(!CharInfo.m_Active)
+			continue;
+
+		const vec2 CurPlayerPos = vec2(CharInfo.m_Cur.m_X, CharInfo.m_Cur.m_Y);
+		const float Dist = distance(CurPlayerPos, LocalPlayerPos);
+		if(NearestId < 0 || Dist < NearestDist)
+		{
+			NearestId = i;
+			NearestDist = Dist;
+		}
+		if(Dist < CCharacterCore::PhysicalSize() * 1.25f)
+		{
+			CanCollidePhysical = true;
+			break;
+		}
+	}
+
+	if(g_Config.m_Debug)
+	{
+		char aBuf[256];
+		str_format(aBuf, sizeof(aBuf), "anti-unspec: %s, pos (%.1f, %.1f) from %s, nearest id %d dist %.1f, block %d",
+			Local.m_Spec ? "spec" : "pause", LocalPlayerPos.x, LocalPlayerPos.y, pPosSource, NearestId, NearestDist, CanCollidePhysical ? 1 : 0);
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "unspec", aBuf);
+	}
+
+	if(!CanCollidePhysical)
+	{
+		m_ConfirmUnSpec = false;
+		return false;
+	}
+
+	if(m_ConfirmUnSpec)
+	{
+		m_ConfirmUnSpec = false;
+		return false;
+	}
+
+	if(g_Config.m_TcShowChatClient)
+		GameClient()->Echo("Are u sure want unspec? Press again to unspec");
+	else
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "unspec", "Are u sure want unspec? Press again to unspec");
+	m_ConfirmUnSpec = true;
+	return true;
+}
+
 void CTClient::SpecId(int ClientId)
 {
 	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
@@ -399,6 +624,63 @@ void CTClient::ConAirRescue(IConsole::IResult *pResult, void *pUserData)
 	((CTClient *)pUserData)->AirRescue();
 }
 
+void CTClient::ConReloadTextures(IConsole::IResult *pResult, void *pUserData)
+{
+	((CTClient *)pUserData)->RequestReloadTextures();
+}
+
+void CTClient::RequestReloadTextures()
+{
+	m_ReloadTexturesRequested = true;
+}
+
+void CTClient::OnUpdate()
+{
+	if(!m_ReloadTexturesRequested)
+		return;
+	m_ReloadTexturesRequested = false;
+	ReloadTextures();
+}
+
+void CTClient::ReloadTextures()
+{
+	CGameClient *pGameClient = GameClient();
+
+	pGameClient->LoadGameSkin(g_Config.m_ClAssetGame);
+	pGameClient->LoadEmoticonsSkin(g_Config.m_ClAssetEmoticons);
+	pGameClient->LoadParticlesSkin(g_Config.m_ClAssetParticles);
+	pGameClient->LoadHudSkin(g_Config.m_ClAssetHud);
+	pGameClient->LoadExtrasSkin(g_Config.m_ClAssetExtras);
+
+	for(int i = 0; i < g_pData->m_NumImages; i++)
+	{
+		if(i == IMAGE_GAME || i == IMAGE_EMOTICONS || i == IMAGE_PARTICLES || i == IMAGE_HUD || i == IMAGE_EXTRAS)
+			continue;
+		if(g_pData->m_aImages[i].m_pFilename[0] == '\0')
+			continue;
+		Graphics()->UnloadTexture(&g_pData->m_aImages[i].m_Id);
+		g_pData->m_aImages[i].m_Id = Graphics()->LoadTexture(g_pData->m_aImages[i].m_pFilename, IStorage::TYPE_ALL);
+	}
+
+	pGameClient->m_NamePlates.RefreshTextureHandles();
+
+	const bool MapLoaded = pGameClient->Map() != nullptr && pGameClient->Map()->IsLoaded();
+	pGameClient->m_MapImages.ReloadAll();
+	if(MapLoaded)
+	{
+		pGameClient->m_MapLayersBackground.OnMapLoad();
+		pGameClient->m_MapLayersForeground.OnMapLoad();
+	}
+	pGameClient->m_Background.LoadBackground();
+
+	pGameClient->RefreshSkins(CSkinDescriptor::FLAG_SIX | CSkinDescriptor::FLAG_SEVEN);
+
+	char aBuf[192];
+	str_format(aBuf, sizeof(aBuf), "Textures reloaded: textures %llu MiB, system RAM spill %llu MiB, VRAM limit %d MiB",
+		(unsigned long long)(Graphics()->TextureMemoryUsage() / 1024 / 1024), (unsigned long long)(g_VramFallbackBytes.load() / 1024 / 1024), g_Config.m_TcVramLimit);
+	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tclient", aBuf);
+}
+
 void CTClient::ConCalc(IConsole::IResult *pResult, void *pUserData)
 {
 	int Error = 0;
@@ -420,6 +702,8 @@ void CTClient::OnConsoleInit()
 	Console()->Register("spec_id", "v[id]", CFGFLAG_CLIENT, ConSpecId, this, "Spectate a player by Id");
 
 	Console()->Register("emote_cycle", "", CFGFLAG_CLIENT, ConEmoteCycle, this, "Cycle through emotes");
+
+	Console()->Register("tc_reload_textures", "", CFGFLAG_CLIENT, ConReloadTextures, this, "Reload all textures to apply the current memory settings");
 
 	Console()->Chain(
 		"tc_allow_any_resolution", [](IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData) {
@@ -548,6 +832,9 @@ bool CTClient::ServerCommandExists(const char *pCommand)
 
 void CTClient::OnRender()
 {
+	NotifyOnMove();
+	NotifyOnSwitch();
+
 	if(m_pTClientInfoTask)
 	{
 		if(m_pTClientInfoTask->State() == EHttpState::DONE)
@@ -560,7 +847,104 @@ void CTClient::OnRender()
 	DoFinishCheck();
 }
 
+static constexpr float TCLIENT_INFO_FONT_SIZE = 2.1f;
+static constexpr float TCLIENT_INFO_LINE_HEIGHT = 2.3f;
+static constexpr float TCLIENT_INFO_PADDING = 0.6f;
+
+void CTClient::RenderInfoOverlay()
+{
+	m_InfoOverlayRect = CUIRect{0.0f, 0.0f, 0.0f, 0.0f};
+	if((!g_Config.m_TcInfoVram && !g_Config.m_TcInfoTextures) || !HudLayout::IsEnabled(HudLayout::MODULE_VRAM_INFO))
+		return;
+	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
+		return;
+	if(GameClient()->m_Menus.IsActive() || GameClient()->m_GameConsole.IsActive())
+		return;
+
+	const float HudWidth = HudLayout::CANVAS_HEIGHT * Graphics()->ScreenAspect();
+	const float HudHeight = HudLayout::CANVAS_HEIGHT;
+	const auto Layout = HudLayout::Get(HudLayout::MODULE_VRAM_INFO, HudWidth, HudHeight);
+	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
+
+	float ScreenTopLeftX = 0.0f, ScreenTopLeftY = 0.0f, ScreenBottomRightX = 0.0f, ScreenBottomRightY = 0.0f;
+	Graphics()->GetScreen(&ScreenTopLeftX, &ScreenTopLeftY, &ScreenBottomRightX, &ScreenBottomRightY);
+
+	Graphics()->MapScreen(-Layout.m_X / Scale, -Layout.m_Y / Scale, -Layout.m_X / Scale + HudWidth / Scale, -Layout.m_Y / Scale + HudHeight / Scale);
+	Graphics()->ClipDisable();
+	TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+
+	char aBuf[256];
+	float OffsetY = 0.0f;
+	float MaxWidth = 0.0f;
+	auto RenderInfoLine = [&](const char *pText) {
+		TextRender()->Text(0.0f, OffsetY, TCLIENT_INFO_FONT_SIZE, pText, -1.0f);
+		MaxWidth = std::max(MaxWidth, TextRender()->TextWidth(TCLIENT_INFO_FONT_SIZE, pText, -1, -1.0f));
+		OffsetY += TCLIENT_INFO_LINE_HEIGHT;
+	};
+
+	if(g_Config.m_TcInfoVram)
+	{
+		const uint64_t aUsageBytes[4] = {Graphics()->TextureMemoryUsage(), Graphics()->BufferMemoryUsage(), Graphics()->StreamedMemoryUsage(), Graphics()->StagingMemoryUsage()};
+		const uint64_t aSpillBytes[4] = {g_VramFallbackBytesByUsage[0].load(), g_VramFallbackBytesByUsage[1].load(), g_VramFallbackBytesByUsage[2].load(), g_VramFallbackBytesByUsage[3].load()};
+		str_format(aBuf, sizeof(aBuf), "VRAM: tex %llu MiB | buf %llu MiB | stream %llu MiB | staging %llu MiB",
+			(unsigned long long)((aUsageBytes[0] > aSpillBytes[0] ? aUsageBytes[0] - aSpillBytes[0] : 0) / 1024 / 1024),
+			(unsigned long long)((aUsageBytes[1] > aSpillBytes[1] ? aUsageBytes[1] - aSpillBytes[1] : 0) / 1024 / 1024),
+			(unsigned long long)((aUsageBytes[2] > aSpillBytes[2] ? aUsageBytes[2] - aSpillBytes[2] : 0) / 1024 / 1024),
+			(unsigned long long)((aUsageBytes[3] > aSpillBytes[3] ? aUsageBytes[3] - aSpillBytes[3] : 0) / 1024 / 1024));
+		RenderInfoLine(aBuf);
+		str_format(aBuf, sizeof(aBuf), "Limits: VRAM %d MiB | RAM %d MiB | tex max %d px | RAM fallback %s | skins limit %d",
+			g_Config.m_TcVramLimit, g_Config.m_TcRamLimit, g_Config.m_TcTextureMaxSize, g_Config.m_TcVramFallback ? "on" : "off", g_Config.m_ClSkinsLoadedMax);
+		RenderInfoLine(aBuf);
+		str_format(aBuf, sizeof(aBuf), "RAM spill: %llu MiB in %llu allocations (tex %llu | buf %llu | stream %llu | staging %llu)",
+			(unsigned long long)(g_VramFallbackBytes.load() / 1024 / 1024), (unsigned long long)g_VramFallbackCount.load(),
+			(unsigned long long)(aSpillBytes[0] / 1024 / 1024), (unsigned long long)(aSpillBytes[1] / 1024 / 1024),
+			(unsigned long long)(aSpillBytes[2] / 1024 / 1024), (unsigned long long)(aSpillBytes[3] / 1024 / 1024));
+		RenderInfoLine(aBuf);
+	}
+
+	if(g_Config.m_TcInfoTextures)
+	{
+		uint64_t TotalBytes = 0;
+		const int NumTextures = GameClient()->m_MapImages.NumLoadedTextures();
+		for(int i = 0; i < NumTextures; i++)
+		{
+			const SLoadedMapTextureInfo *pInfo = GameClient()->m_MapImages.LoadedTexture(i);
+			TotalBytes += (uint64_t)pInfo->m_Width * pInfo->m_Height * 4;
+		}
+		str_format(aBuf, sizeof(aBuf), "Map textures: %d, ~%llu MiB (RGBA, without mipmaps)", NumTextures, (unsigned long long)(TotalBytes / 1024 / 1024));
+		RenderInfoLine(aBuf);
+		for(int i = 0; i < NumTextures; i++)
+		{
+			const SLoadedMapTextureInfo *pInfo = GameClient()->m_MapImages.LoadedTexture(i);
+			if(pInfo->m_Width <= 0 || pInfo->m_Height <= 0)
+				continue;
+			str_format(aBuf, sizeof(aBuf), "  %s %dx%d ~%llu KiB", pInfo->m_aName, pInfo->m_Width, pInfo->m_Height, (unsigned long long)((uint64_t)pInfo->m_Width * pInfo->m_Height * 4 / 1024));
+			RenderInfoLine(aBuf);
+		}
+	}
+
+	Graphics()->ClipDisable();
+	Graphics()->MapScreen(ScreenTopLeftX, ScreenTopLeftY, ScreenBottomRightX, ScreenBottomRightY);
+
+	if(MaxWidth > 0.0f)
+		m_InfoOverlayRect = CUIRect{Layout.m_X, Layout.m_Y, (MaxWidth + TCLIENT_INFO_PADDING) * Scale, (OffsetY - TCLIENT_INFO_LINE_HEIGHT + TCLIENT_INFO_FONT_SIZE) * Scale};
+}
+
+CUIRect CTClient::GetInfoOverlayHudEditorRect() const
+{
+	if(m_InfoOverlayRect.w > 0.0f && m_InfoOverlayRect.h > 0.0f)
+		return m_InfoOverlayRect;
+
+	const float HudWidth = HudLayout::CANVAS_HEIGHT * Graphics()->ScreenAspect();
+	const auto Layout = HudLayout::Get(HudLayout::MODULE_VRAM_INFO, HudWidth, HudLayout::CANVAS_HEIGHT);
+	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
+	const float Width = TextRender()->TextWidth(TCLIENT_INFO_FONT_SIZE, "VRAM: tex 12345 MiB | buf 12345 MiB | stream 12345 MiB | staging 12345 MiB", -1, -1.0f) + TCLIENT_INFO_PADDING;
+	const float Height = TCLIENT_INFO_LINE_HEIGHT * 2.0f + TCLIENT_INFO_FONT_SIZE;
+	return CUIRect{Layout.m_X, Layout.m_Y, Width * Scale, Height * Scale};
+}
+
 bool CTClient::NeedUpdate()
+
 {
 	return str_comp(m_aVersionStr, "0") != 0;
 }
@@ -573,6 +957,7 @@ void CTClient::ResetTClientInfoTask()
 		m_pTClientInfoTask = NULL;
 	}
 }
+
 
 void CTClient::FetchTClientInfo()
 {
@@ -751,6 +1136,16 @@ static void StripStr(const char *pIn, char *pOut, const char *pEnd)
 
 void CTClient::RenderMiniVoteHud()
 {
+	const CUIRect Screen = *Ui()->Screen();
+	float SaveX0, SaveY0, SaveX1, SaveY1;
+	Graphics()->GetScreen(&SaveX0, &SaveY0, &SaveX1, &SaveY1);
+	const float HudWidth = HudLayout::CANVAS_HEIGHT * Graphics()->ScreenAspect();
+	const auto VoteLayout = HudLayout::Get(HudLayout::MODULE_VOTE, HudWidth, HudLayout::CANVAS_HEIGHT);
+	const float VoteScale = std::clamp(VoteLayout.m_Scale / 100.0f, 0.25f, 3.0f);
+	const float OffsetX = -(VoteLayout.m_X * 2.0f) / VoteScale;
+	const float OffsetY = 60.0f - (VoteLayout.m_Y * 2.0f) / VoteScale;
+	Graphics()->MapScreen(OffsetX, OffsetY, OffsetX + Screen.w / VoteScale, OffsetY + Screen.h / VoteScale);
+
 	CUIRect View = {0.0f, 60.0f, 70.0f, 35.0f};
 	View.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.4f), IGraphics::CORNER_R, 3.0f);
 	View.Margin(3.0f, &View);
@@ -806,6 +1201,7 @@ void CTClient::RenderMiniVoteHud()
 	Ui()->DoLabel(&RightColumn, aKey[0] == '\0' ? "no" : aKey, 0.5f, TEXTALIGN_MR);
 
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
+	Graphics()->MapScreen(SaveX0, SaveY0, SaveX1, SaveY1);
 }
 
 void CTClient::RenderCenterLines()

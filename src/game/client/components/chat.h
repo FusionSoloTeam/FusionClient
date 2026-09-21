@@ -79,6 +79,9 @@ class CChat : public CComponent
 	CLine m_aLines[MAX_LINES];
 	int m_CurrentLine;
 
+	// TClient: chat history scrolling
+	int m_HistoryScrollOffset = 0;
+
 	enum
 	{
 		// client IDs for special messages
@@ -102,6 +105,7 @@ class CChat : public CComponent
 	};
 
 	int m_Mode;
+	vec2 m_ChatCursorPos = vec2(0.0f, 0.0f);
 	bool m_Show;
 	bool m_CompletionUsed;
 	int m_CompletionChosen;
@@ -169,6 +173,7 @@ class CChat : public CComponent
 
 	bool LineShouldHighlight(const char *pLine, const char *pName);
 	void StoreSave(const char *pText);
+	int GetInitializedLineCount() const;
 
 	friend class CBindChat;
 	friend class CTranslate;
@@ -197,6 +202,7 @@ public:
 	void OnRelease() override;
 	void OnMessage(int MsgType, void *pRawMsg) override;
 	bool OnInput(const IInput::CEvent &Event) override;
+	bool OnCursorMove(float x, float y, IInput::ECursorType CursorType) override;
 	void OnInit() override;
 
 	void RebuildChat();
@@ -227,5 +233,11 @@ public:
 	//
 	// It uses team or public chat depending on m_Mode.
 	void SendChatQueued(const char *pLine);
+
+	// ----- TClient -----
+
+	bool GetLayoutFixCommand(char *pOut, int OutSize) const;
+	const char *FindCommandByPrefix(const char *pName) const;
+	void TagPlayerUnderCursor();
 };
 #endif

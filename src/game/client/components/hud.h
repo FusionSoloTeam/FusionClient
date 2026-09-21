@@ -9,6 +9,7 @@
 #include <generated/protocol.h>
 
 #include <game/client/component.h>
+#include <game/client/ui_rect.h>
 
 struct SScoreInfo
 {
@@ -27,6 +28,7 @@ struct SScoreInfo
 		m_aRankText[0] = 0;
 		m_aPlayerNameText[0] = 0;
 		m_ScoreTextWidth = 0.f;
+		m_LastCorners = -1;
 		m_Initialized = false;
 	}
 
@@ -38,6 +40,7 @@ struct SScoreInfo
 	char m_aPlayerNameText[MAX_NAME_LENGTH];
 	int m_RoundRectQuadContainerIndex;
 	STextContainerIndex m_OptionalNameTextContainerIndex;
+	int m_LastCorners;
 
 	bool m_Initialized;
 };
@@ -105,6 +108,8 @@ class CHud : public CComponent
 	void RenderWarmupTimer();
 	void RenderLocalTime(float x);
 
+	void HudGradientText(float x, float y, float Size, const char *pText, float LineWidth = -1.0f) const;
+
 	static constexpr float MOVEMENT_INFORMATION_LINE_HEIGHT = 8.0f;
 
 public:
@@ -121,6 +126,21 @@ public:
 	// DDRace
 
 	void OnMessage(int MsgType, void *pRawMsg) override;
+	float GetMovementInformationBoxWidth() const;
+	CUIRect GetMovementInformationHudEditorRect() const;
+	CUIRect GetHealthAmmoHudEditorRect() const;
+	CUIRect GetPlayerStateHudEditorRect() const;
+	CUIRect GetSpectatorCountHudEditorRect() const;
+	CUIRect GetDummyActionsHudEditorRect() const;
+	CUIRect GetLocalTimeHudEditorRect() const;
+	CUIRect GetFpsPingHudEditorRect() const;
+	CUIRect GetFrozenTextHudEditorRect() const;
+	CUIRect GetFrozenHudEditorRect() const;
+	void RenderKeystrokes();
+	CUIRect GetKeystrokesHudEditorRect() const;
+	void RenderFinishPrediction();
+	CUIRect GetFinishPredictionHudEditorRect() const;
+	CUIRect GetVoteHudEditorRect() const;
 	void RenderNinjaBarPos(float x, float y, float Width, float Height, float Progress, float Alpha = 1.0f);
 
 private:
@@ -134,10 +154,41 @@ private:
 	int m_TimeCpLastReceivedTick;
 	bool m_ShowFinishTime;
 
-	inline float GetMovementInformationBoxHeight();
+	// TClient: showpred tracking
+	int m_LastPreds[SERVER_TICK_SPEED * 5];
+	int m_LastPredTick;
+	int m_LastPredLength;
+
+	inline float GetMovementInformationBoxHeight() const;
+
+	struct SMovementInformationDummyState
+	{
+		int m_ClientId;
+		bool m_ShowPos;
+		bool m_ShowSpeed;
+		bool m_ShowAngle;
+		float m_ExtraHeight;
+	};
+	SMovementInformationDummyState GetMovementInformationDummyState(bool PosOnly) const;
 	inline int GetDigitsIndex(int Value, int Max);
 
 	// Quad Offsets
+	// TClient: finish prediction path data
+	void EnsureFinishPredictionData();
+	std::vector<int> m_vFinishPredictionDistances;
+	int m_FinishPredictionMapWidth = 0;
+	int m_FinishPredictionMapHeight = 0;
+	float m_FinishPredictionStartDistance = -1.0f;
+	bool m_FinishPredictionDataDirty = true;
+	float m_FinishPredictionRaceStartTime = -1.0f;
+	float m_FinishPredictionSmoothedTime = -1.0f;
+	float m_FinishPredictionLastRaceTime = -1.0f;
+	float m_FinishPredictionNextRetryTime = 0.0f;
+	float m_FinishPredictionWindowTime = -1.0f;
+	float m_FinishPredictionWindowDistance = -1.0f;
+	float m_FinishPredictionMeasuredSpeed = -1.0f;
+	float m_FinishPredictionLastRemaining = -1.0f;
+
 	int m_aAmmoOffset[NUM_WEAPONS];
 	int m_HealthOffset;
 	int m_EmptyHealthOffset;

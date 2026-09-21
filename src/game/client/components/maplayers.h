@@ -30,6 +30,7 @@ public:
 	CMapLayers(ERenderType Type, bool OnlineOnly = true);
 	int Sizeof() const override { return sizeof(*this); }
 	void OnInit() override;
+	void OnReset() override;
 	void OnRender() override;
 	void OnMapLoad() override;
 

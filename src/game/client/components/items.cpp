@@ -14,6 +14,7 @@
 #include <game/client/laser_data.h>
 #include <game/client/pickup_data.h>
 #include <game/client/prediction/entities/laser.h>
+#include <game/client/prediction/entities/light.h>
 #include <game/client/prediction/entities/pickup.h>
 #include <game/client/prediction/entities/projectile.h>
 #include <game/client/projectile_data.h>
@@ -481,6 +482,7 @@ void CItems::OnRender()
 	int GunStartTick = (Client()->GameTick(g_Config.m_ClDummy) / 7) * 7;
 
 	bool UsePredicted = GameClient()->Predict() && GameClient()->AntiPingGunfire();
+	bool UsePredictedLights = g_Config.m_TcPredictLasers && GameClient()->Predict();
 	auto &aSwitchers = GameClient()->Switchers();
 	if(UsePredicted)
 	{
@@ -499,6 +501,25 @@ void CItems::OnRender()
 				continue;
 			CLaserData Data = pLaser->GetData();
 			RenderLaser(&Data, true);
+		}
+
+		if(UsePredictedLights)
+		{
+			for(auto *pLight = (CLight *)GameClient()->m_PrevPredictedWorld.FindFirst(CGameWorld::ENTTYPE_LIGHT); pLight; pLight = (CLight *)pLight->NextEntity())
+			{
+				CLaserData Data = pLight->GetData();
+				const bool Managed = !IsSuper && Data.m_SwitchNumber > 0 && Data.m_SwitchNumber < (int)aSwitchers.size();
+				const bool SwitchOn = Managed && aSwitchers[Data.m_SwitchNumber].m_aStatus[SwitcherTeam];
+				if(Managed && !SwitchOn && BlinkingLight)
+					continue;
+				const bool BeamOn = !IsSuper && (SwitchOn || pLight->m_Layer != LAYER_SWITCH || Data.m_SwitchNumber == 0);
+				if(!BeamOn)
+				{
+					Data.m_From.x = Data.m_To.x;
+					Data.m_From.y = Data.m_To.y;
+				}
+				RenderLaser(&Data, true);
+			}
 		}
 		for(auto *pPickup = (CPickup *)GameClient()->m_PrevPredictedWorld.FindFirst(CGameWorld::ENTTYPE_PICKUP); pPickup; pPickup = (CPickup *)pPickup->NextEntity())
 		{
@@ -577,6 +598,8 @@ void CItems::OnRender()
 			}
 
 			CLaserData Data = ExtractLaserInfo(Item.m_Type, pData, &GameClient()->m_GameWorld, pEntEx);
+			if(UsePredictedLights && Data.m_Type == LASERTYPE_FREEZE && GameClient()->m_GameWorld.GetEntity(Item.m_Id, CGameWorld::ENTTYPE_LIGHT))
+				continue;
 			bool Inactive = !IsSuper && Data.m_SwitchNumber > 0 && Data.m_SwitchNumber < (int)aSwitchers.size() && !aSwitchers[Data.m_SwitchNumber].m_aStatus[SwitcherTeam];
 
 			bool IsEntBlink = false;

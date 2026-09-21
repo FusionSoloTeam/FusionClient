@@ -380,6 +380,7 @@ public:
 	// TClient
 	virtual bool CheckNewInput() = 0;
 	virtual void SetConnectInfo(const NETADDR *pAddress) = 0;
+	virtual void OnFileDrop(const char *pPath) {}
 
 	virtual void OnConsoleInit() = 0;
 

@@ -1060,6 +1060,17 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 		g_Config.m_GfxHighDetail ^= 1;
 	GameClient()->m_Tooltips.DoToolTip(&g_Config.m_GfxHighDetail, &Button, Localize("Allows maps to render with more detail"));
 
+	// TClient: motion blur (Vulkan backend only)
+	MainView.HSplitTop(20.0f, &Button, &MainView);
+	if(DoButton_CheckBox(&g_Config.m_TcMotionBlur, Localize("Motion Blur"), g_Config.m_TcMotionBlur, &Button))
+		g_Config.m_TcMotionBlur ^= 1;
+	GameClient()->m_Tooltips.DoToolTip(&g_Config.m_TcMotionBlur, &Button, Localize("Blends the previous frame into the current one for a motion blur effect (Vulkan backend only)"));
+	if(g_Config.m_TcMotionBlur)
+	{
+		MainView.HSplitTop(20.0f, &Button, &MainView);
+		Ui()->DoScrollbarOption(&g_Config.m_TcMotionBlurStrength, &g_Config.m_TcMotionBlurStrength, &Button, Localize("Motion Blur Strength"), 0, 95, &CUi::ms_LinearScrollbarScale, 0, "%");
+	}
+
 	MainView.HSplitTop(20.0f, &Button, &MainView);
 	if(DoButton_CheckBox(&g_Config.m_ClShowfps, Localize("Show FPS"), g_Config.m_ClShowfps, &Button))
 		g_Config.m_ClShowfps ^= 1;
@@ -1117,6 +1128,9 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 		static std::vector<const char *> s_vpBackendIdNamesCStr;
 		static std::vector<SMenuBackendInfo> s_vBackendInfos;
 
+		if(str_comp_nocase(g_Config.m_GfxBackend, "Vulkan 1.4") == 0)
+			str_copy(g_Config.m_GfxBackend, "Vulkan");
+
 		size_t BackendCount = FoundBackendCount + 1;
 		s_vBackendIdNames.resize(BackendCount);
 		s_vpBackendIdNamesCStr.resize(BackendCount);
@@ -1154,8 +1168,8 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 
 		if(SelectedOldBackend != -1)
 		{
-			// no custom selected
-			BackendCount -= 1;
+			// a listed backend is selected; no custom slot needed
+			BackendCount = CurCounter;
 		}
 		else
 		{
@@ -1169,6 +1183,7 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 			s_vBackendInfos[CurCounter].m_Major = g_Config.m_GfxGLMajor;
 			s_vBackendInfos[CurCounter].m_Minor = g_Config.m_GfxGLMinor;
 			s_vBackendInfos[CurCounter].m_Patch = g_Config.m_GfxGLPatch;
+			BackendCount = CurCounter + 1;
 		}
 
 		static int s_SelectedOldBackend = -1;
@@ -1314,6 +1329,11 @@ void CMenus::RenderSettingsSound(CUIRect MainView)
 	if(DoButton_CheckBox(&g_Config.m_SndHighlight, Localize("Enable highlighted chat sound"), g_Config.m_SndHighlight, &Button))
 		g_Config.m_SndHighlight ^= 1;
 
+	MainView.HSplitTop(20.0f, &Button, &MainView);
+	if(DoButton_CheckBox(&g_Config.m_TcMuteOthersSounds, Localize("Mute all sounds from other players"), g_Config.m_TcMuteOthersSounds, &Button))
+		g_Config.m_TcMuteOthersSounds ^= 1;
+	GameClient()->m_Tooltips.DoToolTip(&g_Config.m_TcMuteOthersSounds, &Button, Localize("Mutes every sound triggered by other players (hooks, jumps, weapons, pain). Your own sounds stay audible."));
+
 	// volume slider
 	{
 		MainView.HSplitTop(5.0f, nullptr, &MainView);
@@ -1443,6 +1463,11 @@ bool CMenus::RenderLanguageSelection(CUIRect MainView)
 
 void CMenus::RenderSettings(CUIRect MainView)
 {
+	if(m_AssetsEditorState.m_VisualsEditorOpen && m_AssetsEditorState.m_FullscreenOpen)
+	{
+		RenderAssetsEditorScreen(*Ui()->Screen());
+		return;
+	}
 	// render background
 	CUIRect Button, TabBar, RestartBar;
 	MainView.VSplitRight(120.0f, &MainView, &TabBar);
@@ -1966,14 +1991,28 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		{
 			Ui()->DoScrollbarOption(&g_Config.m_ClFreezeBarsAlphaInsideFreeze, &g_Config.m_ClFreezeBarsAlphaInsideFreeze, &Button, Localize("Opacity of freeze bars inside freeze"), 0, 100, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_MULTILINE, "%");
 		}
+
+		RightView.HSplitTop(MarginSmall, nullptr, &RightView);
+		RightView.HSplitTop(LineSize, &Button, &RightView);
+		Ui()->DoScrollbarOption(&g_Config.m_TcMenuScale, &g_Config.m_TcMenuScale, &Button, TCLocalize("Menu scale"), 50, 150, &CUi::ms_LinearScrollbarScale, 0u, "%");
 	}
 	else if(s_CurTab == APPEARANCE_TAB_CHAT)
 	{
 		CChat &Chat = GameClient()->m_Chat;
 		CUIRect TopView, PreviewView;
-		MainView.HSplitBottom(220.0f, &TopView, &PreviewView);
+		MainView.HSplitBottom(300.0f, &TopView, &PreviewView);
 		TopView.HSplitBottom(MarginBetweenViews, &TopView, nullptr);
 		TopView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+
+		// ***** Left column (scrollable) ***** //
+		static CScrollRegion s_ChatSettingsScroll;
+		vec2 ChatScrollOffset(0.0f, 0.0f);
+		CScrollRegionParams ChatScrollParams;
+		ChatScrollParams.m_ScrollbarWidth = 10.0f;
+		ChatScrollParams.m_ScrollUnit = LineSize;
+		s_ChatSettingsScroll.Begin(&LeftView, &ChatScrollOffset, &ChatScrollParams);
+		LeftView.y += ChatScrollOffset.y;
+		const float ChatColStartY = LeftView.y;
 
 		// ***** Chat ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Chat"), HeadlineFontSize,
@@ -1997,6 +2036,13 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClChatTeamColors, Localize("Show names in chat in team colors"), &g_Config.m_ClChatTeamColors, &LeftView, LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowChatFriends, Localize("Show only chat messages from friends"), &g_Config.m_ClShowChatFriends, &LeftView, LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowChatTeamMembersOnly, Localize("Show only chat messages from team members"), &g_Config.m_ClShowChatTeamMembersOnly, &LeftView, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcChatFixLayout, Localize("Fix language commands (fix a command typed in a wrong layout)"), &g_Config.m_TcChatFixLayout, &LeftView, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcChatCursor, Localize("Unlock cursor on open chat"), &g_Config.m_TcChatCursor, &LeftView, LineSize);
+		if(DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcChatTagCursor, Localize("Tag with cursor"), &g_Config.m_TcChatTagCursor, &LeftView, LineSize) && g_Config.m_TcChatTagCursor)
+			g_Config.m_TcChatCursor = 1;
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		Ui()->DoScrollbarOption(&g_Config.m_TcChatTagCursorHitbox, &g_Config.m_TcChatTagCursorHitbox, &Button, Localize("Tag cursor hitbox"), 50, 500, &CUi::ms_LinearScrollbarScale, 0u, "%");
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcMuteMessagesConsole, Localize("Show muted players' messages in console"), &g_Config.m_TcMuteMessagesConsole, &LeftView, LineSize);
 
 		if(DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClChatOld, Localize("Use old chat style"), &g_Config.m_ClChatOld, &LeftView, LineSize))
 			GameClient()->m_Chat.RebuildChat();
@@ -2011,7 +2057,7 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		}
 
 		LeftView.HSplitTop(LineSize, &Button, &LeftView);
-		if(Ui()->DoScrollbarOption(&g_Config.m_ClChatWidth, &g_Config.m_ClChatWidth, &Button, Localize("Chat width"), 120, 400))
+		if(Ui()->DoScrollbarOption(&g_Config.m_ClChatWidth, &g_Config.m_ClChatWidth, &Button, Localize("Chat width"), 60, 400))
 		{
 			Chat.EnsureCoherentFontSize();
 			Chat.RebuildChat();
@@ -2019,6 +2065,25 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 
 		static CButtonContainer s_BackgroundColor;
 		DoLine_ColorPicker(&s_BackgroundColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Chat background color"), &g_Config.m_ClChatBackgroundColor, color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::ClChatBackgroundColor, true)), false, nullptr, true);
+
+		// TClient: chat scrolling
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcChatScroll, Localize("Scroll chat with mouse wheel"), &g_Config.m_TcChatScroll, &LeftView, LineSize);
+
+		CUIRect ChatColContent = LeftView;
+		ChatColContent.y = ChatColStartY;
+		ChatColContent.h = LeftView.y - ChatColStartY;
+		s_ChatSettingsScroll.AddRect(ChatColContent);
+		s_ChatSettingsScroll.End();
+
+		// ***** Right column (scrollable) ***** //
+		static CScrollRegion s_ChatRightScroll;
+		vec2 ChatRightScrollOffset(0.0f, 0.0f);
+		CScrollRegionParams ChatRightScrollParams;
+		ChatRightScrollParams.m_ScrollbarWidth = 10.0f;
+		ChatRightScrollParams.m_ScrollUnit = LineSize;
+		s_ChatRightScroll.Begin(&RightView, &ChatRightScrollOffset, &ChatRightScrollParams);
+		RightView.y += ChatRightScrollOffset.y;
+		const float ChatRightColStartY = RightView.y;
 
 		// ***** Messages ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Messages"), HeadlineFontSize,
@@ -2041,6 +2106,49 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		static CButtonContainer s_ClientMessageColor;
 		// TClient
 		DoLine_ColorPicker(&s_ClientMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, aBuf, &g_Config.m_ClMessageClientColor, ColorRGBA(0.5f, 0.78f, 1.0f), true, &g_Config.m_TcShowChatClient);
+
+		// ***** Prefixes ***** //
+		Ui()->DoLabel_AutoLineSize(Localize("Prefixes"), HeadlineFontSize,
+			TEXTALIGN_ML, &RightView, HeadlineHeight);
+		RightView.HSplitTop(MarginSmall, nullptr, &RightView);
+
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHideEnemyChat, Localize("Hide enemy chat (war-list enemies)"), &g_Config.m_TcHideEnemyChat, &RightView, LineSize);
+
+		const float CheckFontSize = LineSize * CUi::ms_FontmodHeight;
+		float MaxLabelWidth = 0.0f;
+		for(const char *pLbl : {Localize("Server prefix"), Localize("Client prefix"), Localize("Spec prefix"), Localize("Warlist prefix"), Localize("Friend prefix")})
+			MaxLabelWidth = maximum(MaxLabelWidth, TextRender()->TextWidth(CheckFontSize, pLbl));
+		const float CheckWidth = LineSize + 5.0f + MaxLabelWidth + 10.0f;
+
+		const float PrefixRowGap = 5.0f;
+		auto RenderPrefixOption = [&](int *pToggle, const char *pLabel, CLineInput *pInput, char *pBuffer, size_t BufSize, const char *pEmpty) {
+			RightView.HSplitTop(PrefixRowGap, nullptr, &RightView);
+			RightView.HSplitTop(LineSize, &Button, &RightView);
+			CUIRect CheckRect, EditRect;
+			Button.VSplitLeft(CheckWidth, &CheckRect, &EditRect);
+			DoButton_CheckBoxAutoVMarginAndSet(pToggle, pLabel, pToggle, &CheckRect, LineSize);
+			EditRect.VSplitLeft(6.0f, nullptr, &EditRect);
+			pInput->SetBuffer(pBuffer, BufSize);
+			pInput->SetEmptyText(pEmpty);
+			Ui()->DoEditBox(pInput, &EditRect, 12.0f);
+		};
+
+		static CLineInput s_ServerPrefixInput;
+		static CLineInput s_ClientPrefixInput;
+		static CLineInput s_SpecPrefixInput;
+		static CLineInput s_WarlistPrefixInput;
+		static CLineInput s_FriendPrefixInput;
+		RenderPrefixOption(&g_Config.m_TcChatServerPrefix, Localize("Server prefix"), &s_ServerPrefixInput, g_Config.m_TcServerPrefix, sizeof(g_Config.m_TcServerPrefix), "*** ");
+		RenderPrefixOption(&g_Config.m_TcChatClientPrefix, Localize("Client prefix"), &s_ClientPrefixInput, g_Config.m_TcClientPrefix, sizeof(g_Config.m_TcClientPrefix), "— ");
+		RenderPrefixOption(&g_Config.m_TcSpectatePrefix, Localize("Spec prefix"), &s_SpecPrefixInput, g_Config.m_TcSpecPrefix, sizeof(g_Config.m_TcSpecPrefix), "• ");
+		RenderPrefixOption(&g_Config.m_TcWarlistPrefixes, Localize("Warlist prefix"), &s_WarlistPrefixInput, g_Config.m_TcWarlistPrefix, sizeof(g_Config.m_TcWarlistPrefix), "♦ ");
+		RenderPrefixOption(&g_Config.m_ClMessageFriend, Localize("Friend prefix"), &s_FriendPrefixInput, g_Config.m_TcFriendPrefix, sizeof(g_Config.m_TcFriendPrefix), "♥ ");
+
+		CUIRect ChatRightContent = RightView;
+		ChatRightContent.y = ChatRightColStartY;
+		ChatRightContent.h = RightView.y - ChatRightColStartY;
+		s_ChatRightScroll.AddRect(ChatRightContent);
+		s_ChatRightScroll.End();
 
 		// ***** Chat Preview ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Preview"), HeadlineFontSize,
@@ -2088,7 +2196,9 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			bool m_Player;
 			bool m_Client;
 			bool m_Highlighted;
+			bool m_Enemy;
 			int m_TimesRepeated;
+			ColorRGBA m_WarlistColor = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
 
 			CTeeRenderInfo m_RenderInfo;
 		};
@@ -2100,7 +2210,8 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			FLAG_TEAM = 1 << 0,
 			FLAG_FRIEND = 1 << 1,
 			FLAG_HIGHLIGHT = 1 << 2,
-			FLAG_CLIENT = 1 << 3
+			FLAG_CLIENT = 1 << 3,
+			FLAG_WARLIST = 1 << 4
 		};
 		enum
 		{
@@ -2109,7 +2220,9 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			PREVIEW_TEAM,
 			PREVIEW_FRIEND,
 			PREVIEW_SPAMMER,
-			PREVIEW_CLIENT
+			PREVIEW_CLIENT,
+			PREVIEW_WARLIST,
+			PREVIEW_WARLIST2
 		};
 		auto &&SetPreviewLine = [](int Index, int ClientId, const char *pName, const char *pText, int Flag, int Repeats) {
 			SPreviewLine *pLine;
@@ -2128,6 +2241,7 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			pLine->m_Player = ClientId >= 0;
 			pLine->m_Highlighted = Flag & FLAG_HIGHLIGHT;
 			pLine->m_Client = Flag & FLAG_CLIENT;
+			pLine->m_Enemy = Flag & FLAG_WARLIST;
 			pLine->m_TimesRepeated = Repeats;
 			str_copy(pLine->m_aName, pName);
 			str_copy(pLine->m_aText, pText);
@@ -2137,6 +2251,11 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 				return;
 			s_vLines[Index].m_RenderInfo.m_Size = RealTeeSize;
 			s_vLines[Index].m_RenderInfo.Apply(pSkin);
+		};
+		auto &&SetWarlistGroupColor = [](int Index, ColorRGBA Color) {
+			if(Index >= (int)s_vLines.size())
+				return;
+			s_vLines[Index].m_WarlistColor = Color;
 		};
 
 		auto &&RenderPreview = [&](int LineIndex, int x, int y, bool Render = true) {
@@ -2165,17 +2284,25 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			{
 				LocalCursor.m_X += RealMsgPaddingTee;
 
-				if(Line.m_Friend && g_Config.m_ClMessageFriend)
+				if(Line.m_Enemy && g_Config.m_TcWarlistPrefixes)
+				{
+					if(Render)
+						TextRender()->TextColor(Line.m_WarlistColor);
+					TextRender()->TextEx(&LocalCursor, g_Config.m_TcWarlistPrefix, -1);
+				}
+				else if(Line.m_Friend && g_Config.m_ClMessageFriend)
 				{
 					if(Render)
 						TextRender()->TextColor(FriendColor);
-					TextRender()->TextEx(&LocalCursor, "♥ ", -1);
+					TextRender()->TextEx(&LocalCursor, g_Config.m_TcFriendPrefix, -1);
 				}
 			}
 
 			ColorRGBA NameColor;
 			if(Line.m_Team)
 				NameColor = CalculateNameColor(color_cast<ColorHSLA>(TeamColor));
+			else if(Line.m_Enemy)
+				NameColor = Line.m_WarlistColor;
 			else if(Line.m_Player)
 				NameColor = DefaultNameColor;
 			else if(Line.m_Client)
@@ -2232,8 +2359,10 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		{
 			char aLineBuilder[128];
 
+			char aServerPrefixName[8];
+			str_copy(aServerPrefixName, g_Config.m_TcChatServerPrefix ? g_Config.m_TcServerPrefix : "", sizeof(aServerPrefixName));
 			str_format(aLineBuilder, sizeof(aLineBuilder), "'%s' entered and joined the game", aBuf);
-			SetPreviewLine(PREVIEW_SYS, -1, "*** ", aLineBuilder, 0, 0);
+			SetPreviewLine(PREVIEW_SYS, -1, aServerPrefixName, aLineBuilder, 0, 0);
 
 			str_format(aLineBuilder, sizeof(aLineBuilder), "Hey, how are you %s?", aBuf);
 			SetPreviewLine(PREVIEW_HIGHLIGHT, 7, "Random Tee", aLineBuilder, FLAG_HIGHLIGHT, 0);
@@ -2241,13 +2370,21 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			SetPreviewLine(PREVIEW_TEAM, 11, "Your Teammate", "Let's speedrun this!", FLAG_TEAM, 0);
 			SetPreviewLine(PREVIEW_FRIEND, 8, "Friend", "Hello there", FLAG_FRIEND, 0);
 			SetPreviewLine(PREVIEW_SPAMMER, 9, "Spammer", "Hey fools, I'm spamming here!", 0, 5);
-			SetPreviewLine(PREVIEW_CLIENT, -1, "— ", "Echo command executed", FLAG_CLIENT, 0);
+			char aClientPrefixName[8];
+			str_copy(aClientPrefixName, g_Config.m_TcChatClientPrefix ? g_Config.m_TcClientPrefix : "", sizeof(aClientPrefixName));
+			SetPreviewLine(PREVIEW_CLIENT, -1, aClientPrefixName, "Echo command executed", FLAG_CLIENT, 0);
+			SetPreviewLine(PREVIEW_WARLIST, 12, "Warlisted", "Say that again and I'll find you.", FLAG_WARLIST, 0);
+			SetPreviewLine(PREVIEW_WARLIST2, 13, "Enemy Tee", "gg wp", FLAG_WARLIST, 0);
 		}
 
 		SetLineSkin(1, GameClient()->m_Skins.Find("pinky"));
 		SetLineSkin(2, GameClient()->m_Skins.Find("default"));
 		SetLineSkin(3, GameClient()->m_Skins.Find("cammostripes"));
 		SetLineSkin(4, GameClient()->m_Skins.Find("beast"));
+		SetLineSkin(6, GameClient()->m_Skins.Find("redstripe"));
+		SetLineSkin(7, GameClient()->m_Skins.Find("bluestripe"));
+		SetWarlistGroupColor(PREVIEW_WARLIST, ColorRGBA(1.0f, 0.2f, 0.2f, 1.0f)); // enemy group (red)
+		SetWarlistGroupColor(PREVIEW_WARLIST2, ColorRGBA(0.0f, 0.9f, 0.2f, 1.0f)); // team group (green)
 
 		// Backgrounds first
 		if(!g_Config.m_ClChatOld)
@@ -2283,6 +2420,12 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			if(!g_Config.m_ClShowChatFriends && !g_Config.m_ClShowChatTeamMembersOnly)
 			{
 				TempY += RenderMessageBackground(PREVIEW_SPAMMER);
+			}
+
+			if(!g_Config.m_TcHideEnemyChat && !g_Config.m_ClShowChatFriends && !g_Config.m_ClShowChatTeamMembersOnly)
+			{
+				TempY += RenderMessageBackground(PREVIEW_WARLIST);
+				TempY += RenderMessageBackground(PREVIEW_WARLIST2);
 			}
 
 			if(g_Config.m_TcShowChatClient)
@@ -2325,6 +2468,16 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			if(!g_Config.m_ClChatOld)
 				RenderTools()->RenderTee(pIdleState, &s_vLines[PREVIEW_SPAMMER].m_RenderInfo, EMOTE_NORMAL, vec2(1, 0.1f), vec2(X + RealTeeSizeHalved, Y + OffsetTeeY + FullHeightMinusTee / 2.0f + TWSkinUnreliableOffset));
 			Y += RenderPreview(PREVIEW_SPAMMER, X, Y).y;
+		}
+		// Warlist enemies
+		if(!g_Config.m_TcHideEnemyChat && !g_Config.m_ClShowChatFriends && !g_Config.m_ClShowChatTeamMembersOnly)
+		{
+			if(!g_Config.m_ClChatOld)
+				RenderTools()->RenderTee(pIdleState, &s_vLines[PREVIEW_WARLIST].m_RenderInfo, EMOTE_ANGRY, vec2(1, 0.1f), vec2(X + RealTeeSizeHalved, Y + OffsetTeeY + FullHeightMinusTee / 2.0f + TWSkinUnreliableOffset));
+			Y += RenderPreview(PREVIEW_WARLIST, X, Y).y;
+			if(!g_Config.m_ClChatOld)
+				RenderTools()->RenderTee(pIdleState, &s_vLines[PREVIEW_WARLIST2].m_RenderInfo, EMOTE_ANGRY, vec2(1, 0.1f), vec2(X + RealTeeSizeHalved, Y + OffsetTeeY + FullHeightMinusTee / 2.0f + TWSkinUnreliableOffset));
+			Y += RenderPreview(PREVIEW_WARLIST2, X, Y).y;
 		}
 		// Client
 		if(g_Config.m_TcShowChatClient)
@@ -2482,6 +2635,10 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 
 		static CButtonContainer s_HookCollNoCollResetId, s_HookCollHookableCollResetId, s_HookCollTeeCollResetId, s_HookCollTipColorResetId;
 		static int s_HookCollToolTip;
+
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(DoButton_CheckBox(&g_Config.m_TcHookCollOverlay, Localize("Show hook line to the end (through tiles and tees)"), g_Config.m_TcHookCollOverlay, &Button))
+			g_Config.m_TcHookCollOverlay ^= 1;
 
 		Ui()->DoLabel_AutoLineSize(Localize("Colors of the hook collision line:"), 13.0f,
 			TEXTALIGN_ML, &LeftView, HeadlineHeight);

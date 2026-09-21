@@ -2,6 +2,11 @@
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
 #include "maplayers.h"
 
+#include <base/math.h>
+#include <base/system.h>
+
+#include <engine/shared/config.h>
+
 #include <game/client/gameclient.h>
 #include <game/localization.h>
 
@@ -22,6 +27,10 @@ void CMapLayers::OnInit()
 	m_pLayers = Layers();
 	m_pImages = &GameClient()->m_MapImages;
 	m_MapRenderer.Clear();
+}
+
+void CMapLayers::OnReset()
+{
 }
 
 CCamera *CMapLayers::GetCurCamera()
@@ -54,7 +63,7 @@ void CMapLayers::OnRender()
 	// dynamic parameters for ingame rendering
 	m_Params.m_EntityOverlayVal = m_Type == RENDERTYPE_FULL_DESIGN ? 0 : g_Config.m_ClOverlayEntities;
 	m_Params.m_Center = GetCurCamera()->m_Center;
-	m_Params.m_Zoom = GetCurCamera()->m_Zoom;
+	m_Params.m_Zoom = GetCurCamera()->m_RenderZoom;
 	m_Params.m_RenderText = g_Config.m_ClTextEntities;
 	m_Params.m_DebugRenderGroupClips = g_Config.m_DbgRenderGroupClips;
 	m_Params.m_DebugRenderQuadClips = g_Config.m_DbgRenderQuadClips;

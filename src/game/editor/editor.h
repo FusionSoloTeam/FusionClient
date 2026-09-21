@@ -330,12 +330,36 @@ public:
 	};
 	std::map<const char *, CUi::SMessagePopupContext *, CStringKeyComparator> m_PopupMessageContexts;
 	[[gnu::format(printf, 2, 3)]] void ShowFileDialogError(const char *pFormat, ...);
+	void ShowEditorMessage(const char *pMessage);
+	void ApplyFill(vec2 WorldPos);
+	void ApplyShape(vec2 WorldPos);
+	void ProcessShapeApply();
 
 	void Reset(bool CreateDefault = true);
 	bool Save(const char *pFilename) override;
 	bool Load(const char *pFilename, int StorageType) override;
 	bool HandleMapDrop(const char *pFilename, int StorageType) override;
 	void LoadCurrentMap();
+
+	static constexpr int MAX_MAP_TABS = 8;
+	struct SMapTabInfo
+	{
+		char m_aTempFile[IO_MAX_PATH_LENGTH] = "";
+		char m_aSaveFile[IO_MAX_PATH_LENGTH] = "";
+		bool m_ValidSaveFile = false;
+		bool m_Modified = false;
+		bool m_Used = false;
+		vec2 m_WorldOffset = vec2(0.0f, 0.0f);
+		float m_Zoom = 0.0f;
+	};
+	void RenderMapTabs(CUIRect TabBar);
+	void SyncActiveMapTab();
+	bool SaveActiveMapTab();
+	void ApplyMapTab(int TabIndex);
+	void SwitchMapTab(int TabIndex);
+	void AddMapTab();
+	void CloseMapTab(int TabIndex);
+
 	void Render();
 
 	void RenderPressedKeys(CUIRect View);
@@ -391,6 +415,8 @@ public:
 	int m_PopupEventType;
 	int m_PopupEventActivated;
 	int m_PopupEventWasActivated;
+	bool m_PopupUnusedTeleportsActivated = false;
+	bool m_PopupShapesActivated = false;
 	bool m_LargeLayerWasWarned;
 	bool m_PreventUnusedTilesWasWarned;
 
@@ -404,6 +430,47 @@ public:
 	bool IsAllowPlaceUnusedTiles() const;
 
 	bool m_BrushDrawDestructive;
+	bool m_FillEnabled = false;
+
+	enum class EFillMode
+	{
+		AREA_ONLY,
+		AREA_WALLS,
+		OUTLINE,
+		NUM_MODES,
+	};
+	EFillMode m_FillMode = EFillMode::AREA_ONLY;
+	bool m_ShowTeleLines = false;
+	bool m_ShowTeleCheckLines = false;
+	bool m_ShowAlignmentGuides = false;
+
+	enum class EShapeType
+	{
+		CIRCLE,
+		SQUARE,
+		DIAMOND,
+		HEXAGON,
+		OCTAGON,
+		NUM_SHAPES,
+	};
+	EShapeType m_ShapeType = EShapeType::CIRCLE;
+	bool m_ShapeEnabled = false;
+	int m_ShapeRadius = 4;
+	int m_ShapeThickness = 1;
+	bool m_ShapeApplyInProgress = false;
+	size_t m_ShapeApplyOffset = 0;
+	int m_ShapeApplyAnchorX = 0;
+	int m_ShapeApplyAnchorY = 0;
+	std::vector<ivec2> m_vShapeApplyCells;
+
+	struct SShapeApplyTarget
+	{
+		std::shared_ptr<CLayer> m_pEditLayer;
+		std::shared_ptr<CLayer> m_pBrushLayer;
+		int m_BrushW = 1;
+		int m_BrushH = 1;
+	};
+	std::vector<SShapeApplyTarget> m_vShapeApplyTargets;
 
 	int m_Mentions = 0;
 	bool m_IngameMoved = false;
@@ -545,6 +612,8 @@ public:
 
 	static CUi::EPopupMenuFunctionResult PopupMenuFile(void *pContext, CUIRect View, bool Active);
 	static CUi::EPopupMenuFunctionResult PopupMenuTools(void *pContext, CUIRect View, bool Active);
+	static CUi::EPopupMenuFunctionResult PopupUnusedTeleports(void *pContext, CUIRect View, bool Active);
+	static CUi::EPopupMenuFunctionResult PopupShapes(void *pContext, CUIRect View, bool Active);
 	static CUi::EPopupMenuFunctionResult PopupMenuSettings(void *pContext, CUIRect View, bool Active);
 	static CUi::EPopupMenuFunctionResult PopupGroup(void *pContext, CUIRect View, bool Active);
 	struct SLayerPopupContext : public SPopupMenuId
@@ -776,6 +845,10 @@ public:
 
 private:
 	CEditorMap m_Map;
+
+	std::vector<SMapTabInfo> m_vMapTabs;
+	int m_ActiveMapTab = 0;
+	int m_MapTabFileCounter = 0;
 
 	CEditorHistory &ActiveHistory();
 

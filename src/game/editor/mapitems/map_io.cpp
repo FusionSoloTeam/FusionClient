@@ -68,7 +68,7 @@ CDataFileWriterFinishJob::CDataFileWriterFinishJob(IStorage *pStorage, const cha
 	m_aErrorMessage[0] = '\0';
 }
 
-bool CEditorMap::Save(const char *pFilename, const FErrorHandler &ErrorHandler)
+bool CEditorMap::Save(const char *pFilename, const FErrorHandler &ErrorHandler, bool Synchronous)
 {
 	char aFilenameTmp[IO_MAX_PATH_LENGTH];
 	IStorage::FormatTmpPath(aFilenameTmp, sizeof(aFilenameTmp), pFilename);
@@ -437,6 +437,16 @@ bool CEditorMap::Save(const char *pFilename, const FErrorHandler &ErrorHandler)
 
 	// finish the data file
 	std::shared_ptr<CDataFileWriterFinishJob> pWriterFinishJob = std::make_shared<CDataFileWriterFinishJob>(m_pEditor->Storage(), pFilename, aFilenameTmp, std::move(Writer));
+	if(Synchronous)
+	{
+		pWriterFinishJob->Run();
+		if(pWriterFinishJob->ErrorMessage()[0] != '\0')
+		{
+			ErrorHandler(pWriterFinishJob->ErrorMessage());
+			return false;
+		}
+		return true;
+	}
 	m_pEditor->Engine()->AddJob(pWriterFinishJob);
 	m_pEditor->m_WriterFinishJobs.push_back(pWriterFinishJob);
 

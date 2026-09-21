@@ -736,6 +736,8 @@ public:
 	 * @see IGraphics::ShowMessageBox
 	 */
 	virtual std::optional<int> ShowMessageBox(const IGraphics::CMessageBox &MessageBox) = 0;
+
+	virtual void SetFrameBlendingAllowed(bool Allowed) {}
 };
 
 class CGraphics_Threaded : public IEngineGraphics
@@ -1274,6 +1276,7 @@ public:
 
 	// TClient
 	void SetForcedAspect(bool Force) override;
+	void SetFrameBlendingAllowed(bool Allowed) override;
 };
 
 extern bool g_GraphicsForcedAspect;

@@ -11,6 +11,11 @@
 #include <engine/gfx/image_manipulation.h>
 #include <engine/graphics.h>
 #include <engine/shared/config.h>
+#include <engine/shared/vram_stats.h>
+
+std::atomic<uint64_t> g_VramFallbackBytes{0};
+std::atomic<uint64_t> g_VramFallbackCount{0};
+std::atomic<uint64_t> g_VramFallbackBytesByUsage[4]{};
 #include <engine/shared/localization.h>
 #include <engine/storage.h>
 
@@ -21,6 +26,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdlib>
@@ -43,6 +49,10 @@
 #define VK_API_VERSION_PATCH VK_VERSION_PATCH
 #endif
 
+#ifndef VK_API_VERSION_1_4
+#define VK_API_VERSION_1_4 VK_MAKE_API_VERSION(0, 1, 4, 0)
+#endif
+
 using namespace std::chrono_literals;
 
 class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
@@ -62,6 +72,14 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 	{
 		return g_Config.m_DbgGfx == DEBUG_GFX_MODE_VERBOSE || g_Config.m_DbgGfx == DEBUG_GFX_MODE_ALL;
 	}
+
+	[[nodiscard]] bool IsFrameBlendEnabled()
+	{
+		return g_Config.m_TcMotionBlur != 0 && g_Config.m_TcMotionBlurStrength > 0 && m_FrameBlendingAllowed;
+	}
+
+	uint64_t m_VRAMFallbackAllocations = 0;
+	uint64_t m_VRAMBudgetIgnored = 0;
 
 	static const char *MemoryUsageName(EMemoryBlockUsage MemUsage)
 	{
@@ -106,7 +124,22 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 		VkDeviceMemory m_Mem = VK_NULL_HANDLE;
 		VkDeviceSize m_Size = 0;
 		EMemoryBlockUsage m_UsageType;
+		bool m_IsSpilled = false;
 	};
+
+	static void FreeSpilledMemoryAccounting(SDeviceMemoryBlock &Mem)
+	{
+		if(!Mem.m_IsSpilled)
+			return;
+		Mem.m_IsSpilled = false;
+		auto SubClamped = [](std::atomic<uint64_t> &Counter, const uint64_t Amount) {
+			const uint64_t Cur = Counter.load(std::memory_order_relaxed);
+			Counter.store(Cur > Amount ? Cur - Amount : 0, std::memory_order_relaxed);
+		};
+		SubClamped(g_VramFallbackBytes, Mem.m_Size);
+		if((size_t)Mem.m_UsageType < 4)
+			SubClamped(g_VramFallbackBytesByUsage[(size_t)Mem.m_UsageType], Mem.m_Size);
+	}
 
 	struct SDeviceDescriptorPools;
 
@@ -376,6 +409,7 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 				if(pHeap->m_Buffer != VK_NULL_HANDLE)
 					vkDestroyBuffer(Device, pHeap->m_Buffer, nullptr);
 				vkFreeMemory(Device, pHeap->m_BufferMem.m_Mem, nullptr);
+				FreeSpilledMemoryAccounting(pHeap->m_BufferMem);
 
 				delete pHeap;
 				HeapIterator = m_MemoryCaches.m_vpMemoryHeaps.erase(HeapIterator);
@@ -421,6 +455,7 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 							if(pHeap->m_Buffer != VK_NULL_HANDLE)
 								vkDestroyBuffer(Device, pHeap->m_Buffer, nullptr);
 							vkFreeMemory(Device, pHeap->m_BufferMem.m_Mem, nullptr);
+							FreeSpilledMemoryAccounting(pHeap->m_BufferMem);
 							FreedMemory += pHeap->m_BufferMem.m_Size;
 
 							delete pHeap;
@@ -854,6 +889,15 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 		VkImageView m_ImgView = VK_NULL_HANDLE;
 	};
 
+	struct SFrameBlendImage
+	{
+		VkImage m_Image = VK_NULL_HANDLE;
+		SMemoryImageBlock<IMAGE_BUFFER_CACHE_ID> m_ImgMem;
+		VkImageView m_ImgView = VK_NULL_HANDLE;
+		SDeviceDescriptorSet m_DescriptorSet;
+		bool m_Valid = false;
+	};
+
 	/************************
 	 * MEMBER VARIABLES
 	 ************************/
@@ -957,12 +1001,17 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 private:
 	std::vector<VkImageView> m_vSwapChainImageViewList;
 	std::vector<SSwapChainMultiSampleImage> m_vSwapChainMultiSamplingImages;
+	std::vector<SFrameBlendImage> m_vFrameBlendImages;
 	std::vector<VkFramebuffer> m_vFramebufferList;
 	std::vector<VkCommandBuffer> m_vMainDrawCommandBuffers;
 
 	std::vector<std::vector<VkCommandBuffer>> m_vvThreadDrawCommandBuffers;
 	std::vector<VkCommandBuffer> m_vHelperThreadDrawCommandBuffers;
 	std::vector<std::vector<bool>> m_vvUsedThreadDrawCommandBuffer;
+	// secondary command buffers for the frame blend quad: with multiple render threads the
+	// render pass uses VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS, so inline draws into
+	// the primary command buffer are not allowed there
+	std::vector<VkCommandBuffer> m_vFrameBlendCommandBuffers;
 
 	std::vector<VkCommandBuffer> m_vMemoryCommandBuffers;
 	std::vector<bool> m_vUsedMemoryCommandBuffer;
@@ -977,6 +1026,8 @@ private:
 	std::vector<uint64_t> m_vImageLastFrameCheck;
 
 	uint32_t m_LastPresentedSwapChainImageIndex;
+	bool m_FrameBlendEnabledLastFrame = false;
+	bool m_FrameBlendEnabledThisFrame = false;
 
 	std::vector<SBufferObjectFrame> m_vBufferObjects;
 
@@ -1020,6 +1071,7 @@ private:
 	std::vector<VkCommandPool> m_vCommandPools;
 
 	VkRenderPass m_VKRenderPass;
+	VkRenderPass m_VKRenderPassBlendOverlay = VK_NULL_HANDLE;
 
 	VkSurfaceFormatKHR m_VKSurfFormat;
 
@@ -1537,15 +1589,83 @@ protected:
 	 * MEMORY MANAGEMENT
 	 ************************/
 
-	[[nodiscard]] bool AllocateVulkanMemory(const VkMemoryAllocateInfo *pAllocateInfo, VkDeviceMemory *pMemory)
+	[[nodiscard]] VkResult AllocateVulkanMemoryInSystemRam(const VkMemoryAllocateInfo *pAllocateInfo, VkDeviceMemory *pMemory, uint32_t FallbackTypeBits, EMemoryBlockUsage MemUsage)
 	{
-		VkResult Res = vkAllocateMemory(m_VKDevice, pAllocateInfo, nullptr, pMemory);
+		VkPhysicalDeviceMemoryProperties MemProps;
+		vkGetPhysicalDeviceMemoryProperties(m_VKGPU, &MemProps);
+		int BestRank = 100;
+		uint32_t BestType = 0;
+		for(uint32_t i = 0; i < MemProps.memoryTypeCount; ++i)
+		{
+			if(!(FallbackTypeBits & (1u << i)) || i == pAllocateInfo->memoryTypeIndex)
+				continue;
+			const VkMemoryPropertyFlags Props = MemProps.memoryTypes[i].propertyFlags;
+			if(Props & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT)
+				continue;
+			if(MemProps.memoryHeaps[MemProps.memoryTypes[i].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+				continue;
+			const bool HostVisible = (Props & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0;
+			const bool HostCoherent = (Props & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+			const int Rank = HostVisible ? (HostCoherent ? 0 : 1) : 2;
+			if(Rank < BestRank)
+			{
+				BestRank = Rank;
+				BestType = i;
+			}
+		}
+		if(BestRank == 100)
+			return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+
+		VkMemoryAllocateInfo FallbackInfo = *pAllocateInfo;
+		FallbackInfo.memoryTypeIndex = BestType;
+		const VkResult Res = vkAllocateMemory(m_VKDevice, &FallbackInfo, nullptr, pMemory);
+		if(Res == VK_SUCCESS)
+		{
+			++m_VRAMFallbackAllocations;
+			g_VramFallbackCount.store(m_VRAMFallbackAllocations, std::memory_order_relaxed);
+			g_VramFallbackBytes.fetch_add(pAllocateInfo->allocationSize, std::memory_order_relaxed);
+			if((size_t)MemUsage < 4)
+				g_VramFallbackBytesByUsage[(size_t)MemUsage].fetch_add(pAllocateInfo->allocationSize, std::memory_order_relaxed);
+			if(m_VRAMFallbackAllocations <= 3 || (m_VRAMFallbackAllocations % 32) == 0)
+				log_warn("gfx/vulkan", "Out of VRAM: %llu KiB allocated in system RAM instead (%llu fallbacks, %llu MiB total), expect lower FPS.", (unsigned long long)(pAllocateInfo->allocationSize / 1024), (unsigned long long)m_VRAMFallbackAllocations, (unsigned long long)(g_VramFallbackBytes.load(std::memory_order_relaxed) / 1024 / 1024));
+		}
+		return Res;
+	}
+
+	[[nodiscard]] bool AllocateVulkanMemory(const VkMemoryAllocateInfo *pAllocateInfo, VkDeviceMemory *pMemory, uint32_t FallbackTypeBits = 0, EMemoryBlockUsage SpillUsage = MEMORY_BLOCK_USAGE_DUMMY, bool *pIsSpilled = nullptr)
+	{
+		const uint64_t VramLimitBytes = g_Config.m_TcVramLimit > 0 ? (uint64_t)g_Config.m_TcVramLimit * 1024 * 1024 : 0;
+		const uint64_t RamLimitBytes = g_Config.m_TcRamLimit > 0 ? (uint64_t)g_Config.m_TcRamLimit * 1024 * 1024 : 0;
+		const uint64_t UsedVramBytes = (m_pTextureMemoryUsage ? m_pTextureMemoryUsage->load(std::memory_order_relaxed) : 0) + (m_pBufferMemoryUsage ? m_pBufferMemoryUsage->load(std::memory_order_relaxed) : 0);
+		const uint64_t UsedRamBytes = g_VramFallbackBytes.load(std::memory_order_relaxed) + (m_pStagingMemoryUsage ? m_pStagingMemoryUsage->load(std::memory_order_relaxed) : 0) + (m_pStreamMemoryUsage ? m_pStreamMemoryUsage->load(std::memory_order_relaxed) : 0);
+		const bool RamBudgetFull = RamLimitBytes != 0 && UsedRamBytes + pAllocateInfo->allocationSize > RamLimitBytes;
+		const bool OverVramBudget = VramLimitBytes != 0 && UsedVramBytes + pAllocateInfo->allocationSize > VramLimitBytes;
+		const bool UseSystemRam = FallbackTypeBits != 0 && g_Config.m_TcVramFallback != 0 && OverVramBudget && !RamBudgetFull;
+
+		VkResult Res;
+		if(UseSystemRam)
+		{
+			Res = AllocateVulkanMemoryInSystemRam(pAllocateInfo, pMemory, FallbackTypeBits, SpillUsage);
+			if(Res == VK_SUCCESS && pIsSpilled != nullptr)
+				*pIsSpilled = true;
+			if(Res != VK_SUCCESS)
+			{
+				++m_VRAMBudgetIgnored;
+				if(m_VRAMBudgetIgnored <= 3 || (m_VRAMBudgetIgnored % 32) == 0)
+					log_warn("gfx/vulkan", "VRAM budget of %llu MiB exceeded, but no system RAM memory type is available for this allocation (%llu KiB), using the regular memory type instead.", (unsigned long long)(VramLimitBytes / 1024 / 1024), (unsigned long long)(pAllocateInfo->allocationSize / 1024));
+				Res = vkAllocateMemory(m_VKDevice, pAllocateInfo, nullptr, pMemory);
+			}
+		}
+		else
+		{
+			Res = vkAllocateMemory(m_VKDevice, pAllocateInfo, nullptr, pMemory);
+		}
+
 		if(Res != VK_SUCCESS)
 		{
 			log_warn("gfx/vulkan", "Memory allocation failed, trying to recover.");
 			if(Res == VK_ERROR_OUT_OF_HOST_MEMORY || Res == VK_ERROR_OUT_OF_DEVICE_MEMORY)
 			{
-				// aggressively try to get more memory
 				vkDeviceWaitIdle(m_VKDevice);
 				for(size_t i = 0; i < m_SwapChainImageCount + 1; ++i)
 				{
@@ -1554,11 +1674,19 @@ protected:
 				}
 				Res = vkAllocateMemory(m_VKDevice, pAllocateInfo, nullptr, pMemory);
 			}
-			if(Res != VK_SUCCESS)
-			{
-				log_error("gfx/vulkan", "Memory allocation and recovery failed.");
-				return false;
-			}
+		}
+
+		if(Res != VK_SUCCESS && FallbackTypeBits != 0 && g_Config.m_TcVramFallback != 0 && !RamBudgetFull)
+		{
+			Res = AllocateVulkanMemoryInSystemRam(pAllocateInfo, pMemory, FallbackTypeBits, SpillUsage);
+			if(Res == VK_SUCCESS && pIsSpilled != nullptr)
+				*pIsSpilled = true;
+		}
+
+		if(Res != VK_SUCCESS)
+		{
+			log_error("gfx/vulkan", "Memory allocation and recovery failed.");
+			return false;
 		}
 		return true;
 	}
@@ -1780,7 +1908,7 @@ protected:
 			VerboseAllocatedMemory(RequiredSize, m_CurImageIndex, MEMORY_BLOCK_USAGE_TEXTURE);
 		}
 
-		if(!AllocateVulkanMemory(&MemAllocInfo, &BufferMemory.m_Mem))
+		if(!AllocateVulkanMemory(&MemAllocInfo, &BufferMemory.m_Mem, RequiredMemoryTypeBits, MEMORY_BLOCK_USAGE_TEXTURE, &BufferMemory.m_IsSpilled))
 		{
 			SetError(EGfxErrorType::GFX_ERROR_TYPE_OUT_OF_MEMORY_IMAGE, "Allocation for image memory failed.");
 			return false;
@@ -1941,6 +2069,7 @@ protected:
 		if(BufferMem.m_Mem != VK_NULL_HANDLE)
 		{
 			vkFreeMemory(m_VKDevice, BufferMem.m_Mem, nullptr);
+			FreeSpilledMemoryAccounting(BufferMem);
 			if(BufferMem.m_UsageType == MEMORY_BLOCK_USAGE_BUFFER)
 				m_pBufferMemoryUsage->store(m_pBufferMemoryUsage->load(std::memory_order_relaxed) - BufferMem.m_Size, std::memory_order_relaxed);
 			else if(BufferMem.m_UsageType == MEMORY_BLOCK_USAGE_TEXTURE)
@@ -2233,6 +2362,23 @@ protected:
 			}
 		}
 
+		const bool FrameBlendEnabled = m_FrameBlendEnabledThisFrame;
+		if(FrameBlendEnabled != m_FrameBlendEnabledLastFrame)
+		{
+			ResetFrameBlendHistory();
+			m_FrameBlendEnabledLastFrame = FrameBlendEnabled;
+		}
+
+		vkCmdEndRenderPass(CommandBuffer);
+
+		if(FrameBlendEnabled)
+			CopyFrameToFrameBlendHistory(CommandBuffer);
+
+		BeginFrameBlendOverlayPass(CommandBuffer);
+
+		if(FrameBlendEnabled && !RenderFrameBlend(CommandBuffer))
+			return false;
+
 		vkCmdEndRenderPass(CommandBuffer);
 
 		if(vkEndCommandBuffer(CommandBuffer) != VK_SUCCESS)
@@ -2241,12 +2387,7 @@ protected:
 			return false;
 		}
 
-		VkSubmitInfo SubmitInfo{};
-		SubmitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-
-		SubmitInfo.commandBufferCount = 1;
-		SubmitInfo.pCommandBuffers = &CommandBuffer;
-
+		uint32_t CommandBufferCount = 1;
 		std::array<VkCommandBuffer, 2> aCommandBuffers = {};
 
 		if(m_vUsedMemoryCommandBuffer[m_CurImageIndex])
@@ -2256,11 +2397,20 @@ protected:
 
 			aCommandBuffers[0] = MemoryCommandBuffer;
 			aCommandBuffers[1] = CommandBuffer;
-			SubmitInfo.commandBufferCount = 2;
-			SubmitInfo.pCommandBuffers = aCommandBuffers.data();
+			CommandBufferCount = 2;
 
 			m_vUsedMemoryCommandBuffer[m_CurImageIndex] = false;
 		}
+
+		vkResetFences(m_VKDevice, 1, &m_vQueueSubmitFences[m_CurImageIndex]);
+
+		std::array<VkSemaphore, 1> aSignalSemaphores = {m_vQueueSubmitSemaphores[m_CurImageIndex]};
+
+		VkResult QueueSubmitRes;
+		VkSubmitInfo SubmitInfo{};
+		SubmitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		SubmitInfo.commandBufferCount = CommandBufferCount;
+		SubmitInfo.pCommandBuffers = CommandBufferCount == 2 ? aCommandBuffers.data() : &CommandBuffer;
 
 		std::array<VkSemaphore, 1> aWaitSemaphores = {m_AcquireImageSemaphore};
 		std::array<VkPipelineStageFlags, 1> aWaitStages = {(VkPipelineStageFlags)VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
@@ -2268,13 +2418,10 @@ protected:
 		SubmitInfo.pWaitSemaphores = aWaitSemaphores.data();
 		SubmitInfo.pWaitDstStageMask = aWaitStages.data();
 
-		std::array<VkSemaphore, 1> aSignalSemaphores = {m_vQueueSubmitSemaphores[m_CurImageIndex]};
 		SubmitInfo.signalSemaphoreCount = aSignalSemaphores.size();
 		SubmitInfo.pSignalSemaphores = aSignalSemaphores.data();
 
-		vkResetFences(m_VKDevice, 1, &m_vQueueSubmitFences[m_CurImageIndex]);
-
-		VkResult QueueSubmitRes = vkQueueSubmit(m_VKGraphicsQueue, 1, &SubmitInfo, m_vQueueSubmitFences[m_CurImageIndex]);
+		QueueSubmitRes = vkQueueSubmit(m_VKGraphicsQueue, 1, &SubmitInfo, m_vQueueSubmitFences[m_CurImageIndex]);
 		if(QueueSubmitRes != VK_SUCCESS)
 		{
 			const char *pCritErrorMsg = CheckVulkanCriticalError(QueueSubmitRes);
@@ -2389,6 +2536,24 @@ protected:
 		{
 			SetError(EGfxErrorType::GFX_ERROR_TYPE_RENDER_RECORDING, "Command buffer cannot be filled anymore.");
 			return false;
+		}
+
+		// Frame blend reads the previous presented frame's history image as a texture during the
+		// render pass. That image was written by vkCmdCopyImage in a previous submission on this same
+		// queue. A plain barrier here (GPU-side) makes that copy visible to this frame's blend sampling
+		// without stalling the CPU like vkWaitForFences would. When LastPresented == CurImageIndex the
+		// fence wait above already covers it.
+		m_FrameBlendEnabledThisFrame = IsFrameBlendEnabled();
+		if(m_FrameBlendEnabledThisFrame && !m_vFrameBlendImages.empty())
+		{
+			const uint64_t Ring = (uint64_t)m_vFrameBlendImages.size();
+			for(int Source = 0; Source < 3; ++Source)
+			{
+				auto &HistoryImage = m_vFrameBlendImages[(size_t)((m_CurFrame + Ring - 1 - (uint64_t)Source) % Ring)];
+				if(!HistoryImage.m_Valid)
+					break;
+				FrameBlendImageBarrier(CommandBuffer, HistoryImage.m_Image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			}
 		}
 
 		VkRenderPassBeginInfo RenderPassInfo{};
@@ -2544,16 +2709,19 @@ protected:
 
 		// resample if needed
 		uint32_t RescaleCount = 0;
-		if((size_t)Width > m_MaxTextureSize || (size_t)Height > m_MaxTextureSize)
+		const size_t MaxTextureSize = g_Config.m_TcTextureMaxSize > 0 ? std::min<size_t>((size_t)g_Config.m_TcTextureMaxSize, (size_t)m_MaxTextureSize) : (size_t)m_MaxTextureSize;
+		if((size_t)Width > MaxTextureSize || (size_t)Height > MaxTextureSize)
 		{
+			const int SrcWidth = Width;
+			const int SrcHeight = Height;
 			do
 			{
 				Width >>= 1;
 				Height >>= 1;
 				++RescaleCount;
-			} while((size_t)Width > m_MaxTextureSize || (size_t)Height > m_MaxTextureSize);
+			} while((size_t)Width > MaxTextureSize || (size_t)Height > MaxTextureSize);
 
-			uint8_t *pTmpData = ResizeImage(pData, Width, Height, Width, Height, PixelSize);
+			uint8_t *pTmpData = ResizeImage(pData, SrcWidth, SrcHeight, Width, Height, PixelSize);
 			free(pData);
 			pData = pTmpData;
 		}
@@ -2891,6 +3059,80 @@ protected:
 			return false;
 		auto &MemCommandBuffer = *pMemCommandBuffer;
 
+		VkPipelineStageFlags SourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		VkPipelineStageFlags DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		VkAccessFlags SrcAccess = 0;
+		VkAccessFlags DstAccess = 0;
+
+		if(OldLayout == VK_IMAGE_LAYOUT_UNDEFINED && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+		{
+			SrcAccess = 0;
+			DstAccess = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			SourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+		{
+			SrcAccess = VK_ACCESS_TRANSFER_WRITE_BIT;
+			DstAccess = VK_ACCESS_SHADER_READ_BIT;
+
+			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+		{
+			SrcAccess = VK_ACCESS_SHADER_READ_BIT;
+			DstAccess = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			SourceStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+		{
+			SrcAccess = VK_ACCESS_TRANSFER_READ_BIT;
+			DstAccess = VK_ACCESS_MEMORY_READ_BIT;
+
+			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+		{
+			SrcAccess = VK_ACCESS_MEMORY_READ_BIT;
+			DstAccess = VK_ACCESS_TRANSFER_READ_BIT;
+
+			SourceStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_UNDEFINED && NewLayout == VK_IMAGE_LAYOUT_GENERAL)
+		{
+			SrcAccess = 0;
+			DstAccess = VK_ACCESS_MEMORY_READ_BIT;
+
+			SourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_GENERAL && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+		{
+			SrcAccess = VK_ACCESS_MEMORY_READ_BIT;
+			DstAccess = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_GENERAL)
+		{
+			SrcAccess = VK_ACCESS_TRANSFER_WRITE_BIT;
+			DstAccess = VK_ACCESS_MEMORY_READ_BIT;
+
+			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else
+		{
+			dbg_assert_failed("Unsupported layout transition. OldLayout=%d NewLayout=%d", (int)OldLayout, (int)NewLayout);
+		}
+
 		VkImageMemoryBarrier Barrier{};
 		Barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 		Barrier.oldLayout = OldLayout;
@@ -2903,78 +3145,8 @@ protected:
 		Barrier.subresourceRange.levelCount = MipMapCount;
 		Barrier.subresourceRange.baseArrayLayer = LayerBase;
 		Barrier.subresourceRange.layerCount = LayerCount;
-
-		VkPipelineStageFlags SourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-		VkPipelineStageFlags DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-
-		if(OldLayout == VK_IMAGE_LAYOUT_UNDEFINED && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-		{
-			Barrier.srcAccessMask = 0;
-			Barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-			SourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		}
-		else if(OldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-		{
-			Barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-			Barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-			DestinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-		}
-		else if(OldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-		{
-			Barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-			Barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-			SourceStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		}
-		else if(OldLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
-		{
-			Barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-			Barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-
-			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-			DestinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-		}
-		else if(OldLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-		{
-			Barrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-			Barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-
-			SourceStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		}
-		else if(OldLayout == VK_IMAGE_LAYOUT_UNDEFINED && NewLayout == VK_IMAGE_LAYOUT_GENERAL)
-		{
-			Barrier.srcAccessMask = 0;
-			Barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-
-			SourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		}
-		else if(OldLayout == VK_IMAGE_LAYOUT_GENERAL && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-		{
-			Barrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-			Barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		}
-		else if(OldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_GENERAL)
-		{
-			Barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-			Barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-
-			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		}
-		else
-		{
-			dbg_assert_failed("Unsupported layout transition. OldLayout=%d NewLayout=%d", (int)OldLayout, (int)NewLayout);
-		}
+		Barrier.srcAccessMask = SrcAccess;
+		Barrier.dstAccessMask = DstAccess;
 
 		vkCmdPipelineBarrier(
 			MemCommandBuffer,
@@ -4367,6 +4539,88 @@ public:
 		return true;
 	}
 
+	void ResetFrameBlendHistory()
+	{
+		for(auto &FrameBlendImage : m_vFrameBlendImages)
+			FrameBlendImage.m_Valid = false;
+	}
+
+	[[nodiscard]] bool CreateFrameBlendDescriptorSet(SFrameBlendImage &FrameBlendImage)
+	{
+		VkDescriptorPool DescriptorPool;
+		if(!GetDescriptorPoolForAlloc(DescriptorPool, m_StandardTextureDescrPool, &FrameBlendImage.m_DescriptorSet, 1))
+			return false;
+
+		VkDescriptorSetAllocateInfo DesAllocInfo{};
+		DesAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		DesAllocInfo.descriptorPool = DescriptorPool;
+		DesAllocInfo.descriptorSetCount = 1;
+		DesAllocInfo.pSetLayouts = &m_StandardTexturedDescriptorSetLayout;
+
+		if(vkAllocateDescriptorSets(m_VKDevice, &DesAllocInfo, &FrameBlendImage.m_DescriptorSet.m_Descriptor) != VK_SUCCESS)
+		{
+			SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Creating the frame blend descriptor set failed.");
+			return false;
+		}
+
+		VkDescriptorImageInfo ImageInfo{};
+		ImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		ImageInfo.imageView = FrameBlendImage.m_ImgView;
+		ImageInfo.sampler = GetTextureSampler(SUPPORTED_SAMPLER_TYPE_CLAMP_TO_EDGE);
+
+		std::array<VkWriteDescriptorSet, 1> aDescriptorWrites{};
+		aDescriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		aDescriptorWrites[0].dstSet = FrameBlendImage.m_DescriptorSet.m_Descriptor;
+		aDescriptorWrites[0].dstBinding = 0;
+		aDescriptorWrites[0].dstArrayElement = 0;
+		aDescriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		aDescriptorWrites[0].descriptorCount = 1;
+		aDescriptorWrites[0].pImageInfo = &ImageInfo;
+
+		vkUpdateDescriptorSets(m_VKDevice, static_cast<uint32_t>(aDescriptorWrites.size()), aDescriptorWrites.data(), 0, nullptr);
+		return true;
+	}
+
+	[[nodiscard]] bool CreateFrameBlendImages()
+	{
+		m_vFrameBlendImages.resize(4);
+
+		for(auto &FrameBlendImage : m_vFrameBlendImages)
+		{
+			if(!CreateImage(m_VKSwapImgAndViewportExtent.m_SwapImageViewport.width, m_VKSwapImgAndViewportExtent.m_SwapImageViewport.height, 1, 1, m_VKSurfFormat.format, VK_IMAGE_TILING_OPTIMAL, FrameBlendImage.m_Image, FrameBlendImage.m_ImgMem, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
+				return false;
+			FrameBlendImage.m_ImgView = CreateImageView(FrameBlendImage.m_Image, m_VKSurfFormat.format, VK_IMAGE_VIEW_TYPE_2D, 1, 1);
+			if(!ImageBarrier(FrameBlendImage.m_Image, 0, 1, 0, 1, m_VKSurfFormat.format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL))
+				return false;
+			if(!ImageBarrier(FrameBlendImage.m_Image, 0, 1, 0, 1, m_VKSurfFormat.format, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
+				return false;
+			if(!CreateFrameBlendDescriptorSet(FrameBlendImage))
+				return false;
+		}
+
+		ResetFrameBlendHistory();
+		m_FrameBlendEnabledLastFrame = false;
+		return true;
+	}
+
+	void DestroyFrameBlendImages()
+	{
+		for(auto &FrameBlendImage : m_vFrameBlendImages)
+		{
+			if(FrameBlendImage.m_DescriptorSet.m_Descriptor != VK_NULL_HANDLE)
+				FreeDescriptorSetFromPool(FrameBlendImage.m_DescriptorSet);
+			if(FrameBlendImage.m_ImgView != VK_NULL_HANDLE)
+				vkDestroyImageView(m_VKDevice, FrameBlendImage.m_ImgView, nullptr);
+			if(FrameBlendImage.m_Image != VK_NULL_HANDLE)
+				vkDestroyImage(m_VKDevice, FrameBlendImage.m_Image, nullptr);
+			if(FrameBlendImage.m_ImgMem.m_BufferMem.m_Mem != VK_NULL_HANDLE)
+				FreeImageMemBlock(FrameBlendImage.m_ImgMem);
+		}
+
+		m_vFrameBlendImages.clear();
+		m_FrameBlendEnabledLastFrame = false;
+	}
+
 	void DestroyMultiSamplerImageAttachments()
 	{
 		if(HasMultiSampling())
@@ -4382,28 +4636,28 @@ public:
 		m_vSwapChainMultiSamplingImages.clear();
 	}
 
-	[[nodiscard]] bool CreateRenderPass(bool ClearAttachments)
+	[[nodiscard]] bool CreateRenderPass(bool ClearAttachments, VkRenderPass &OutRenderPass)
 	{
 		bool HasMultiSamplingTargets = HasMultiSampling();
 		VkAttachmentDescription MultiSamplingColorAttachment{};
 		MultiSamplingColorAttachment.format = m_VKSurfFormat.format;
 		MultiSamplingColorAttachment.samples = GetSampleCount();
-		MultiSamplingColorAttachment.loadOp = ClearAttachments ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-		MultiSamplingColorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		MultiSamplingColorAttachment.loadOp = ClearAttachments ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+		MultiSamplingColorAttachment.storeOp = ClearAttachments ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
 		MultiSamplingColorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 		MultiSamplingColorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-		MultiSamplingColorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		MultiSamplingColorAttachment.initialLayout = ClearAttachments ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 		MultiSamplingColorAttachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
 		VkAttachmentDescription ColorAttachment{};
 		ColorAttachment.format = m_VKSurfFormat.format;
 		ColorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-		ColorAttachment.loadOp = ClearAttachments && !HasMultiSamplingTargets ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		ColorAttachment.loadOp = HasMultiSamplingTargets ? VK_ATTACHMENT_LOAD_OP_DONT_CARE : (ClearAttachments ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD);
 		ColorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		ColorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 		ColorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-		ColorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		ColorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+		ColorAttachment.initialLayout = !HasMultiSamplingTargets && !ClearAttachments ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+		ColorAttachment.finalLayout = ClearAttachments ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
 		VkAttachmentReference MultiSamplingColorAttachmentRef{};
 		MultiSamplingColorAttachmentRef.attachment = 0;
@@ -4426,10 +4680,10 @@ public:
 		VkSubpassDependency Dependency{};
 		Dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
 		Dependency.dstSubpass = 0;
-		Dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		Dependency.srcAccessMask = 0;
+		Dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+		Dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT;
 		Dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		Dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		Dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
 
 		VkRenderPassCreateInfo CreateRenderPassInfo{};
 		CreateRenderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -4440,7 +4694,7 @@ public:
 		CreateRenderPassInfo.dependencyCount = 1;
 		CreateRenderPassInfo.pDependencies = &Dependency;
 
-		if(vkCreateRenderPass(m_VKDevice, &CreateRenderPassInfo, nullptr, &m_VKRenderPass) != VK_SUCCESS)
+		if(vkCreateRenderPass(m_VKDevice, &CreateRenderPassInfo, nullptr, &OutRenderPass) != VK_SUCCESS)
 		{
 			SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Creating the render pass failed.");
 			return false;
@@ -4452,6 +4706,9 @@ public:
 	void DestroyRenderPass()
 	{
 		vkDestroyRenderPass(m_VKDevice, m_VKRenderPass, nullptr);
+		vkDestroyRenderPass(m_VKDevice, m_VKRenderPassBlendOverlay, nullptr);
+		m_VKRenderPass = VK_NULL_HANDLE;
+		m_VKRenderPassBlendOverlay = VK_NULL_HANDLE;
 	}
 
 	[[nodiscard]] bool CreateFramebuffers()
@@ -5304,6 +5561,16 @@ public:
 					return false;
 				}
 			}
+
+			m_vFrameBlendCommandBuffers.resize(m_SwapChainImageCount);
+			AllocInfo.commandPool = m_vCommandPools[0];
+			AllocInfo.commandBufferCount = (uint32_t)m_vFrameBlendCommandBuffers.size();
+			AllocInfo.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
+			if(vkAllocateCommandBuffers(m_VKDevice, &AllocInfo, m_vFrameBlendCommandBuffers.data()) != VK_SUCCESS)
+			{
+				SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Allocating frame blend command buffers failed.");
+				return false;
+			}
 		}
 
 		return true;
@@ -5319,6 +5586,8 @@ public:
 				vkFreeCommandBuffers(m_VKDevice, m_vCommandPools[Count], static_cast<uint32_t>(ThreadDrawCommandBuffers.size()), ThreadDrawCommandBuffers.data());
 				++Count;
 			}
+
+			vkFreeCommandBuffers(m_VKDevice, m_vCommandPools[0], static_cast<uint32_t>(m_vFrameBlendCommandBuffers.size()), m_vFrameBlendCommandBuffers.data());
 		}
 
 		vkFreeCommandBuffers(m_VKDevice, m_vCommandPools[0], static_cast<uint32_t>(m_vMemoryCommandBuffers.size()), m_vMemoryCommandBuffers.data());
@@ -5327,6 +5596,7 @@ public:
 		m_vvThreadDrawCommandBuffers.clear();
 		m_vvUsedThreadDrawCommandBuffer.clear();
 		m_vHelperThreadDrawCommandBuffers.clear();
+		m_vFrameBlendCommandBuffers.clear();
 
 		m_vMainDrawCommandBuffers.clear();
 		m_vMemoryCommandBuffers.clear();
@@ -5422,6 +5692,8 @@ public:
 		DestroyFramebuffers();
 
 		DestroyRenderPass();
+
+		DestroyFrameBlendImages();
 
 		DestroyMultiSamplerImageAttachments();
 
@@ -5561,6 +5833,12 @@ public:
 		if(!m_SwapchainCreated)
 			Ret = InitVulkanSwapChain(OldSwapChain);
 
+		if(Ret == 0 && OldSwapChainImageCount == m_SwapChainImageCount)
+		{
+			if(!CreateFrameBlendImages())
+				Ret = -1;
+		}
+
 		if(OldSwapChainImageCount != m_SwapChainImageCount)
 		{
 			CleanupVulkan<false>(OldSwapChainImageCount);
@@ -5677,7 +5955,7 @@ public:
 			VerboseAllocatedMemory(MemRequirements.size, m_CurImageIndex, MemUsage);
 		}
 
-		if(!AllocateVulkanMemory(&MemAllocInfo, &VKBufferMemory.m_Mem))
+		if(!AllocateVulkanMemory(&MemAllocInfo, &VKBufferMemory.m_Mem, MemRequirements.memoryTypeBits, MemUsage, &VKBufferMemory.m_IsSpilled))
 		{
 			SetError(EGfxErrorType::GFX_ERROR_TYPE_OUT_OF_MEMORY_BUFFER, "Allocation for buffer object failed.");
 			return false;
@@ -5839,6 +6117,99 @@ public:
 			vkFreeDescriptorSets(m_VKDevice, DescrSet.m_pPools->m_vPools[DescrSet.m_PoolIndex].m_Pool, 1, &DescrSet.m_Descriptor);
 			DescrSet.m_pPools->m_vPools[DescrSet.m_PoolIndex].m_CurSize -= 1;
 		}
+	}
+
+	[[nodiscard]] bool FlushManualVertexBufferRange(const SDeviceMemoryBlock &BufferMem, size_t Offset, size_t DataSize)
+	{
+		VkMappedMemoryRange MemRange{};
+		MemRange.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+		MemRange.memory = BufferMem.m_Mem;
+		MemRange.offset = Offset;
+		auto AlignmentMod = ((VkDeviceSize)DataSize % m_NonCoherentMemAlignment);
+		auto AlignmentReq = (m_NonCoherentMemAlignment - AlignmentMod);
+		if(AlignmentMod == 0)
+			AlignmentReq = 0;
+		MemRange.size = DataSize + AlignmentReq;
+		if(MemRange.offset + MemRange.size > BufferMem.m_Size)
+			MemRange.size = VK_WHOLE_SIZE;
+		return vkFlushMappedMemoryRanges(m_VKDevice, 1, &MemRange) == VK_SUCCESS;
+	}
+
+	void FrameBlendImageBarrier(VkCommandBuffer &CommandBuffer, VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout)
+	{
+		VkImageMemoryBarrier Barrier{};
+		Barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		Barrier.oldLayout = OldLayout;
+		Barrier.newLayout = NewLayout;
+		Barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		Barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		Barrier.image = Image;
+		Barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		Barrier.subresourceRange.baseMipLevel = 0;
+		Barrier.subresourceRange.levelCount = 1;
+		Barrier.subresourceRange.baseArrayLayer = 0;
+		Barrier.subresourceRange.layerCount = 1;
+
+		VkPipelineStageFlags SourceStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+		VkPipelineStageFlags DestinationStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+
+		if(OldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+		{
+			Barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			Barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			SourceStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+		{
+			Barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			Barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+		{
+			Barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+			Barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			SourceStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+		{
+			Barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			Barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+		{
+			Barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT;
+			Barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			SourceStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+		{
+			Barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			Barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+		{
+			// no layout change: only make the previous frame's copy into the history image
+			// (recorded in a previous submission on the same queue) visible to this frame's blend sampling
+			Barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			Barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
+		else
+		{
+			dbg_assert_failed("Unsupported frame blend layout transition. OldLayout=%d NewLayout=%d", (int)OldLayout, (int)NewLayout);
+		}
+
+		vkCmdPipelineBarrier(CommandBuffer, SourceStage, DestinationStage, 0, 0, nullptr, 0, nullptr, 1, &Barrier);
 	}
 
 	[[nodiscard]] bool CreateNewTexturedStandardDescriptorSets(size_t TextureSlot, size_t DescrIndex)
@@ -6041,7 +6412,10 @@ public:
 
 		m_LastPresentedSwapChainImageIndex = std::numeric_limits<decltype(m_LastPresentedSwapChainImageIndex)>::max();
 
-		if(!CreateRenderPass(true))
+		if(!CreateRenderPass(true, m_VKRenderPass))
+			return -1;
+
+		if(!CreateRenderPass(false, m_VKRenderPassBlendOverlay))
 			return -1;
 
 		if(!CreateFramebuffers())
@@ -6153,6 +6527,9 @@ public:
 			if(!CreateTextureSamplers())
 				return -1;
 		}
+
+		if(!CreateFrameBlendImages())
+			return -1;
 
 		m_vStreamedVertexBuffers.resize(m_ThreadCount);
 		m_vStreamedUniformBuffers.resize(m_ThreadCount);
@@ -6773,6 +7150,208 @@ public:
 	[[nodiscard]] bool Cmd_Render(const CCommandBuffer::SCommand_Render *pCommand, SRenderCommandExecuteBuffer &ExecBuffer)
 	{
 		return RenderStandard<CCommandBuffer::SVertex, false>(ExecBuffer, pCommand->m_State, pCommand->m_PrimType, pCommand->m_pVertices, pCommand->m_PrimCount);
+	}
+
+	[[nodiscard]] bool RenderFrameBlend(VkCommandBuffer &MainCommandBuffer)
+	{
+		if(m_vFrameBlendImages.empty())
+			return true;
+
+		const uint64_t Ring = (uint64_t)m_vFrameBlendImages.size();
+		size_t aSourceSlots[3] = {0, 0, 0};
+		float aSourceWeights[3] = {0.0f, 0.0f, 0.0f};
+		int SourceCount = 0;
+		float WeightSum = 0.0f;
+		float Weight = 1.0f;
+		for(int Source = 0; Source < 3; ++Source)
+		{
+			const size_t Slot = (size_t)((m_CurFrame + Ring - 1 - (uint64_t)Source) % Ring);
+			if(!m_vFrameBlendImages[Slot].m_Valid)
+				break;
+			aSourceSlots[SourceCount] = Slot;
+			aSourceWeights[SourceCount] = Weight;
+			WeightSum += Weight;
+			Weight *= 0.7f;
+			SourceCount++;
+		}
+		if(SourceCount <= 0)
+			return true;
+
+		// Single-pass blend: the previous frame is drawn once over the current frame.
+		// This keeps the current frame prominent (e.g. ~53% visible at strength 50) so
+		// fast-moving elements like the cursor stay sharp and continuous instead of
+		// being washed out into a choppy trail.
+		const float Strength = (float)g_Config.m_TcMotionBlurStrength;
+		const float TotalBlendStrength = 0.90f * std::sqrt(std::min(Strength, 95.0f) / 95.0f);
+		if(TotalBlendStrength <= 0.0f)
+			return true;
+		float aSourceAlphas[3] = {0.0f, 0.0f, 0.0f};
+		for(int Source = 0; Source < SourceCount; ++Source)
+			aSourceAlphas[Source] = TotalBlendStrength * (aSourceWeights[Source] / WeightSum);
+
+		// With multiple render threads the render pass was begun with
+		// VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS — inline draws into the primary
+		// command buffer are invalid there, so record the blend quad into a dedicated
+		// secondary command buffer and execute it.
+		const bool UseSecondaryCommandBuffer = m_ThreadCount > 1;
+		VkCommandBuffer CommandBuffer = MainCommandBuffer;
+		if(UseSecondaryCommandBuffer)
+		{
+			CommandBuffer = m_vFrameBlendCommandBuffers[m_CurImageIndex];
+			vkResetCommandBuffer(CommandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+
+			VkCommandBufferInheritanceInfo InheritanceInfo{};
+			InheritanceInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO;
+			InheritanceInfo.framebuffer = m_vFramebufferList[m_CurImageIndex];
+			InheritanceInfo.occlusionQueryEnable = VK_FALSE;
+			InheritanceInfo.renderPass = m_VKRenderPassBlendOverlay;
+			InheritanceInfo.subpass = 0;
+
+			VkCommandBufferBeginInfo BeginInfo{};
+			BeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+			BeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
+			BeginInfo.pInheritanceInfo = &InheritanceInfo;
+
+			if(vkBeginCommandBuffer(CommandBuffer, &BeginInfo) != VK_SUCCESS)
+			{
+				SetError(EGfxErrorType::GFX_ERROR_TYPE_RENDER_RECORDING, "Frame blend command buffer cannot be filled anymore.");
+				return false;
+			}
+		}
+
+		CCommandBuffer::SState State{};
+		State.m_BlendMode = EBlendMode::ALPHA;
+		State.m_WrapMode = EWrapMode::CLAMP;
+		State.m_Texture = 0;
+		State.m_ScreenTL = vec2(0.0f, 0.0f);
+		auto Viewport = m_VKSwapImgAndViewportExtent.GetPresentedImageViewport();
+		State.m_ScreenBR = vec2((float)Viewport.width, (float)Viewport.height);
+		State.m_ClipEnable = false;
+
+		SRenderCommandExecuteBuffer ExecBuffer{};
+		ExecBuffer.m_ThreadIndex = MAIN_THREAD_INDEX;
+		ExecBuffer.m_IndexBuffer = m_IndexBuffer;
+		ExecBufferFillDynamicStates(State, ExecBuffer);
+
+		bool IsTextured;
+		size_t BlendModeIndex;
+		size_t DynamicIndex;
+		size_t AddressModeIndex;
+		GetStateIndices(ExecBuffer, State, IsTextured, BlendModeIndex, DynamicIndex, AddressModeIndex);
+
+		auto &PipeLayout = GetStandardPipeLayout(false, true, BlendModeIndex, DynamicIndex);
+		auto &PipeLine = GetStandardPipe(false, true, BlendModeIndex, DynamicIndex);
+		// Bind everything explicitly — the m_vLastPipeline / dynamic state caches track other
+		// command buffers, and bind state never carries over between command buffers.
+		vkCmdBindPipeline(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, PipeLine);
+		if(ExecBuffer.m_HasDynamicState)
+		{
+			vkCmdSetViewport(CommandBuffer, 0, 1, &ExecBuffer.m_Viewport);
+			vkCmdSetScissor(CommandBuffer, 0, 1, &ExecBuffer.m_Scissor);
+		}
+
+		std::array<CCommandBuffer::SVertex, 4 * 3> aVertices{};
+		for(int Source = 0; Source < SourceCount; ++Source)
+		{
+			auto *pQuadVertices = &aVertices[(size_t)Source * 4];
+			pQuadVertices[0].m_Pos = vec2(0.0f, 0.0f);
+			pQuadVertices[1].m_Pos = vec2((float)Viewport.width, 0.0f);
+			pQuadVertices[2].m_Pos = vec2((float)Viewport.width, (float)Viewport.height);
+			pQuadVertices[3].m_Pos = vec2(0.0f, (float)Viewport.height);
+			pQuadVertices[0].m_Tex = vec2(0.0f, 0.0f);
+			pQuadVertices[1].m_Tex = vec2(1.0f, 0.0f);
+			pQuadVertices[2].m_Tex = vec2(1.0f, 1.0f);
+			pQuadVertices[3].m_Tex = vec2(0.0f, 1.0f);
+			const uint8_t Alpha = (uint8_t)std::round(aSourceAlphas[Source] * 255.0f);
+			for(int VertexIndex = 0; VertexIndex < 4; ++VertexIndex)
+			{
+				pQuadVertices[VertexIndex].m_Color.r = 255;
+				pQuadVertices[VertexIndex].m_Color.g = 255;
+				pQuadVertices[VertexIndex].m_Color.b = 255;
+				pQuadVertices[VertexIndex].m_Color.a = Alpha;
+			}
+		}
+		const size_t UsedVertexCount = (size_t)SourceCount * 4;
+
+		VkBuffer VKBuffer;
+		SDeviceMemoryBlock VKBufferMem;
+		size_t BufferOff = 0;
+		if(!CreateStreamVertexBuffer(MAIN_THREAD_INDEX, VKBuffer, VKBufferMem, BufferOff, aVertices.data(), sizeof(CCommandBuffer::SVertex) * UsedVertexCount))
+			return false;
+		if(!FlushManualVertexBufferRange(VKBufferMem, BufferOff, sizeof(CCommandBuffer::SVertex) * UsedVertexCount))
+			return false;
+
+		std::array<VkBuffer, 1> aVertexBuffers = {VKBuffer};
+		std::array<VkDeviceSize, 1> aOffsets = {(VkDeviceSize)BufferOff};
+		vkCmdBindVertexBuffers(CommandBuffer, 0, 1, aVertexBuffers.data(), aOffsets.data());
+		vkCmdBindIndexBuffer(CommandBuffer, ExecBuffer.m_IndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+		std::array<float, 4 * 2> aMatrix;
+		GetStateMatrix(State, aMatrix);
+		vkCmdPushConstants(CommandBuffer, PipeLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(SUniformGPos), aMatrix.data());
+		for(int Source = SourceCount - 1; Source >= 0; --Source)
+		{
+			vkCmdBindDescriptorSets(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, PipeLayout, 0, 1, &m_vFrameBlendImages[aSourceSlots[Source]].m_DescriptorSet.m_Descriptor, 0, nullptr);
+			vkCmdDrawIndexed(CommandBuffer, 6, 1, 0, Source * 4, 0);
+		}
+
+		if(UseSecondaryCommandBuffer)
+		{
+			if(vkEndCommandBuffer(CommandBuffer) != VK_SUCCESS)
+			{
+				SetError(EGfxErrorType::GFX_ERROR_TYPE_RENDER_RECORDING, "Frame blend command buffer cannot be ended anymore.");
+				return false;
+			}
+			vkCmdExecuteCommands(MainCommandBuffer, 1, &CommandBuffer);
+		}
+
+		return true;
+	}
+
+	void BeginFrameBlendOverlayPass(VkCommandBuffer &CommandBuffer)
+	{
+		VkRenderPassBeginInfo RenderPassInfo{};
+		RenderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		RenderPassInfo.renderPass = m_VKRenderPassBlendOverlay;
+		RenderPassInfo.framebuffer = m_vFramebufferList[m_CurImageIndex];
+		RenderPassInfo.renderArea.offset = {0, 0};
+		RenderPassInfo.renderArea.extent = m_VKSwapImgAndViewportExtent.m_SwapImageViewport;
+		RenderPassInfo.clearValueCount = 0;
+		RenderPassInfo.pClearValues = nullptr;
+
+		vkCmdBeginRenderPass(CommandBuffer, &RenderPassInfo, m_ThreadCount > 1 ? VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS : VK_SUBPASS_CONTENTS_INLINE);
+	}
+
+	void CopyFrameToFrameBlendHistory(VkCommandBuffer &CommandBuffer)
+	{
+		if(m_vFrameBlendImages.empty())
+			return;
+
+		auto &FrameBlendImage = m_vFrameBlendImages[m_CurFrame % m_vFrameBlendImages.size()];
+		auto &SwapImage = m_vSwapChainImages[m_CurImageIndex];
+
+		FrameBlendImageBarrier(CommandBuffer, FrameBlendImage.m_Image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		FrameBlendImageBarrier(CommandBuffer, SwapImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
+		VkImageCopy Region{};
+		Region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		Region.srcSubresource.mipLevel = 0;
+		Region.srcSubresource.baseArrayLayer = 0;
+		Region.srcSubresource.layerCount = 1;
+		Region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		Region.dstSubresource.mipLevel = 0;
+		Region.dstSubresource.baseArrayLayer = 0;
+		Region.dstSubresource.layerCount = 1;
+		Region.extent.width = m_VKSwapImgAndViewportExtent.m_SwapImageViewport.width;
+		Region.extent.height = m_VKSwapImgAndViewportExtent.m_SwapImageViewport.height;
+		Region.extent.depth = 1;
+
+		vkCmdCopyImage(CommandBuffer, SwapImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, FrameBlendImage.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &Region);
+
+		FrameBlendImageBarrier(CommandBuffer, FrameBlendImage.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		FrameBlendImageBarrier(CommandBuffer, SwapImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+		FrameBlendImage.m_Valid = true;
 	}
 
 	[[nodiscard]] bool Cmd_ReadPixel(const CCommandBuffer::SCommand_TrySwapAndReadPixel *pCommand)

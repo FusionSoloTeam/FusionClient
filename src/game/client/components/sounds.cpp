@@ -11,6 +11,8 @@
 
 #include <generated/client_data.h>
 
+#include <base/fs.h>
+
 #include <game/client/components/camera.h>
 #include <game/client/components/menus.h>
 #include <game/client/gameclient.h>
@@ -35,7 +37,23 @@ void CSoundLoading::Run()
 			if(State() == IJob::STATE_ABORTED)
 				return;
 
-			int Id = m_pGameClient->Sound()->LoadWV(g_pData->m_aSounds[s].m_aSounds[i].m_pFilename);
+			int Id = -1;
+			if(g_Config.m_ClAssetAudio[0] != '\0')
+			{
+				char aCustom[IO_MAX_PATH_LENGTH];
+				const char *pOriginal = g_pData->m_aSounds[s].m_aSounds[i].m_pFilename;
+				str_format(aCustom, sizeof(aCustom), "assets/audio/%s/%s", g_Config.m_ClAssetAudio, pOriginal);
+				if(m_pGameClient->Storage()->FileExists(aCustom, IStorage::TYPE_ALL))
+					Id = m_pGameClient->Sound()->LoadWV(aCustom);
+				else
+				{
+					str_format(aCustom, sizeof(aCustom), "assets/audio/%s/%s", g_Config.m_ClAssetAudio, fs_filename(pOriginal));
+					if(m_pGameClient->Storage()->FileExists(aCustom, IStorage::TYPE_ALL))
+						Id = m_pGameClient->Sound()->LoadWV(aCustom);
+				}
+			}
+			if(Id < 0)
+				Id = m_pGameClient->Sound()->LoadWV(g_pData->m_aSounds[s].m_aSounds[i].m_pFilename);
 			g_pData->m_aSounds[s].m_aSounds[i].m_Id = Id;
 			// try to render a frame
 			if(m_Render)
@@ -119,6 +137,24 @@ void CSounds::OnInit()
 		CSoundLoading(GameClient(), true).Run();
 		m_WaitForSoundJob = false;
 	}
+}
+
+void CSounds::ReloadSounds()
+{
+	if(m_pSoundJob && m_pSoundJob->State() == IJob::STATE_RUNNING)
+		return;
+	Sound()->StopAll();
+	for(int s = 0; s < g_pData->m_NumSounds; s++)
+	{
+		for(int i = 0; i < g_pData->m_aSounds[s].m_NumSounds; i++)
+		{
+			if(g_pData->m_aSounds[s].m_aSounds[i].m_Id < 0)
+				continue;
+			Sound()->UnloadSample(g_pData->m_aSounds[s].m_aSounds[i].m_Id);
+			g_pData->m_aSounds[s].m_aSounds[i].m_Id = -1;
+		}
+	}
+	CSoundLoading(GameClient(), false).Run();
 }
 
 void CSounds::OnReset()

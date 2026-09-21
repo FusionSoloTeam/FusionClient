@@ -763,10 +763,21 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 				}
 
 				// TClient
-				if(pInfo->m_ClientId >= 0 && g_Config.m_TcWarList && g_Config.m_TcWarListScoreboard && GameClient()->m_WarList.GetAnyWar(pInfo->m_ClientId))
+				if(pInfo->m_ClientId >= 0 && pInfo->m_ClientId < MAX_CLIENTS && GameClient()->m_HeartList.IsFriend(pInfo->m_ClientId))
+					TextRender()->TextColor(GameClient()->m_HeartList.GetFriendColor(pInfo->m_ClientId).WithAlpha(TextColor.a));
+				else if(pInfo->m_ClientId >= 0 && g_Config.m_TcWarList && g_Config.m_TcWarListScoreboard && GameClient()->m_WarList.GetAnyWar(pInfo->m_ClientId))
 					TextRender()->TextColor(GameClient()->m_WarList.GetNameplateColor(pInfo->m_ClientId));
+				else if(pInfo->m_ClientId >= 0 && g_Config.m_TcNameplateGradient)
+				{
+					const float Phase = CBcGradient::AnimatePhase(Client()->GlobalTime());
+					const std::vector<STextColorSplit> vGradientSplits = CBcGradient::BuildAnimatedTextSplits(ClientData.m_aName, pInfo->m_ClientId, GameClient(), Phase);
+					for(const STextColorSplit &Split : vGradientSplits)
+						Cursor.m_vColorSplits.emplace_back(Cursor.m_CharCount + Split.m_CharIndex, Split.m_Length, Split.m_Color);
+					TextRender()->TextColor(1.0f, 1.0f, 1.0f, TextColor.a);
+				}
 
 				TextRender()->TextEx(&Cursor, ClientData.m_aName);
+				Cursor.m_vColorSplits.clear();
 
 				// ready / watching
 				if(Client()->IsSixup() && Client()->m_TranslationContext.m_aClients[pInfo->m_ClientId].m_PlayerFlags7 & protocol7::PLAYERFLAG_READY)
@@ -796,7 +807,20 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 				Cursor.m_FontSize = FontSize;
 				Cursor.m_Flags |= TEXTFLAG_ELLIPSIS_AT_END;
 				Cursor.m_LineWidth = ClanLength;
+
+				// TClient: gradient clan (only when not overridden by warlist color)
+				if(pInfo->m_ClientId >= 0 && g_Config.m_TcNameplateGradientClan)
+				{
+					const bool WarColored = g_Config.m_TcWarList && g_Config.m_TcWarListScoreboard && GameClient()->m_WarList.GetAnyWar(pInfo->m_ClientId);
+					if(!WarColored)
+					{
+						const float Phase = CBcGradient::AnimatePhase(Client()->GlobalTime());
+						Cursor.m_vColorSplits = CBcGradient::BuildAnimatedTextSplits(ClientData.m_aClan, pInfo->m_ClientId, GameClient(), Phase);
+						TextRender()->TextColor(1.0f, 1.0f, 1.0f, TextColor.a);
+					}
+				}
 				TextRender()->TextEx(&Cursor, ClientData.m_aClan);
+				Cursor.m_vColorSplits.clear();
 			}
 
 			// country flag
@@ -1138,6 +1162,7 @@ CUi::EPopupMenuFunctionResult CScoreboard::CScoreboardPopupContext::Render(void 
 			if(Client.m_Friend)
 			{
 				pScoreboard->GameClient()->Friends()->RemoveFriend(Client.m_aName, Client.m_aClan);
+				pScoreboard->GameClient()->m_HeartList.RemoveFriendBinding(Client.m_aName);
 			}
 			else
 			{

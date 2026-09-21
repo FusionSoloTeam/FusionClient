@@ -396,7 +396,7 @@ void CControls::OnRender()
 	{
 		// make sure to compensate for smooth dyncam to ensure the cursor stays still in world space if zoomed
 		vec2 DyncamOffsetDelta = GameClient()->m_Camera.m_DyncamTargetCameraOffset - GameClient()->m_Camera.m_aDyncamCurrentCameraOffset[g_Config.m_ClDummy];
-		float Zoom = GameClient()->m_Camera.m_Zoom;
+		float Zoom = GameClient()->m_Camera.m_RenderZoom;
 		m_aTargetPos[g_Config.m_ClDummy] = GameClient()->m_LocalCharacterPos + m_aMousePos[g_Config.m_ClDummy] - DyncamOffsetDelta + DyncamOffsetDelta / Zoom;
 	}
 	else if(GameClient()->m_Snap.m_SpecInfo.m_Active && GameClient()->m_Snap.m_SpecInfo.m_UsePosition)
@@ -446,7 +446,7 @@ bool CControls::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
 	}
 
 	if(GameClient()->m_Snap.m_SpecInfo.m_Active && GameClient()->m_Snap.m_SpecInfo.m_SpectatorId < 0)
-		Factor *= GameClient()->m_Camera.m_Zoom;
+		Factor *= GameClient()->m_Camera.m_RenderZoom;
 
 	m_aMousePos[g_Config.m_ClDummy] += vec2(x, y) * Factor;
 	GameClient()->m_Controls.m_aMouseInputType[g_Config.m_ClDummy] = CControls::EMouseInputType::RELATIVE;

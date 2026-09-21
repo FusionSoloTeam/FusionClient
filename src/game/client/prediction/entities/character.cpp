@@ -894,6 +894,117 @@ void CCharacter::HandleTiles(int Index)
 		SetSolo(false);
 	}
 
+	// predict teleport tiles
+	int z = Collision()->IsTeleport(MapIndex);
+	if(!g_Config.m_SvOldTeleportHook && !g_Config.m_SvOldTeleportWeapons && z && !Collision()->TeleOuts(z - 1).empty())
+	{
+		if(m_Core.m_Super || m_Core.m_Invincible)
+			return;
+		if(!g_Config.m_TcPredictTpTiles || Collision()->TeleOuts(z - 1).size() > 1)
+			return;
+		if(g_Config.m_TcPredictTpTiles)
+			m_Core.m_Pos = Collision()->TeleOuts(z - 1)[0];
+		/*if(g_Config.m_SvTeleportLoseWeapons)
+			ResetPickups();*/
+		return;
+	}
+	int evilz = Collision()->IsEvilTeleport(MapIndex);
+	if(evilz && !Collision()->TeleOuts(evilz - 1).empty())
+	{
+		if(m_Core.m_Super || m_Core.m_Invincible)
+			return;
+		if(!g_Config.m_TcPredictTpTiles || Collision()->TeleOuts(evilz - 1).size() > 1)
+			return;
+		m_Core.m_Pos = Collision()->TeleOuts(evilz - 1)[0];
+		if(!g_Config.m_SvOldTeleportHook && !g_Config.m_SvOldTeleportWeapons)
+		{
+			m_Core.m_Vel = vec2(0, 0);
+
+			if(!g_Config.m_SvTeleportHoldHook)
+			{
+				ResetHook();
+				GameWorld()->ReleaseHooked(m_Id);
+			}
+			/*if(g_Config.m_SvTeleportLoseWeapons)
+			{
+				ResetPickups();
+			}*/
+		}
+		return;
+	}
+	if(Collision()->IsCheckEvilTeleport(MapIndex))
+	{
+		if(m_Core.m_Super || m_Core.m_Invincible)
+			return;
+		// first check if there is a TeleCheckOut for the current recorded checkpoint, if not check previous checkpoints
+		for(int k = m_TeleCheckpoint - 1; k >= 0; k--)
+		{
+			if(!Collision()->TeleCheckOuts(k).empty())
+			{
+				if(!g_Config.m_TcPredictTpTiles || Collision()->TeleCheckOuts(k).size() > 1)
+					return;
+				m_Core.m_Pos = Collision()->TeleCheckOuts(k)[0];
+				m_Core.m_Vel = vec2(0, 0);
+
+				if(!g_Config.m_SvTeleportHoldHook)
+				{
+					ResetHook();
+					GameWorld()->ReleaseHooked(m_Id);
+				}
+
+				return;
+			}
+		}
+		// if no checkpointout have been found (or if there no recorded checkpoint), teleport to start
+		/*vec2 SpawnPos;
+		if(GameServer()->m_pController->CanSpawn(m_pPlayer->GetTeam(), &SpawnPos, GameServer()->GetDDRaceTeam(GetPlayer()->GetCid())))
+		{
+			m_Core.m_Pos = SpawnPos;
+			m_Core.m_Vel = vec2(0, 0);
+
+			if(!g_Config.m_SvTeleportHoldHook)
+			{
+				ResetHook();
+				GameWorld()->ReleaseHooked(GetPlayer()->GetCid());
+			}
+		}*/
+		return;
+	}
+	if(Collision()->IsCheckTeleport(MapIndex))
+	{
+		if(m_Core.m_Super || m_Core.m_Invincible)
+			return;
+		// first check if there is a TeleCheckOut for the current recorded checkpoint, if not check previous checkpoints
+		for(int k = m_TeleCheckpoint - 1; k >= 0; k--)
+		{
+			if(!Collision()->TeleCheckOuts(k).empty())
+			{
+				if(!g_Config.m_TcPredictTpTiles || Collision()->TeleCheckOuts(k).size() > 1)
+					return;
+				m_Core.m_Pos = Collision()->TeleCheckOuts(k)[0];
+
+				if(!g_Config.m_SvTeleportHoldHook)
+				{
+					ResetHook();
+				}
+
+				return;
+			}
+		}
+		// if no checkpointout have been found (or if there no recorded checkpoint), teleport to start
+		/*vec2 SpawnPos;
+		if(GameServer()->m_pController->CanSpawn(m_pPlayer->GetTeam(), &SpawnPos, GameServer()->GetDDRaceTeam(GetPlayer()->GetCid())))
+		{
+			m_Core.m_Pos = SpawnPos;
+
+			if(!g_Config.m_SvTeleportHoldHook)
+			{
+				ResetHook();
+			}
+		}*/
+		return;
+	}
+
 	// refill jumps
 	if(((m_TileIndex == TILE_REFILL_JUMPS) || (m_TileFIndex == TILE_REFILL_JUMPS)) && !m_LastRefillJumps)
 	{

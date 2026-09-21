@@ -135,7 +135,7 @@ void CMovingTiles::OnRender()
 		return;
 
 	const vec2 Center = GameClient()->m_Camera.m_Center;
-	const float Zoom = GameClient()->m_Camera.m_Zoom;
+	const float Zoom = GameClient()->m_Camera.m_RenderZoom;
 
 	auto ApplyGroupState = [&](const CMapItemGroup *pGroup) -> bool {
 		Graphics()->ClipDisable();

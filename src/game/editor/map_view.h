@@ -53,7 +53,7 @@ public:
 	const CMapGrid *MapGrid() const;
 
 private:
-	CSmoothValue m_Zoom = CSmoothValue(200.0f, 10.0f, 2000.0f);
+	CSmoothValue m_Zoom = CSmoothValue(200.0f, 10.0f, 10000.0f);
 	float m_WorldZoom;
 
 	CProofMode m_ProofMode;

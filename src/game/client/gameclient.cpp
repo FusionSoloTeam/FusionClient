@@ -72,6 +72,7 @@
 #include <generated/protocol7.h>
 #include <generated/protocolglue.h>
 
+#include <game/client/components/tclient/r_jelly.h>
 #include <game/client/projectile_data.h>
 #include <game/localization.h>
 #include <game/mapitems.h>
@@ -136,6 +137,7 @@ void CGameClient::OnConsoleInit()
 					      &m_Background, // render instead of m_MapLayersBackground when g_Config.m_ClOverlayEntities == 100
 					      &m_MapLayersBackground, // first to render
 					      &m_BgDraw, // TClient
+					      &m_CursorTrailBackground, // TClient
 					      &m_Particles.m_RenderTrail,
 					      &m_Particles.m_RenderTrailExtra,
 					      &m_Items,
@@ -146,6 +148,7 @@ void CGameClient::OnConsoleInit()
 					      &m_Players,
 						  &m_MovingTilesBackground, // TClient
 						  &m_MapLayersForeground,
+						  &m_CursorTrailForeground, // TClient
 						  &m_MovingTilesForeground, // TClient
 					      &m_Outlines,  // TClient
 					      &m_Mumble, // TClient
@@ -157,6 +160,10 @@ void CGameClient::OnConsoleInit()
 					      &m_FreezeBars,
 					      &m_DamageInd,
 					      &m_PlayerIndicator, // TClient
+					      &m_AboveBelowPlayer, // TClient
+					      &m_SwapTimer, // TClient
+					      &m_ChatBinds, // TClient
+					      &m_BcGradient, // TClient
 					      &m_Mod, // TClient
 					      &m_CustomCommunities, // TClient
 					      &m_Hud,
@@ -165,6 +172,9 @@ void CGameClient::OnConsoleInit()
 					      &m_BindChat, // TClient
 					      &m_BindWheel, // TClient
 					      &m_WarList, // TClient
+					      &m_ReactBypass, // TClient
+				      &m_HeartList, // TClient
+				      &m_NotifyOnMove, // TClient
 					      &m_StatusBar, // TClient
 					      &m_InfoMessages,
 					      &m_Chat,
@@ -180,11 +190,15 @@ void CGameClient::OnConsoleInit()
 					      &m_Scripting, // TClient
 					      &m_KeyBinder,
 					      &m_GameConsole,
-					      &m_MenuBackground});
+					      &m_HoverNotification,
+					      &m_AFKAura,
+					      &m_MenuBackground,
+					      &m_HudEditor});
 
 	// build the input stack
 	m_vpInput.insert(m_vpInput.end(), {&m_KeyBinder, // this will take over all input when we want to bind a key
-						  &m_Binds.m_SpecialBinds,
+					  &m_HudEditor,
+					  &m_Binds.m_SpecialBinds,
 						  &m_GameConsole,
 						  &m_Chat, // chat has higher prio, due to that you can quit it by pressing esc
 						  &m_Scoreboard,
@@ -332,6 +346,7 @@ void CGameClient::ForceUpdateConsoleRemoteCompletionSuggestions()
 void CGameClient::OnInit()
 {
 	const int64_t OnInitStart = time_get();
+	rJelly = std::make_unique<CRJelly>(this);
 
 	Client()->SetLoadingCallback([this](IClient::ELoadingCallbackDetail Detail) {
 		const char *pTitle;
@@ -645,6 +660,8 @@ void CGameClient::OnConnected()
 void CGameClient::OnReset()
 {
 	InvalidateSnapshot();
+	if(rJelly)
+		rJelly->Reset();
 
 	m_EditorMovementDelay = 5;
 
@@ -869,6 +886,8 @@ void CGameClient::OnRender()
 	for(auto &pComponent : m_vpAll)
 		pComponent->OnRender();
 
+	m_TClient.RenderInfoOverlay();
+
 	// clear all events/input for this frame
 	Input()->Clear();
 
@@ -1092,6 +1111,13 @@ void CGameClient::OnMessage(int MsgId, CUnpacker *pUnpacker, int Conn, bool Dumm
 			Console()->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "client", aBuf);
 		}
 		return;
+	}
+
+	if(MsgId == NETMSGTYPE_SV_CHAT && g_Config.m_TcEnableSwapTimer)
+	{
+		CNetMsg_Sv_Chat *pMsg = (CNetMsg_Sv_Chat *)pRawMsg;
+		if(pMsg->m_ClientId == -1)
+			m_SwapTimer.GameClientMessage(MsgId, pRawMsg, Dummy);
 	}
 
 	if(MsgId == NETMSGTYPE_SV_CHANGEINFOCOOLDOWN)
@@ -1462,6 +1488,7 @@ void CGameClient::ProcessEvents()
 			vec2 HammerHitPos = vec2(pEvent->m_X, pEvent->m_Y);
 			if(!m_PredictedWorld.CheckPredictedEventHandled(CGameWorld::CPredictedEvent(Item.m_Type, HammerHitPos, -1, Client()->GameTick(g_Config.m_ClDummy))))
 			{
+				if(!g_Config.m_TcMuteOthersSounds || !m_Effects.SoundFromOthersMuted(HammerHitPos))
 				m_Effects.HammerHit(HammerHitPos, Alpha, Volume);
 			}
 		}
@@ -1478,6 +1505,7 @@ void CGameClient::ProcessEvents()
 		else if(Item.m_Type == NETEVENTTYPE_SPAWN)
 		{
 			const CNetEvent_Spawn *pEvent = (const CNetEvent_Spawn *)Item.m_pData;
+			if(!g_Config.m_TcMuteOthersSounds || !m_Effects.SoundFromOthersMuted(vec2(pEvent->m_X, pEvent->m_Y)))
 			m_Effects.PlayerSpawn(vec2(pEvent->m_X, pEvent->m_Y), Alpha, Volume);
 		}
 		else if(Item.m_Type == NETEVENTTYPE_DEATH)
@@ -1489,6 +1517,9 @@ void CGameClient::ProcessEvents()
 		{
 			const CNetEvent_SoundWorld *pEvent = (const CNetEvent_SoundWorld *)Item.m_pData;
 			if(!Config()->m_SndGame)
+				continue;
+
+			if(g_Config.m_TcMuteOthersSounds)
 				continue;
 
 			if(m_GameInfo.m_RaceSounds && ((pEvent->m_SoundId == SOUND_GUN_FIRE && !g_Config.m_SndGun) || (pEvent->m_SoundId == SOUND_PLAYER_PAIN_LONG && !g_Config.m_SndLongPain)))
@@ -2952,11 +2983,13 @@ void CGameClient::OnPredict()
 
 	// TClient
 	// New antiping smoothing
+	const bool AntiPingInteractionOk = AntiPingInteractionFilter();
 	CCharacter *pSmoothLocalChar = m_PredSmoothingWorld.GetCharacterById(m_Snap.m_LocalClientId);
 	if(g_Config.m_TcAntiPingImproved &&
 		Predict() && AntiPingPlayers() &&
 		pSmoothLocalChar &&
-		RealPredTick && m_PredictedTick >= MIN_TICK)
+		RealPredTick && m_PredictedTick >= MIN_TICK &&
+		AntiPingInteractionOk)
 	{
 		int PredTime = std::clamp(Client()->GetPredictionTime(), 0, 8000); // Milliseconds for some reason?? TODO: Use more precision
 		const int PredEndTick = FinalTickRegular;
@@ -3160,6 +3193,15 @@ void CGameClient::OnPredict()
 				m_aClients[i].m_PrevImprovedPredPos = m_aClients[i].m_ImprovedPredPos;
 			}
 			m_aClients[i].m_ValidAntipingSmooth = true;
+		}
+	}
+	else if(g_Config.m_TcAntiPingImproved && !AntiPingInteractionOk)
+	{
+		for(int i = 0; i < MAX_CLIENTS; i++)
+		{
+			m_aClients[i].m_ValidAntipingSmooth = false;
+			m_aClients[i].m_PrevImprovedPredPos = m_aClients[i].m_RegularPredicted.m_Pos;
+			m_aClients[i].m_ImprovedPredPos = m_aClients[i].m_RegularPredicted.m_Pos;
 		}
 	}
 	// Copy the current pred world so on the next tick we have the "previous" pred world to advance and test against
@@ -3466,6 +3508,9 @@ void CGameClient::CClientData::CSixup::Reset()
 
 void CGameClient::SendSwitchTeam(int Team) const
 {
+	if(m_TClient.AntiUnSpec())
+		return;
+
 	CNetMsg_Cl_SetTeam Msg;
 	Msg.m_Team = Team;
 	Client()->SendPackMsgActive(&Msg, MSGFLAG_VITAL);
@@ -3850,6 +3895,7 @@ void CGameClient::UpdatePrediction()
 	m_GameWorld.m_WorldConfig.m_PredictTiles = m_GameInfo.m_PredictDDRace && m_GameInfo.m_PredictDDRaceTiles;
 	m_GameWorld.m_WorldConfig.m_PredictFreeze = g_Config.m_ClPredictFreeze;
 	m_GameWorld.m_WorldConfig.m_PredictWeapons = AntiPingWeapons();
+	m_GameWorld.m_WorldConfig.m_PredictLights = g_Config.m_TcPredictLasers;
 	m_GameWorld.m_WorldConfig.m_BugDDRaceInput = m_GameInfo.m_BugDDRaceInput;
 	m_GameWorld.m_WorldConfig.m_NoWeakHookAndBounce = m_GameInfo.m_NoWeakHookAndBounce;
 	m_GameWorld.m_WorldConfig.m_PredictEvents = m_GameInfo.m_PredictEvents;
@@ -4170,7 +4216,7 @@ void CGameClient::UpdateRenderedCharacters()
 				m_aClients[i].m_RenderPrev.m_Angle = m_Snap.m_aCharacters[i].m_Prev.m_Angle;
 				m_aClients[i].m_RenderCur.m_Angle = m_Snap.m_aCharacters[i].m_Cur.m_Angle;
 
-				if(g_Config.m_ClAntiPingSmooth)
+				if(g_Config.m_ClAntiPingSmooth && (!g_Config.m_TcAntiPingInteractionOnly || distance(m_Camera.m_Center, Pos) <= (float)g_Config.m_TcAntiPingInteractionRadius))
 					Pos = GetSmoothPos(i);
 
 				if(g_Config.m_TcAntiPingImproved && m_aClients[i].m_ValidAntipingSmooth)
@@ -4326,6 +4372,21 @@ void CGameClient::DetectStrongHook()
 	}
 }
 
+bool CGameClient::AntiPingInteractionFilter() const
+{
+	if(g_Config.m_TcAntiPingInteractionOnly == 0)
+		return true;
+	const float Radius = (float)g_Config.m_TcAntiPingInteractionRadius;
+	for(int i = 0; i < MAX_CLIENTS; i++)
+	{
+		if(i == m_Snap.m_LocalClientId || !m_Snap.m_aCharacters[i].m_Active)
+			continue;
+		if(distance(m_Camera.m_Center, m_aClients[i].m_RenderPos) <= Radius)
+			return true;
+	}
+	return false;
+}
+
 vec2 CGameClient::GetSmoothPos(int ClientId)
 {
 	const int FastInputTicks = g_Config.m_TcFastInput ? (g_Config.m_TcFastInputAmount + 19) / 20 : 0;
@@ -4473,8 +4534,14 @@ bool CGameClient::IsOtherTeam(int ClientId) const
 			return false;
 		return m_Teams.Team(ClientId) != m_Teams.Team(m_Snap.m_SpecInfo.m_SpectatorId);
 	}
-	else if((m_aClients[m_Snap.m_LocalClientId].m_Solo || m_aClients[ClientId].m_Solo) && !Local)
-		return true;
+	else
+	{
+		bool LocalSolo = m_aClients[m_Snap.m_LocalClientId].m_Solo;
+		if(g_Config.m_TcPredictTpTiles && Predict())
+			LocalSolo = m_PredictedWorld.Teams()->GetSolo(m_Snap.m_LocalClientId);
+		if((LocalSolo || m_aClients[ClientId].m_Solo) && !Local)
+			return true;
+	}
 
 	if(m_Teams.Team(ClientId) == TEAM_SUPER || m_Teams.Team(m_Snap.m_LocalClientId) == TEAM_SUPER)
 		return false;
@@ -4971,6 +5038,30 @@ void CGameClient::LoadHudSkin(const char *pPath, bool AsDir)
 		m_HudSkinLoaded = true;
 	}
 	ImgInfo.Free();
+}
+
+void CGameClient::LoadAudioAssets(const char *pName)
+{
+	(void)pName;
+	m_Sounds.ReloadSounds();
+}
+
+void CGameClient::OnFileDrop(const char *pPath)
+{
+	str_copy(m_aDroppedFile, pPath);
+	m_DroppedFileTime = time_get() / (double)time_freq();
+	m_HoverNotification.Start(Localize("File queued - open Settings -> Assets"));
+}
+
+bool CGameClient::ConsumeDroppedFile(char *pOut, int OutLen)
+{
+	if(m_aDroppedFile[0] == '\0')
+		return false;
+	const double Now = time_get() / (double)time_freq();
+	const bool Fresh = (Now - m_DroppedFileTime) <= 10.0;
+	str_copy(pOut, m_aDroppedFile, OutLen);
+	m_aDroppedFile[0] = '\0';
+	return Fresh;
 }
 
 void CGameClient::LoadExtrasSkin(const char *pPath, bool AsDir)

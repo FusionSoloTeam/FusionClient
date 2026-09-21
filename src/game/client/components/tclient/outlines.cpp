@@ -1,5 +1,7 @@
 #include "outlines.h"
 
+#include <base/math.h>
+
 #include <engine/graphics.h>
 #include <engine/shared/config.h>
 
@@ -7,6 +9,8 @@
 #include <game/client/gameclient.h>
 #include <game/client/render.h>
 #include <game/mapitems.h>
+
+#include <cmath>
 
 // The order of this is the order of priority for outlines
 enum
@@ -143,6 +147,27 @@ void COutlines::OnRender()
 	if(!g_Config.m_TcOutline)
 		return;
 
+	m_SystemAudio.SetEnabled(g_Config.m_TcOutlinePulsate);
+	if(g_Config.m_TcOutlineGradientColor1 == 16744703)
+		g_Config.m_TcOutlineGradientColor1 = 4278255488;
+	if(g_Config.m_TcOutlineGradientColor2 == 2583658751)
+		g_Config.m_TcOutlineGradientColor2 = 4288282496;
+	auto MigratePickedColor = [](unsigned int &Value) {
+		if((Value >> 24) != 0)
+			return;
+		Value = color_cast<ColorHSLA>(ColorRGBA(((Value >> 16) & 0xFF) / 255.0f, ((Value >> 8) & 0xFF) / 255.0f, (Value & 0xFF) / 255.0f, 1.0f)).Pack(true);
+	};
+	MigratePickedColor(g_Config.m_TcOutlineGradientColor1);
+	MigratePickedColor(g_Config.m_TcOutlineGradientColor2);
+	if(g_Config.m_TcOutlineGradient)
+	{
+		g_Config.m_TcOutlineGradientSolid = g_Config.m_TcOutlineGradientFreeze = g_Config.m_TcOutlineGradientUnfreeze = g_Config.m_TcOutlineGradientKill = g_Config.m_TcOutlineGradientTele = 1;
+		g_Config.m_TcOutlineGradientColor2Solid = g_Config.m_TcOutlineGradientColor2Freeze = g_Config.m_TcOutlineGradientColor2Unfreeze = g_Config.m_TcOutlineGradientColor2Kill = g_Config.m_TcOutlineGradientColor2Tele = g_Config.m_TcOutlineGradientColor2;
+		g_Config.m_TcOutlineGradient = 0;
+	}
+	const float PulsateBonus = g_Config.m_TcOutlinePulsate ? m_SystemAudio.Level() * (g_Config.m_TcOutlinePulsateStrength / 100.0f) * 64.0f : 0.0f;
+	const float GradientOffset = g_Config.m_TcOutlineGradientSpeed > 0 ? (float)(time_get() / (double)time_freq()) * (g_Config.m_TcOutlineGradientSpeed / 100.0f) * 0.5f : 0.0f;
+
 	const float Scale = 32.0f;
 
 	float ScreenX0, ScreenY0, ScreenX1, ScreenY1;
@@ -184,22 +209,25 @@ void COutlines::OnRender()
 				const int &m_Enable;
 				const int &m_Width;
 				const unsigned int &m_Color;
+				const int &m_Gradient;
+				const unsigned int &m_GradientColor2;
 			};
 			const COutlineConfig Config = [&]() -> COutlineConfig {
 				if(Type == OUTLINE_SOLID)
-					return {g_Config.m_TcOutlineSolid, g_Config.m_TcOutlineWidthSolid, g_Config.m_TcOutlineColorSolid};
+					return {g_Config.m_TcOutlineSolid, g_Config.m_TcOutlineWidthSolid, g_Config.m_TcOutlineColorSolid, g_Config.m_TcOutlineGradientSolid, g_Config.m_TcOutlineGradientColor2Solid};
 				if(Type == OUTLINE_FREEZE)
-					return {g_Config.m_TcOutlineFreeze, g_Config.m_TcOutlineWidthFreeze, g_Config.m_TcOutlineColorFreeze};
+					return {g_Config.m_TcOutlineFreeze, g_Config.m_TcOutlineWidthFreeze, g_Config.m_TcOutlineColorFreeze, g_Config.m_TcOutlineGradientFreeze, g_Config.m_TcOutlineGradientColor2Freeze};
 				if(Type == OUTLINE_UNFREEZE)
-					return {g_Config.m_TcOutlineUnfreeze, g_Config.m_TcOutlineWidthUnfreeze, g_Config.m_TcOutlineColorUnfreeze};
+					return {g_Config.m_TcOutlineUnfreeze, g_Config.m_TcOutlineWidthUnfreeze, g_Config.m_TcOutlineColorUnfreeze, g_Config.m_TcOutlineGradientUnfreeze, g_Config.m_TcOutlineGradientColor2Unfreeze};
 				if(Type == OUTLINE_KILL)
-					return {g_Config.m_TcOutlineKill, g_Config.m_TcOutlineWidthKill, g_Config.m_TcOutlineColorKill};
+					return {g_Config.m_TcOutlineKill, g_Config.m_TcOutlineWidthKill, g_Config.m_TcOutlineColorKill, g_Config.m_TcOutlineGradientKill, g_Config.m_TcOutlineGradientColor2Kill};
 				if(Type == OUTLINE_TELE)
-					return {g_Config.m_TcOutlineTele, g_Config.m_TcOutlineWidthTele, g_Config.m_TcOutlineColorTele};
+					return {g_Config.m_TcOutlineTele, g_Config.m_TcOutlineWidthTele, g_Config.m_TcOutlineColorTele, g_Config.m_TcOutlineGradientTele, g_Config.m_TcOutlineGradientColor2Tele};
 				dbg_assert(false, "Invalid value for Type at %d, %d/%d, %d", x, y, m_MapDataSize.x, m_MapDataSize.y);
 			}();
 			if(!Config.m_Enable || Config.m_Width <= 0)
 				continue;
+			const float Width = Config.m_Width + PulsateBonus;
 			// Find neighbours
 			const bool aNeighbors[8] = {
 				GetTile(x - 1, y - 1) >= Type,
@@ -216,46 +244,55 @@ void COutlines::OnRender()
 			int NumQuads = 0;
 			// Lone corners first
 			if(!aNeighbors[0] && aNeighbors[1] && aNeighbors[3])
-				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale, Config.m_Width, Config.m_Width);
+				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale, Width, Width);
 			if(!aNeighbors[2] && aNeighbors[1] && aNeighbors[4])
-				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Config.m_Width, y * Scale, Config.m_Width, Config.m_Width);
+				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Width, y * Scale, Width, Width);
 			if(!aNeighbors[5] && aNeighbors[3] && aNeighbors[6])
-				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale + Scale - Config.m_Width, Config.m_Width, Config.m_Width);
+				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale + Scale - Width, Width, Width);
 			if(!aNeighbors[7] && aNeighbors[6] && aNeighbors[4])
-				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Config.m_Width, y * Scale + Scale - Config.m_Width, Config.m_Width, Config.m_Width);
+				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Width, y * Scale + Scale - Width, Width, Width);
 			// Top
 			if(!aNeighbors[1])
-				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale, Scale, Config.m_Width);
+				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale, Scale, Width);
 			// Bottom
 			if(!aNeighbors[6])
-				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale + Scale - Config.m_Width, Scale, Config.m_Width);
+				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale + Scale - Width, Scale, Width);
 			// Left
 			if(!aNeighbors[3])
 			{
 				if(aNeighbors[1] && aNeighbors[6])
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale, Config.m_Width, Scale);
+					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale, Width, Scale);
 				else if(aNeighbors[6])
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale + Config.m_Width, Config.m_Width, Scale - Config.m_Width);
+					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale + Width, Width, Scale - Width);
 				else if(aNeighbors[1])
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale, Config.m_Width, Scale - Config.m_Width);
+					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale, Width, Scale - Width);
 				else
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale + Config.m_Width, Config.m_Width, Scale - Config.m_Width * 2.0f);
+					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale + Width, Width, Scale - Width * 2.0f);
 			}
 			// Right
 			if(!aNeighbors[4])
 			{
 				if(aNeighbors[1] && aNeighbors[6])
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Config.m_Width, y * Scale, Config.m_Width, Scale);
+					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Width, y * Scale, Width, Scale);
 				else if(aNeighbors[6])
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Config.m_Width, y * Scale + Config.m_Width, Config.m_Width, Scale - Config.m_Width);
+					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Width, y * Scale + Width, Width, Scale - Width);
 				else if(aNeighbors[1])
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Config.m_Width, y * Scale, Config.m_Width, Scale - Config.m_Width);
+					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Width, y * Scale, Width, Scale - Width);
 				else
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Config.m_Width, y * Scale + Config.m_Width, Config.m_Width, Scale - Config.m_Width * 2.0f);
+					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Width, y * Scale + Width, Width, Scale - Width * 2.0f);
 			}
 			if(NumQuads <= 0)
 				continue;
-			Graphics()->SetColor(color_cast<ColorRGBA>(ColorHSLA(Config.m_Color, true)));
+			ColorRGBA OutlineColor = color_cast<ColorRGBA>(ColorHSLA(Config.m_Color, true));
+			if(Config.m_Gradient)
+			{
+				const ColorRGBA GradientColor1 = color_cast<ColorRGBA>(ColorHSLA(Config.m_Color, true));
+				const ColorRGBA GradientColor2 = color_cast<ColorRGBA>(ColorHSLA(Config.m_GradientColor2, true));
+				const float Phase = std::fmod((x + y) * 0.03125f + GradientOffset, 1.0f);
+				const float Wave = Phase < 0.5f ? Phase * 2.0f : 2.0f - Phase * 2.0f;
+				OutlineColor = ColorRGBA(mix(GradientColor1.r, GradientColor2.r, Wave), mix(GradientColor1.g, GradientColor2.g, Wave), mix(GradientColor1.b, GradientColor2.b, Wave), mix(GradientColor1.a, GradientColor2.a, Wave));
+			}
+			Graphics()->SetColor(OutlineColor);
 			Graphics()->QuadsDrawTL(aQuads, NumQuads);
 		}
 	}

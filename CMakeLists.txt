@@ -753,6 +753,7 @@ if(TARGET_OS STREQUAL "windows")
   list(APPEND PLATFORM_LIBS advapi32.lib) # Reg* and Crypt* functions
   list(APPEND PLATFORM_LIBS bcrypt.lib userenv.lib) # for Rust (https://github.com/rust-lang/rust/issues/91974)
   list(APPEND PLATFORM_LIBS ole32.lib) # CoInitialize(Ex)
+  list(APPEND PLATFORM_LIBS mmdevapi.lib) # ActivateAudioInterfaceAsync
   list(APPEND PLATFORM_LIBS shell32.lib)
   list(APPEND PLATFORM_LIBS ntdll.lib) # https://github.com/ddnet/ddnet/issues/6725
   list(APPEND PLATFORM_LIBS uuid.lib) # FOLDERID_RoamingAppData
@@ -2552,6 +2553,10 @@ if(CLIENT)
     components/ghost.h
     components/hud.cpp
     components/hud.h
+    components/hud_layout.cpp
+    components/hud_layout.h
+    components/tclient/hud_editor.cpp
+    components/tclient/hud_editor.h
     components/important_alert.cpp
     components/important_alert.h
     components/infomessages.cpp
@@ -2606,6 +2611,8 @@ if(CLIENT)
     components/spectator.h
     components/statboard.cpp
     components/statboard.h
+    components/tclient/afk_aura.cpp
+    components/tclient/afk_aura.h
     components/tclient/bg_draw.cpp
     components/tclient/bg_draw.h
     components/tclient/bg_draw_file.cpp
@@ -2616,9 +2623,16 @@ if(CLIENT)
     components/tclient/bindwheel.h
     components/tclient/colored_parts.h
     components/tclient/custom_communities.cpp
+    components/tclient/cursor_trail.cpp
+    components/tclient/cursor_trail.h
     components/tclient/custom_communities.h
     components/tclient/data_version.h
+    components/tclient/hover_notification.cpp
+    components/tclient/hover_notification.h
+    components/tclient/menus_assets_editor.cpp
     components/tclient/menus_tclient.cpp
+    components/tclient/r_jelly.cpp
+    components/tclient/r_jelly.h
     components/tclient/mod.cpp
     components/tclient/mod.h
     components/tclient/moving_tiles.cpp
@@ -2631,6 +2645,14 @@ if(CLIENT)
     components/tclient/pet.h
     components/tclient/player_indicator.cpp
     components/tclient/player_indicator.h
+    components/tclient/above_below_player.cpp
+    components/tclient/above_below_player.h
+    components/tclient/swaptimer.cpp
+    components/tclient/swaptimer.h
+    components/tclient/chatbinds.cpp
+    components/tclient/chatbinds.h
+    components/tclient/gradient.cpp
+    components/tclient/gradient.h
     components/tclient/rainbow.cpp
     components/tclient/rainbow.h
     components/tclient/scripting.cpp
@@ -2647,8 +2669,15 @@ if(CLIENT)
     components/tclient/trails.h
     components/tclient/translate.cpp
     components/tclient/translate.h
+    components/tclient/react_bypass.cpp
     components/tclient/warlist.cpp
     components/tclient/warlist.h
+    components/tclient/heartlist.cpp
+    components/tclient/heartlist.h
+    components/tclient/notify_on_move.cpp
+    components/tclient/notify_on_move.h
+    components/tclient/system_audio.cpp
+    components/tclient/system_audio.h
     components/tooltips.cpp
     components/tooltips.h
     components/touch_controls.cpp
@@ -2671,6 +2700,8 @@ if(CLIENT)
     prediction/entities/dragger.h
     prediction/entities/laser.cpp
     prediction/entities/laser.h
+    prediction/entities/light.cpp
+    prediction/entities/light.h
     prediction/entities/pickup.cpp
     prediction/entities/pickup.h
     prediction/entities/plasma.cpp
@@ -2842,6 +2873,7 @@ if(CLIENT)
   endif()
 
   if(TARGET_OS STREQUAL "windows")
+    list(APPEND LIBS_CLIENT ole32 advapi32 mmdevapi)
     set(VERSION_EXECUTABLE "${CLIENT_EXECUTABLE}")
     set(VERSION_COMPANY "${CLIENT_EXECUTABLE} Team")
     configure_file("other/versioninfo/versioninfo.rc.in" "client.versioninfo.rc")

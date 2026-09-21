@@ -1131,7 +1131,9 @@ void CMenus::Render()
 				dbg_assert_failed("Invalid m_MenuPage: %d", m_MenuPage);
 			}
 
-			RenderMenubar(TabBar, ClientState);
+			const bool AssetsEditorConfirmOpen = m_AssetsEditorState.m_VisualsEditorOpen && m_AssetsEditorState.m_FullscreenOpen && m_AssetsEditorState.m_ShowExitConfirm;
+			if(!AssetsEditorConfirmOpen)
+				RenderMenubar(TabBar, ClientState);
 		}
 		break;
 
@@ -1183,7 +1185,9 @@ void CMenus::Render()
 				dbg_assert_failed("Invalid m_GamePage: %d", m_GamePage);
 			}
 
-			RenderMenubar(TabBar, ClientState);
+			const bool AssetsEditorConfirmOpen = m_AssetsEditorState.m_VisualsEditorOpen && m_AssetsEditorState.m_FullscreenOpen && m_AssetsEditorState.m_ShowExitConfirm;
+			if(!AssetsEditorConfirmOpen)
+				RenderMenubar(TabBar, ClientState);
 		}
 		break;
 
@@ -2516,6 +2520,11 @@ void CMenus::OnRender()
 		}
 	}
 
+	static float s_AppliedMenuScale = 1.0f;
+	if(Ui()->ActiveItem() != &g_Config.m_TcMenuScale)
+		s_AppliedMenuScale = std::clamp(g_Config.m_TcMenuScale, 50, 150) / 100.0f;
+	Ui()->SetScreenScale(s_AppliedMenuScale);
+
 	Ui()->StartCheck();
 	UpdateColors();
 
@@ -2525,8 +2534,11 @@ void CMenus::OnRender()
 
 	if(IsActive())
 	{
+		Graphics()->SetFrameBlendingAllowed(false);
 		RenderTools()->RenderCursor(Ui()->MousePos(), 24.0f);
 	}
+
+	Ui()->SetScreenScale(1.0f);
 
 	// render debug information
 	if(g_Config.m_Debug)

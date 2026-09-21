@@ -7,6 +7,7 @@
 #include "entities/door.h"
 #include "entities/dragger.h"
 #include "entities/laser.h"
+#include "entities/light.h"
 #include "entities/pickup.h"
 #include "entities/plasma.h"
 #include "entities/projectile.h"
@@ -506,13 +507,34 @@ void CGameWorld::NetObjAdd(int ObjId, int ObjType, const void *pObjData, const C
 		CEntity *pEnt = new CPickup(NetPickup);
 		InsertEntity(pEnt, true);
 	}
-	else if((ObjType == NETOBJTYPE_LASER || ObjType == NETOBJTYPE_DDNETLASER) && m_WorldConfig.m_PredictWeapons)
+	else if((ObjType == NETOBJTYPE_LASER || ObjType == NETOBJTYPE_DDNETLASER) && (m_WorldConfig.m_PredictWeapons || m_WorldConfig.m_PredictLights))
 	{
 		CLaserData Data = ExtractLaserInfo(ObjType, pObjData, this, pDataEx);
 		if(!IsLocalTeam(Data.m_Owner) || !Data.m_Predict)
 		{
 			return;
 		}
+
+		if(Data.m_Type == LASERTYPE_FREEZE)
+		{
+			if(!m_WorldConfig.m_PredictLights)
+				return;
+
+			CLight NetLight = CLight(this, ObjId, &Data, pDataEx ? pDataEx->m_Layer : LAYER_GAME);
+			auto *pLight = dynamic_cast<CLight *>(GetEntity(ObjId, ENTTYPE_LIGHT));
+			if(pLight && NetLight.Match(pLight))
+			{
+				pLight->Keep();
+				pLight->Read(&Data);
+				return;
+			}
+			CLight *pEnt = new CLight(NetLight);
+			InsertEntity(pEnt);
+			return;
+		}
+
+		if(!m_WorldConfig.m_PredictWeapons)
+			return;
 
 		if(Data.m_Type == LASERTYPE_RIFLE || Data.m_Type == LASERTYPE_SHOTGUN || Data.m_Type < 0)
 		{
@@ -657,6 +679,8 @@ void CGameWorld::CopyWorldClean(CGameWorld *pFrom)
 				pCopy = new CProjectile(*((CProjectile *)pEnt));
 			else if(Type == ENTTYPE_LASER)
 				pCopy = new CLaser(*((CLaser *)pEnt));
+			else if(Type == ENTTYPE_LIGHT)
+				pCopy = new CLight(*((CLight *)pEnt));
 			else if(Type == ENTTYPE_DRAGGER)
 				pCopy = new CDragger(*((CDragger *)pEnt));
 			else if(Type == ENTTYPE_CHARACTER)
@@ -710,6 +734,8 @@ void CGameWorld::CopyWorld(CGameWorld *pFrom)
 				pCopy = new CProjectile(*((CProjectile *)pEnt));
 			else if(Type == ENTTYPE_LASER)
 				pCopy = new CLaser(*((CLaser *)pEnt));
+			else if(Type == ENTTYPE_LIGHT)
+				pCopy = new CLight(*((CLight *)pEnt));
 			else if(Type == ENTTYPE_DRAGGER)
 				pCopy = new CDragger(*((CDragger *)pEnt));
 			else if(Type == ENTTYPE_CHARACTER)

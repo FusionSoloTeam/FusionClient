@@ -230,6 +230,20 @@ void CMenus::RenderGame(CUIRect MainView)
 		}
 	}
 
+	if(GameClient()->m_Snap.m_pLocalInfo)
+	{
+		ButtonBar.VSplitLeft(80.0f, &Button, &ButtonBar);
+		ButtonBar.VSplitLeft(5.0f, nullptr, &ButtonBar);
+
+		static CButtonContainer s_HudEditorButton;
+		if(DoButton_Menu(&s_HudEditorButton, "HUDE", 0, &Button))
+		{
+			SetActive(false);
+			GameClient()->m_HudEditor.Activate();
+		}
+		GameClient()->m_Tooltips.DoToolTip(&s_HudEditorButton, &Button, Localize("Move HUD elements around with the mouse. Press Escape to exit."));
+	}
+
 	if(GameClient()->m_Snap.m_pLocalInfo && (GameClient()->m_Snap.m_pLocalInfo->m_Team == TEAM_SPECTATORS || Paused || Spec))
 	{
 		ButtonBar.VSplitLeft(32.0f, &Button, &ButtonBar);
@@ -609,7 +623,10 @@ void CMenus::RenderPlayers(CUIRect MainView)
 		if(DoButton_Toggle(&s_aPlayerIds[Index][2], CurrentClient.m_Friend, &Button, true))
 		{
 			if(CurrentClient.m_Friend)
+			{
 				GameClient()->Friends()->RemoveFriend(CurrentClient.m_aName, CurrentClient.m_aClan);
+				GameClient()->m_HeartList.RemoveFriendBinding(CurrentClient.m_aName);
+			}
 			else
 				GameClient()->Friends()->AddFriend(CurrentClient.m_aName, CurrentClient.m_aClan);
 

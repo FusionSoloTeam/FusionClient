@@ -756,7 +756,7 @@ EBackendType CGraphicsBackend_SDL_GL::DetectBackend()
 		const char *pConfBackend = g_Config.m_GfxBackend;
 		if(str_comp_nocase(pConfBackend, "GLES") == 0)
 			RetBackendType = BACKEND_TYPE_OPENGL_ES;
-		else if(str_comp_nocase(pConfBackend, "Vulkan") == 0)
+		else if(str_comp_nocase(pConfBackend, "Vulkan") == 0 || str_comp_nocase(pConfBackend, "Vulkan 1.4") == 0)
 			RetBackendType = BACKEND_TYPE_VULKAN;
 		else if(str_comp_nocase(pConfBackend, "OpenGL") == 0)
 			RetBackendType = BACKEND_TYPE_OPENGL;

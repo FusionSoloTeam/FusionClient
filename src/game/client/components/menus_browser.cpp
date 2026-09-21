@@ -1454,7 +1454,10 @@ void CMenus::RenderServerbrowserInfoScoreboard(CUIRect View, const CServerInfo *
 	{
 		const CServerInfo::CClient &SelectedClient = pSelectedServer->m_aClients[NewSelected];
 		if(SelectedClient.m_FriendState == IFriends::FRIEND_PLAYER)
+		{
 			GameClient()->Friends()->RemoveFriend(SelectedClient.m_aName, SelectedClient.m_aClan);
+			GameClient()->m_HeartList.RemoveFriendBinding(SelectedClient.m_aName);
+		}
 		else
 			GameClient()->Friends()->AddFriend(SelectedClient.m_aName, SelectedClient.m_aClan);
 		FriendlistOnUpdate();
@@ -1465,7 +1468,12 @@ void CMenus::RenderServerbrowserInfoScoreboard(CUIRect View, const CServerInfo *
 void CMenus::RenderServerbrowserFriends(CUIRect View)
 {
 	const float FontSize = 10.0f;
-	static bool s_aListExtended[NUM_FRIEND_TYPES] = {true, true, false};
+	enum
+	{
+		FRIEND_PRIORITIZED = NUM_FRIEND_TYPES,
+		NUM_FRIEND_SECTIONS,
+	};
+	static bool s_aListExtended[NUM_FRIEND_SECTIONS] = {true, true, false, true};
 	const float SpacingH = 2.0f;
 
 	CUIRect List, ServerFriends;
@@ -1513,6 +1521,26 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 	for(auto &vFriends : m_avFriends)
 		std::sort(vFriends.begin(), vFriends.end());
 
+	m_vPrioritizedFriends.clear();
+	for(const CHeartType *pHeartType : GameClient()->m_HeartList.m_HeartTypes)
+	{
+		if(!pHeartType->m_Prioritized)
+			continue;
+		for(const CHeartEntry &Entry : GameClient()->m_HeartList.m_vHeartEntries)
+		{
+			if(Entry.m_pHeartType != pHeartType)
+				continue;
+			for(const CFriendItem &Friend : m_avFriends[FRIEND_PLAYER_ON])
+			{
+				if(str_comp(Friend.Name(), Entry.m_aName) == 0)
+				{
+					m_vPrioritizedFriends.push_back({Friend, pHeartType->m_Color});
+					break;
+				}
+			}
+		}
+	}
+
 	// friends list
 	static CScrollRegion s_ScrollRegion;
 	vec2 ScrollOffset(0.0f, 0.0f);
@@ -1525,8 +1553,11 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 	List.y += ScrollOffset.y;
 
 	char aBuf[256];
-	for(size_t FriendType = 0; FriendType < NUM_FRIEND_TYPES; ++FriendType)
+	for(size_t FriendType = 0; FriendType < NUM_FRIEND_SECTIONS; ++FriendType)
 	{
+		const bool IsPrioritized = FriendType == FRIEND_PRIORITIZED;
+		const int FriendCount = IsPrioritized ? (int)m_vPrioritizedFriends.size() : (int)m_avFriends[FriendType].size();
+
 		// header
 		CUIRect Header, GroupIcon, GroupLabel;
 		List.HSplitTop(ms_ListheaderHeight, &Header, &List);
@@ -1550,6 +1581,9 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 		case FRIEND_OFF:
 			str_format(aBuf, sizeof(aBuf), Localize("Offline (%d)", "friends (server browser)"), (int)m_avFriends[FriendType].size());
 			break;
+		case FRIEND_PRIORITIZED:
+			str_format(aBuf, sizeof(aBuf), Localize("Prioritized Friends (%d)"), FriendCount);
+			break;
 		default:
 			dbg_assert_failed("FriendType invalid");
 		}
@@ -1562,7 +1596,7 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 		// entries
 		if(s_aListExtended[FriendType])
 		{
-			for(size_t FriendIndex = 0; FriendIndex < m_avFriends[FriendType].size(); ++FriendIndex)
+			for(size_t FriendIndex = 0; FriendIndex < (size_t)FriendCount; ++FriendIndex)
 			{
 				// space
 				{
@@ -1572,7 +1606,7 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 				}
 
 				CUIRect Rect;
-				const auto &Friend = m_avFriends[FriendType][FriendIndex];
+				const CFriendItem &Friend = IsPrioritized ? m_vPrioritizedFriends[FriendIndex].m_Item : m_avFriends[FriendType][FriendIndex];
 				List.HSplitTop(11.0f + 10.0f + 2 * 2.0f + 1.0f + (Friend.ServerInfo() == nullptr ? 0.0f : 10.0f), &Rect, &List);
 				s_ScrollRegion.AddRect(Rect);
 				if(s_ScrollRegion.RectClipped(Rect))
@@ -1589,7 +1623,7 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 				// Compare unsorted server id of the friend with the unsorted id of the currently selected server
 				bool InSelectedServer = m_SelectedIndex >= 0 && Friend.ServerInfo() && Friend.ServerInfo()->m_ServerIndex == ServerBrowser()->SortedGet(m_SelectedIndex)->m_ServerIndex;
 
-				const ColorRGBA Color = PlayerBackgroundColor(FriendType == FRIEND_PLAYER_ON, FriendType == FRIEND_CLAN_ON, FriendType == FRIEND_OFF ? true : Friend.IsAfk(), InSelectedServer, Inside);
+				const ColorRGBA Color = PlayerBackgroundColor(IsPrioritized || FriendType == FRIEND_PLAYER_ON, FriendType == FRIEND_CLAN_ON, FriendType == FRIEND_OFF ? true : Friend.IsAfk(), InSelectedServer, Inside);
 				Rect.Draw(Color, IGraphics::CORNER_ALL, 5.0f);
 				Rect.Margin(2.0f, &Rect);
 
@@ -1636,10 +1670,14 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 				Rect.HSplitTop(11.0f, &NameLabel, &ClanLabel);
 
 				// name
+				if(IsPrioritized)
+					TextRender()->TextColor(m_vPrioritizedFriends[FriendIndex].m_HeartColor);
 				Ui()->DoLabel(&NameLabel, Friend.Name(), FontSize - 1.0f, TEXTALIGN_ML);
 
 				// clan
 				Ui()->DoLabel(&ClanLabel, Friend.Clan(), FontSize - 2.0f, TEXTALIGN_ML);
+				if(IsPrioritized)
+					TextRender()->TextColor(TextRender()->DefaultTextColor());
 
 				// server info
 				if(Friend.ServerInfo())
@@ -1702,7 +1740,9 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 
 			// Render empty description
 			const char *pText = nullptr;
-			if(FriendType == FRIEND_PLAYER_ON && !HasFriend)
+			if(IsPrioritized && FriendCount == 0)
+				pText = Localize("Friends with prioritized hearts are listed here while they are online. Configure hearts in the TClient tab.");
+			else if(FriendType == FRIEND_PLAYER_ON && !HasFriend)
 				pText = Localize("Add friends by entering their name below or by clicking their name in the player list.");
 			else if(FriendType == FRIEND_CLAN_ON && !HasClan)
 				pText = Localize("Add clanmates by entering their clan below and leaving the name blank.");
@@ -1780,7 +1820,9 @@ void CMenus::FriendlistOnUpdate()
 
 void CMenus::PopupConfirmRemoveFriend()
 {
-	GameClient()->Friends()->RemoveFriend(m_pRemoveFriend->FriendState() == IFriends::FRIEND_PLAYER ? m_pRemoveFriend->Name() : "", m_pRemoveFriend->Clan());
+	const char *pName = m_pRemoveFriend->FriendState() == IFriends::FRIEND_PLAYER ? m_pRemoveFriend->Name() : "";
+	GameClient()->Friends()->RemoveFriend(pName, m_pRemoveFriend->Clan());
+	GameClient()->m_HeartList.RemoveFriendBinding(pName);
 	FriendlistOnUpdate();
 	Client()->ServerBrowserUpdate();
 	m_pRemoveFriend = nullptr;

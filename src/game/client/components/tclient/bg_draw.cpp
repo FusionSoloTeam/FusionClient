@@ -183,7 +183,7 @@ private:
 
 	float CurrentWidth() const
 	{
-		return (float)g_Config.m_TcBgDrawWidth * m_This.m_Camera.m_Zoom;
+		return (float)g_Config.m_TcBgDrawWidth * m_This.m_Camera.m_RenderZoom;
 	}
 	ColorRGBA CurrentColor() const
 	{
@@ -512,7 +512,7 @@ void CBgDraw::OnRender()
 		if(GameClient()->m_Snap.m_SpecInfo.m_Active && Dummy == g_Config.m_ClDummy)
 			Pos = GameClient()->m_Camera.m_Center;
 		else
-			Pos = (GameClient()->m_Controls.m_aTargetPos[Dummy] - GameClient()->m_Camera.m_Center) * GameClient()->m_Camera.m_Zoom + GameClient()->m_Camera.m_Center;
+			Pos = (GameClient()->m_Controls.m_aTargetPos[Dummy] - GameClient()->m_Camera.m_Center) * GameClient()->m_Camera.m_RenderZoom + GameClient()->m_Camera.m_Center;
 		if(Input == InputMode::DRAW)
 		{
 			if(ActiveItem.has_value())

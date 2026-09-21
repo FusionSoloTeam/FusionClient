@@ -33,6 +33,13 @@ constexpr const char *const gs_apModEntitiesNames[] = {
 	"f-ddrace",
 };
 
+struct SLoadedMapTextureInfo
+{
+	char m_aName[IO_MAX_PATH_LENGTH];
+	int m_Width;
+	int m_Height;
+};
+
 class CMapImages : public CComponent, public IMapImages
 {
 	friend class CBackground;
@@ -40,6 +47,8 @@ class CMapImages : public CComponent, public IMapImages
 
 	IGraphics::CTextureHandle m_aTextures[MAX_MAPIMAGES];
 	int m_Count;
+	SLoadedMapTextureInfo m_aLoadedTextures[MAX_MAPIMAGES] = {};
+	int m_NumLoadedTextures = 0;
 
 	char m_aEntitiesPath[IO_MAX_PATH_LENGTH];
 
@@ -50,10 +59,14 @@ public:
 	IGraphics::CTextureHandle Get(int Index) const override { return m_aTextures[Index]; }
 	int Num() const override { return m_Count; }
 
+	int NumLoadedTextures() const { return m_NumLoadedTextures; }
+	const SLoadedMapTextureInfo *LoadedTexture(int Index) const { return &m_aLoadedTextures[Index]; }
+
 	void OnMapLoadImpl(class CLayers *pLayers, class IMap *pMap);
 	void OnMapLoad() override;
 	void OnInit() override;
 	void Unload();
+	void ReloadAll();
 	void LoadBackground(class CLayers *pLayers, class IMap *pMap);
 
 	// DDRace

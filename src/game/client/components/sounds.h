@@ -47,6 +47,8 @@ class CSounds : public CComponent
 	float m_BackgroundMusicVolume = -1.0f;
 
 public:
+	void ReloadSounds();
+
 	// sound channels
 	enum
 	{

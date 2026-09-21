@@ -41,6 +41,9 @@
 #include <iterator>
 #include <limits>
 #include <type_traits>
+#include <unordered_set>
+
+static bool HasSelectedTileLayer(CEditorMap *pMap);
 
 static const char *VANILLA_IMAGES[] = {
 	"bg_cloud1",
@@ -694,6 +697,54 @@ void CEditor::DoToolbarLayers(CUIRect ToolBar)
 			if(DoButton_Editor(&s_BrushDrawModeButton, "Destructive", m_BrushDrawDestructive, &Button, BUTTONFLAG_LEFT, "[Ctrl+D] Toggle brush draw mode: preserve or override existing tiles.") ||
 				(m_Dialog == DIALOG_NONE && CLineInput::GetActiveInput() == nullptr && Input()->KeyPress(KEY_D) && ModPressed && !ShiftPressed))
 				m_BrushDrawDestructive = !m_BrushDrawDestructive;
+			ToolbarBottom.VSplitLeft(5.0f, &Button, &ToolbarBottom);
+		}
+
+		// fill mode button
+		{
+			ToolbarBottom.VSplitLeft(40.0f, &Button, &ToolbarBottom);
+			static int s_FillButton = 0;
+			if(DoButton_Editor(&s_FillButton, "Fill", m_FillEnabled, &Button, BUTTONFLAG_LEFT, "[F] Toggle fill mode: left click fills or outlines the smallest enclosed region with the brush tiles. [Shift+F] Cycle submodes: area only, area + walls, outline.") ||
+				(m_Dialog == DIALOG_NONE && CLineInput::GetActiveInput() == nullptr && Input()->KeyPress(KEY_F) && !ModPressed && !ShiftPressed))
+				m_FillEnabled = !m_FillEnabled;
+
+			if(m_Dialog == DIALOG_NONE && CLineInput::GetActiveInput() == nullptr && Input()->KeyPress(KEY_F) && ShiftPressed && !ModPressed)
+			{
+				m_FillMode = static_cast<EFillMode>(((int)m_FillMode + 1) % (int)EFillMode::NUM_MODES);
+				if(m_FillMode == EFillMode::AREA_ONLY)
+					ShowEditorMessage("Fill mode: area only");
+				else if(m_FillMode == EFillMode::AREA_WALLS)
+					ShowEditorMessage("Fill mode: area + walls");
+				else
+					ShowEditorMessage("Fill mode: outline");
+			}
+
+			ToolbarBottom.VSplitLeft(5.0f, &Button, &ToolbarBottom);
+		}
+
+		{
+			CUIRect LinesButton, CheckLinesButton;
+			ToolbarBottom.VSplitLeft(80.0f, &Button, &ToolbarBottom);
+			Button.VSplitMid(&LinesButton, &CheckLinesButton);
+			static int s_TeleLinesButton = 0;
+			static int s_TeleCheckLinesButton = 0;
+			if(DoButton_Ex(&s_TeleLinesButton, "Tele", m_ShowTeleLines, &LinesButton, BUTTONFLAG_LEFT, "Show connection lines between From and To teleport tiles with the same number.", IGraphics::CORNER_L))
+				m_ShowTeleLines = !m_ShowTeleLines;
+			if(DoButton_Ex(&s_TeleCheckLinesButton, "CTele", m_ShowTeleCheckLines, &CheckLinesButton, BUTTONFLAG_LEFT, "Show connection lines between Checkpoint and CTO teleport tiles with the same number.", IGraphics::CORNER_R))
+				m_ShowTeleCheckLines = !m_ShowTeleCheckLines;
+
+			ToolbarBottom.VSplitLeft(5.0f, &Button, &ToolbarBottom);
+		}
+
+		{
+			ToolbarBottom.VSplitLeft(55.0f, &Button, &ToolbarBottom);
+			static int s_AlignmentGuidesButton = 0;
+			if(DoButton_Editor(&s_AlignmentGuidesButton, "Guides", m_ShowAlignmentGuides, &Button, BUTTONFLAG_LEFT, "[L] Toggle alignment guide lines that connect the brush to nearby tiles.") ||
+				(m_Dialog == DIALOG_NONE && CLineInput::GetActiveInput() == nullptr && Input()->KeyPress(KEY_L) && !ModPressed && !ShiftPressed))
+			{
+				m_ShowAlignmentGuides = !m_ShowAlignmentGuides;
+			}
+
 			ToolbarBottom.VSplitLeft(5.0f, &Button, &ToolbarBottom);
 		}
 	}
@@ -2337,8 +2388,370 @@ void CEditor::DoQuadEnvPoint(const CQuad *pQuad, CEnvelope *pEnvelope, int QuadI
 	Graphics()->QuadsDraw(&QuadItem, 1);
 }
 
+static void RenderTeleLines(CEditor *pEditor, const CUIRect &View)
+{
+	CEditorMap *pMap = pEditor->Map();
+
+	std::vector<std::vector<ivec2>> aFromTiles(256);
+	std::vector<std::vector<ivec2>> aToTiles(256);
+	std::vector<std::vector<ivec2>> aCheckpointTiles(256);
+	std::vector<std::vector<ivec2>> aCtoTiles(256);
+
+	for(const auto &pGroup : pMap->m_vpGroups)
+	{
+		for(const auto &pLayer : pGroup->m_vpLayers)
+		{
+			if(pLayer->m_Type != LAYERTYPE_TILES)
+				continue;
+			if(!static_cast<CLayerTiles *>(pLayer.get())->m_HasTele)
+				continue;
+			CLayerTele *pTeleLayer = static_cast<CLayerTele *>(pLayer.get());
+			for(int y = 0; y < pTeleLayer->m_Height; y++)
+			{
+				for(int x = 0; x < pTeleLayer->m_Width; x++)
+				{
+					const int Index = y * pTeleLayer->m_Width + x;
+					const int Type = pTeleLayer->m_pTeleTile[Index].m_Type;
+					const int Number = pTeleLayer->m_pTeleTile[Index].m_Number;
+					if(Number <= 0)
+						continue;
+					if(Type == TILE_TELEIN || Type == TILE_TELEINEVIL)
+						aFromTiles[Number].emplace_back(x, y);
+					else if(Type == TILE_TELEOUT)
+						aToTiles[Number].emplace_back(x, y);
+					else if(Type == TILE_TELECHECK)
+						aCheckpointTiles[Number].emplace_back(x, y);
+					else if(Type == TILE_TELECHECKOUT)
+						aCtoTiles[Number].emplace_back(x, y);
+				}
+			}
+		}
+	}
+
+	std::vector<IGraphics::CLineItem> vLines;
+	auto CollectLines = [&](const std::vector<std::vector<ivec2>> &vSources, const std::vector<std::vector<ivec2>> &vDestinations) {
+		for(int n = 0; n < 256; n++)
+		{
+			for(const ivec2 &Source : vSources[n])
+			{
+				for(const ivec2 &Destination : vDestinations[n])
+					vLines.emplace_back(Source.x * 32.0f + 16.0f, Source.y * 32.0f + 16.0f, Destination.x * 32.0f + 16.0f, Destination.y * 32.0f + 16.0f);
+			}
+		}
+	};
+
+	pEditor->Graphics()->TextureClear();
+	pMap->m_pGameGroup->MapScreen();
+	pEditor->Ui()->ClipEnable(&View);
+	pEditor->Graphics()->LinesBegin();
+	if(pEditor->m_ShowTeleLines)
+	{
+		vLines.clear();
+		CollectLines(aFromTiles, aToTiles);
+		if(!vLines.empty())
+		{
+			pEditor->Graphics()->SetColor(0.5f, 1.0f, 0.5f, 0.5f);
+			pEditor->Graphics()->LinesDraw(vLines.data(), vLines.size());
+		}
+	}
+	if(pEditor->m_ShowTeleCheckLines)
+	{
+		vLines.clear();
+		CollectLines(aCheckpointTiles, aCtoTiles);
+		if(!vLines.empty())
+		{
+			pEditor->Graphics()->SetColor(1.0f, 0.75f, 0.25f, 0.5f);
+			pEditor->Graphics()->LinesDraw(vLines.data(), vLines.size());
+		}
+	}
+	pEditor->Graphics()->LinesEnd();
+	pEditor->Ui()->ClipDisable();
+}
+
+static bool IsFillWall(CEditorMap *pMap, int x, int y, bool UserWalls, bool GameWalls);
+
+static void RenderAlignmentGuides(CEditor *pEditor, const CUIRect &View, vec2 CursorPos)
+{
+	CEditorMap *pMap = pEditor->Map();
+	const ivec2 Anchor = ivec2((int)(CursorPos.x / 32.0f), (int)(CursorPos.y / 32.0f));
+
+	constexpr int MAX_GUIDE_DIST = 64;
+	constexpr int MAX_GUIDE_OFFSET = 2;
+
+	struct SGuides
+	{
+		bool m_HasExact = false;
+		ivec2 m_Exact = ivec2(0, 0);
+		bool m_HasNear = false;
+		ivec2 m_Near = ivec2(0, 0);
+	};
+
+	auto FindGuides = [&](int DirX, int DirY) {
+		SGuides Guides;
+		for(int d = 1; d <= MAX_GUIDE_DIST; d++)
+		{
+			const ivec2 Cell = ivec2(Anchor.x + DirX * d, Anchor.y + DirY * d);
+			if(!Guides.m_HasExact && IsFillWall(pMap, Cell.x, Cell.y, true, true))
+			{
+				Guides.m_HasExact = true;
+				Guides.m_Exact = Cell;
+			}
+			if(!Guides.m_HasNear)
+			{
+				for(int o = 1; o <= MAX_GUIDE_OFFSET && !Guides.m_HasNear; o++)
+				{
+					const ivec2 Left = DirY != 0 ? ivec2(Cell.x - o, Cell.y) : ivec2(Cell.x, Cell.y - o);
+					const ivec2 Right = DirY != 0 ? ivec2(Cell.x + o, Cell.y) : ivec2(Cell.x, Cell.y + o);
+					if(IsFillWall(pMap, Left.x, Left.y, true, true))
+					{
+						Guides.m_HasNear = true;
+						Guides.m_Near = Left;
+					}
+					else if(IsFillWall(pMap, Right.x, Right.y, true, true))
+					{
+						Guides.m_HasNear = true;
+						Guides.m_Near = Right;
+					}
+				}
+			}
+			if(Guides.m_HasExact && Guides.m_HasNear)
+				break;
+		}
+		return Guides;
+	};
+
+	std::vector<IGraphics::CLineItem> vAlignedLines;
+	std::vector<IGraphics::CLineItem> vNearLines;
+
+	auto AddGuideLine = [&](ivec2 Block, bool Exact) {
+		const vec2 BlockMin = vec2(Block.x * 32.0f, Block.y * 32.0f);
+		const vec2 BlockMax = BlockMin + vec2(32.0f, 32.0f);
+		const vec2 CellMin = vec2(Anchor.x * 32.0f, Anchor.y * 32.0f);
+		const vec2 CellMax = CellMin + vec2(32.0f, 32.0f);
+		const float GapX = maximum(0.0f, maximum(BlockMin.x - CellMax.x, CellMin.x - BlockMax.x));
+		const float GapY = maximum(0.0f, maximum(BlockMin.y - CellMax.y, CellMin.y - BlockMax.y));
+		if(GapX <= 0.0f && GapY <= 0.0f)
+			return;
+		vec2 From;
+		vec2 To;
+		if(GapX <= 0.0f)
+		{
+			const float LineX = (maximum(BlockMin.x, CellMin.x) + minimum(BlockMax.x, CellMax.x)) * 0.5f;
+			const bool BlockAbove = BlockMax.y <= CellMin.y;
+			From = vec2(LineX, BlockAbove ? BlockMax.y : CellMax.y);
+			To = vec2(LineX, BlockAbove ? CellMin.y : BlockMin.y);
+		}
+		else if(GapY <= 0.0f)
+		{
+			const float LineY = (maximum(BlockMin.y, CellMin.y) + minimum(BlockMax.y, CellMax.y)) * 0.5f;
+			const bool BlockLeft = BlockMax.x <= CellMin.x;
+			From = vec2(BlockLeft ? BlockMax.x : CellMax.x, LineY);
+			To = vec2(BlockLeft ? CellMin.x : BlockMin.x, LineY);
+		}
+		else
+		{
+			From = vec2(Block.x > Anchor.x ? BlockMin.x : BlockMax.x, Block.y > Anchor.y ? BlockMin.y : BlockMax.y);
+			To = vec2(Anchor.x > Block.x ? CellMin.x : CellMax.x, Anchor.y > Block.y ? CellMin.y : CellMax.y);
+		}
+		if(Exact)
+			vAlignedLines.emplace_back(From.x, From.y, To.x, To.y);
+		else
+			vNearLines.emplace_back(From.x, From.y, To.x, To.y);
+	};
+
+	const SGuides aGuides[4] = {FindGuides(0, -1), FindGuides(0, 1), FindGuides(-1, 0), FindGuides(1, 0)};
+	for(const SGuides &Guides : aGuides)
+	{
+		if(Guides.m_HasExact)
+			AddGuideLine(Guides.m_Exact, true);
+		if(Guides.m_HasNear)
+			AddGuideLine(Guides.m_Near, false);
+	}
+
+	if(vAlignedLines.empty() && vNearLines.empty())
+		return;
+
+	pEditor->Graphics()->TextureClear();
+	pMap->m_pGameGroup->MapScreen();
+	pEditor->Ui()->ClipEnable(&View);
+	pEditor->Graphics()->LinesBegin();
+	if(!vAlignedLines.empty())
+	{
+		pEditor->Graphics()->SetColor(0.5f, 1.0f, 0.5f, 0.5f);
+		pEditor->Graphics()->LinesDraw(vAlignedLines.data(), vAlignedLines.size());
+	}
+	if(!vNearLines.empty())
+	{
+		pEditor->Graphics()->SetColor(1.0f, 0.8f, 0.3f, 0.5f);
+		pEditor->Graphics()->LinesDraw(vNearLines.data(), vNearLines.size());
+	}
+	pEditor->Graphics()->LinesEnd();
+	pEditor->Ui()->ClipDisable();
+}
+
+static float ShapeDistance(CEditor::EShapeType Type, float fdx, float fdy)
+{
+	const float AbsX = std::fabs(fdx);
+	const float AbsY = std::fabs(fdy);
+	switch(Type)
+	{
+	case CEditor::EShapeType::CIRCLE:
+		return std::sqrt(fdx * fdx + fdy * fdy);
+	case CEditor::EShapeType::SQUARE:
+		return maximum(AbsX, AbsY);
+	case CEditor::EShapeType::DIAMOND:
+		return AbsX + AbsY;
+	case CEditor::EShapeType::HEXAGON:
+		return maximum(AbsY, (AbsX + AbsY) * 0.5f);
+	case CEditor::EShapeType::OCTAGON:
+		return maximum(maximum(AbsX, AbsY), (AbsX + AbsY) * 0.70710677f);
+	default:
+		return 0.0f;
+	}
+}
+
+static void ShapeLevelRange(int Radius, int Thickness, int *pInnerLevel, int *pOuterLevel)
+{
+	const int Extra = maximum(0, Thickness - 1);
+	*pInnerLevel = maximum(0, Radius - (Extra + 1) / 2);
+	*pOuterLevel = Radius + Extra / 2;
+}
+
+static int ShapeLevel(CEditor::EShapeType Type, ivec2 Center, int x, int y)
+{
+	return (int)(ShapeDistance(Type, (float)(x - Center.x), (float)(y - Center.y)) + 0.5f);
+}
+
+static std::vector<ivec2> ComputeShapeCells(CEditor::EShapeType Type, ivec2 Center, int Radius, int Thickness)
+{
+	int InnerLevel;
+	int OuterLevel;
+	ShapeLevelRange(Radius, Thickness, &InnerLevel, &OuterLevel);
+
+	const int ExtentX = Type == CEditor::EShapeType::HEXAGON ? 2 * OuterLevel + 1 : OuterLevel + 1;
+	const int ExtentY = OuterLevel + 1;
+
+	std::vector<ivec2> vCells;
+	for(int y = Center.y - ExtentY; y <= Center.y + ExtentY; y++)
+	{
+		for(int x = Center.x - ExtentX; x <= Center.x + ExtentX; x++)
+		{
+			const int Level = ShapeLevel(Type, Center, x, y);
+			if(Level >= InnerLevel && Level <= OuterLevel)
+				vCells.emplace_back(x, y);
+		}
+	}
+	return vCells;
+}
+
+static vec2 GetShapeCursorWorldPos(CEditor *pEditor, CEditorMap *pMap)
+{
+	float aPoints[4];
+	pMap->m_pGameGroup->Mapping(aPoints);
+	const CUIRect *pScreen = pEditor->Ui()->Screen();
+	return vec2(
+		aPoints[0] + (aPoints[2] - aPoints[0]) * (pEditor->Ui()->MouseX() / pScreen->w),
+		aPoints[1] + (aPoints[3] - aPoints[1]) * (pEditor->Ui()->MouseY() / pScreen->h));
+}
+
+static void RenderShapePreview(CEditor *pEditor, const CUIRect &View, CEditorMap *pMap)
+{
+	const vec2 CursorPos = GetShapeCursorWorldPos(pEditor, pMap);
+	const ivec2 Center((int)(CursorPos.x / 32.0f), (int)(CursorPos.y / 32.0f));
+
+	static bool s_CacheValid = false;
+	static CEditor::EShapeType s_CacheType = CEditor::EShapeType::CIRCLE;
+	static ivec2 s_CacheCenter(0, 0);
+	static int s_CacheRadius = 0;
+	static int s_CacheThickness = 0;
+	static std::vector<IGraphics::CQuadItem> s_vFillQuads;
+	static std::vector<IGraphics::CLineItem> s_vBorderLines;
+
+	if(!s_CacheValid || s_CacheType != pEditor->m_ShapeType || s_CacheCenter != Center || s_CacheRadius != pEditor->m_ShapeRadius || s_CacheThickness != pEditor->m_ShapeThickness)
+	{
+		s_CacheValid = true;
+		s_CacheType = pEditor->m_ShapeType;
+		s_CacheCenter = Center;
+		s_CacheRadius = pEditor->m_ShapeRadius;
+		s_CacheThickness = pEditor->m_ShapeThickness;
+
+		int InnerLevel;
+		int OuterLevel;
+		ShapeLevelRange(s_CacheRadius, s_CacheThickness, &InnerLevel, &OuterLevel);
+
+		const std::vector<ivec2> vCells = ComputeShapeCells(s_CacheType, s_CacheCenter, s_CacheRadius, s_CacheThickness);
+
+		s_vFillQuads.clear();
+		s_vBorderLines.clear();
+
+		constexpr size_t MAX_PREVIEW_FILL_CELLS = 1 << 14;
+		if(vCells.size() <= MAX_PREVIEW_FILL_CELLS)
+		{
+			s_vFillQuads.reserve(vCells.size());
+			for(const ivec2 &Cell : vCells)
+				s_vFillQuads.emplace_back(Cell.x * 32.0f, Cell.y * 32.0f, 32.0f, 32.0f);
+		}
+
+		auto IsShapeCell = [&](int x, int y) {
+			const int Level = ShapeLevel(s_CacheType, s_CacheCenter, x, y);
+			return Level >= InnerLevel && Level <= OuterLevel;
+		};
+		for(const ivec2 &Cell : vCells)
+		{
+			const float x0 = Cell.x * 32.0f;
+			const float y0 = Cell.y * 32.0f;
+			if(!IsShapeCell(Cell.x + 1, Cell.y))
+				s_vBorderLines.emplace_back(x0 + 32.0f, y0, x0 + 32.0f, y0 + 32.0f);
+			if(!IsShapeCell(Cell.x - 1, Cell.y))
+				s_vBorderLines.emplace_back(x0, y0, x0, y0 + 32.0f);
+			if(!IsShapeCell(Cell.x, Cell.y + 1))
+				s_vBorderLines.emplace_back(x0, y0 + 32.0f, x0 + 32.0f, y0 + 32.0f);
+			if(!IsShapeCell(Cell.x, Cell.y - 1))
+				s_vBorderLines.emplace_back(x0, y0, x0 + 32.0f, y0);
+		}
+	}
+
+	if(s_vFillQuads.empty() && s_vBorderLines.empty())
+		return;
+
+	constexpr size_t DRAW_CHUNK = 4096;
+
+	pEditor->Ui()->ClipEnable(&View);
+	pEditor->Graphics()->TextureClear();
+	pMap->m_pGameGroup->MapScreen();
+	if(!s_vFillQuads.empty())
+	{
+		pEditor->Graphics()->QuadsBegin();
+		pEditor->Graphics()->SetColor(0.6f, 0.9f, 1.0f, 0.3f);
+		for(size_t Offset = 0; Offset < s_vFillQuads.size(); Offset += DRAW_CHUNK)
+		{
+			pEditor->Graphics()->FlushVertices();
+			const size_t Count = minimum(DRAW_CHUNK, s_vFillQuads.size() - Offset);
+			pEditor->Graphics()->QuadsDrawTL(s_vFillQuads.data() + Offset, (int)Count);
+		}
+		pEditor->Graphics()->QuadsEnd();
+	}
+	if(!s_vBorderLines.empty())
+	{
+		pEditor->Graphics()->TextureClear();
+		pMap->m_pGameGroup->MapScreen();
+		pEditor->Graphics()->LinesBegin();
+		pEditor->Graphics()->SetColor(0.6f, 0.9f, 1.0f, 0.85f);
+		for(size_t Offset = 0; Offset < s_vBorderLines.size(); Offset += DRAW_CHUNK)
+		{
+			pEditor->Graphics()->FlushVertices();
+			const size_t Count = minimum(DRAW_CHUNK, s_vBorderLines.size() - Offset);
+			pEditor->Graphics()->LinesDraw(s_vBorderLines.data() + Offset, Count);
+		}
+		pEditor->Graphics()->LinesEnd();
+	}
+	pEditor->Ui()->ClipDisable();
+}
+
 void CEditor::DoMapEditor(CUIRect View)
 {
+	ProcessShapeApply();
+
 	// render all good stuff
 	if(!m_ShowPicker)
 	{
@@ -2350,6 +2763,9 @@ void CEditor::DoMapEditor(CUIRect View)
 		float Max = minimum(View.w, View.h);
 		View.w = View.h = Max;
 	}
+
+	if((m_ShowTeleLines || m_ShowTeleCheckLines) && !m_ShowPicker)
+		RenderTeleLines(this, View);
 
 	const bool Inside = Ui()->MouseInside(&View);
 
@@ -2683,27 +3099,40 @@ void CEditor::DoMapEditor(CUIRect View)
 
 				if(!Input()->ModifierIsPressed() && Ui()->MouseButton(0) && s_Operation == OP_NONE && !Map()->m_QuadKnife.m_Active)
 				{
-					Ui()->SetActiveItem(&m_MapEditorId);
-
-					if(m_pBrush->IsEmpty())
-						s_Operation = OP_BRUSH_GRAB;
+					if(m_ShapeEnabled && !m_pBrush->IsEmpty() && !m_ShowPicker && HasSelectedTileLayer(Map()))
+					{
+						if(Ui()->MouseButtonClicked(0))
+							ApplyShape(GetShapeCursorWorldPos(this, Map()));
+					}
+					else if(m_FillEnabled && !m_pBrush->IsEmpty() && !m_ShowPicker && HasSelectedTileLayer(Map()))
+					{
+						if(Ui()->MouseButtonClicked(0))
+							ApplyFill(vec2(wx, wy));
+					}
 					else
 					{
-						s_Operation = OP_BRUSH_DRAW;
-						for(size_t k = 0; k < NumEditLayers; k++)
+						Ui()->SetActiveItem(&m_MapEditorId);
+
+						if(m_pBrush->IsEmpty())
+							s_Operation = OP_BRUSH_GRAB;
+						else
 						{
-							size_t BrushIndex = k;
-							if(m_pBrush->m_vpLayers.size() != NumEditLayers)
-								BrushIndex = 0;
+							s_Operation = OP_BRUSH_DRAW;
+							for(size_t k = 0; k < NumEditLayers; k++)
+							{
+								size_t BrushIndex = k;
+								if(m_pBrush->m_vpLayers.size() != NumEditLayers)
+									BrushIndex = 0;
 
-							if(apEditLayers[k].second->m_Type == m_pBrush->m_vpLayers[BrushIndex]->m_Type)
-								apEditLayers[k].second->BrushPlace(m_pBrush->m_vpLayers[BrushIndex].get(), vec2(wx, wy));
+								if(apEditLayers[k].second->m_Type == m_pBrush->m_vpLayers[BrushIndex]->m_Type)
+									apEditLayers[k].second->BrushPlace(m_pBrush->m_vpLayers[BrushIndex].get(), vec2(wx, wy));
+							}
 						}
-					}
 
-					std::shared_ptr<CLayerTiles> pLayer = std::static_pointer_cast<CLayerTiles>(Map()->SelectedLayerType(0, LAYERTYPE_TILES));
-					if(Input()->ShiftIsPressed() && pLayer)
-						s_Operation = OP_BRUSH_PAINT;
+						std::shared_ptr<CLayerTiles> pLayer = std::static_pointer_cast<CLayerTiles>(Map()->SelectedLayerType(0, LAYERTYPE_TILES));
+						if(Input()->ShiftIsPressed() && pLayer)
+							s_Operation = OP_BRUSH_PAINT;
+					}
 				}
 
 				if(!m_pBrush->IsEmpty())
@@ -2734,6 +3163,16 @@ void CEditor::DoMapEditor(CUIRect View)
 						BorderRect.y = 0.0f;
 						m_pBrush->GetSize(&BorderRect.w, &BorderRect.h);
 						BorderRect.DrawOutline(ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f));
+						if(m_ShapeEnabled)
+							RenderShapePreview(this, View, Map());
+						if(m_ShowAlignmentGuides && !m_FillEnabled && !m_ShapeEnabled)
+						{
+							const bool BrushHasTiles = std::any_of(m_pBrush->m_vpLayers.begin(), m_pBrush->m_vpLayers.end(), [](const std::shared_ptr<CLayer> &pLayer) {
+								return pLayer->m_Type == LAYERTYPE_TILES;
+							});
+							if(BrushHasTiles)
+								RenderAlignmentGuides(this, View, vec2(wx, wy));
+						}
 					}
 				}
 			}
@@ -4215,6 +4654,467 @@ void CEditor::ShowFileDialogError(const char *pFormat, ...)
 		m_PopupMessageContexts[pContext->m_aMessage] = pContext;
 	}
 	Ui()->ShowPopupMessage(Ui()->MouseX(), Ui()->MouseY(), pContext);
+}
+
+void CEditor::ShowEditorMessage(const char *pMessage)
+{
+	auto ContextIterator = m_PopupMessageContexts.find(pMessage);
+	CUi::SMessagePopupContext *pContext;
+	if(ContextIterator != m_PopupMessageContexts.end())
+	{
+		pContext = ContextIterator->second;
+		Ui()->ClosePopupMenu(pContext);
+	}
+	else
+	{
+		pContext = new CUi::SMessagePopupContext();
+		pContext->DefaultColor(TextRender());
+		str_copy(pContext->m_aMessage, pMessage);
+		m_PopupMessageContexts[pContext->m_aMessage] = pContext;
+	}
+	Ui()->ShowPopupMessage(Ui()->MouseX(), Ui()->MouseY(), pContext);
+}
+
+static bool IsGameTileLayer(const CLayerTiles *pLayer)
+{
+	return pLayer->m_HasGame || pLayer->m_HasFront || pLayer->m_HasTele || pLayer->m_HasSpeedup || pLayer->m_HasSwitch || pLayer->m_HasTune;
+}
+
+static bool IsFillWall(CEditorMap *pMap, int x, int y, bool UserWalls, bool GameWalls)
+{
+	for(const auto &pGroup : pMap->m_vpGroups)
+	{
+		for(const auto &pLayer : pGroup->m_vpLayers)
+		{
+			if(pLayer->m_Type != LAYERTYPE_TILES)
+				continue;
+			const CLayerTiles *pTiles = static_cast<const CLayerTiles *>(pLayer.get());
+			if(IsGameTileLayer(pTiles) ? !GameWalls : !UserWalls)
+				continue;
+			if(x < 0 || x >= pTiles->m_Width || y < 0 || y >= pTiles->m_Height)
+				continue;
+			if(pTiles->GetTile(x, y).m_Index != 0)
+				return true;
+		}
+	}
+	return false;
+}
+
+static uint64_t FillCellKey(int x, int y)
+{
+	return ((uint64_t)(uint32_t)x << 32) | (uint64_t)(uint32_t)y;
+}
+
+struct SFillRegion
+{
+	std::vector<ivec2> m_vCells;
+	std::vector<ivec2> m_vWalls;
+	bool m_Valid = false;
+};
+
+static SFillRegion ComputeFillRegion(CEditorMap *pMap, int StartX, int StartY, bool UserWalls, bool GameWalls)
+{
+	SFillRegion Region;
+	if(IsFillWall(pMap, StartX, StartY, UserWalls, GameWalls))
+		return Region;
+
+	constexpr size_t MAX_FILL_CELLS = 1 << 19;
+	std::unordered_set<uint64_t> Visited;
+	std::vector<ivec2> vQueue;
+	Visited.insert(FillCellKey(StartX, StartY));
+	vQueue.push_back(ivec2(StartX, StartY));
+	size_t Head = 0;
+	while(Head < vQueue.size())
+	{
+		const ivec2 Cell = vQueue[Head++];
+		Region.m_vCells.push_back(Cell);
+		if(Region.m_vCells.size() + Region.m_vWalls.size() > MAX_FILL_CELLS)
+			return SFillRegion();
+
+		const ivec2 aNeighbors[4] = {ivec2(Cell.x - 1, Cell.y), ivec2(Cell.x + 1, Cell.y), ivec2(Cell.x, Cell.y - 1), ivec2(Cell.x, Cell.y + 1)};
+		for(const ivec2 &Neighbor : aNeighbors)
+		{
+			if(Visited.count(FillCellKey(Neighbor.x, Neighbor.y)))
+				continue;
+			Visited.insert(FillCellKey(Neighbor.x, Neighbor.y));
+			if(IsFillWall(pMap, Neighbor.x, Neighbor.y, UserWalls, GameWalls))
+				Region.m_vWalls.push_back(Neighbor);
+			else
+				vQueue.push_back(Neighbor);
+		}
+	}
+	Region.m_Valid = true;
+	return Region;
+}
+
+static bool HasSelectedTileLayer(CEditorMap *pMap)
+{
+	for(size_t i = 0; i < pMap->m_vSelectedLayers.size(); i++)
+	{
+		if(pMap->SelectedLayerType(i, LAYERTYPE_TILES))
+			return true;
+	}
+	return false;
+}
+
+static void StampFillCell(CLayer *pEditLayer, CLayer *pBrushLayer, const ivec2 &Cell, int AnchorX, int AnchorY, int BrushW, int BrushH)
+{
+	if(BrushW != 1 || BrushH != 1)
+	{
+		const int RelX = ((Cell.x - AnchorX) % BrushW + BrushW) % BrushW;
+		const int RelY = ((Cell.y - AnchorY) % BrushH + BrushH) % BrushH;
+		if(RelX != 0 || RelY != 0)
+			return;
+	}
+	pEditLayer->BrushDraw(pBrushLayer, vec2(Cell.x * 32.0f, Cell.y * 32.0f));
+}
+
+static std::vector<ivec2> ComputeOutlineWallStroke(CEditorMap *pMap, int WallX, int WallY, int SeedX, int SeedY)
+{
+	constexpr size_t MAX_STRUCT_CELLS = 1 << 19;
+	std::unordered_set<uint64_t> VisitedWalls;
+	std::vector<ivec2> vWallQueue;
+	VisitedWalls.insert(FillCellKey(WallX, WallY));
+	vWallQueue.push_back(ivec2(WallX, WallY));
+	size_t WallHead = 0;
+	while(WallHead < vWallQueue.size() && WallHead < MAX_STRUCT_CELLS)
+	{
+		const ivec2 Cell = vWallQueue[WallHead++];
+		for(int dy = -1; dy <= 1; dy++)
+		{
+			for(int dx = -1; dx <= 1; dx++)
+			{
+				if(dx == 0 && dy == 0)
+					continue;
+				const ivec2 Neighbor = ivec2(Cell.x + dx, Cell.y + dy);
+				if(VisitedWalls.count(FillCellKey(Neighbor.x, Neighbor.y)))
+					continue;
+				if(IsFillWall(pMap, Neighbor.x, Neighbor.y, true, true))
+				{
+					VisitedWalls.insert(FillCellKey(Neighbor.x, Neighbor.y));
+					vWallQueue.push_back(Neighbor);
+				}
+			}
+		}
+	}
+
+	int MinX = SeedX, MaxX = SeedX, MinY = SeedY, MaxY = SeedY;
+	for(const ivec2 &Cell : vWallQueue)
+	{
+		MinX = std::min(MinX, Cell.x);
+		MaxX = std::max(MaxX, Cell.x);
+		MinY = std::min(MinY, Cell.y);
+		MaxY = std::max(MaxY, Cell.y);
+	}
+
+	const int RectMargin = 128;
+	const int RectX0 = MinX - RectMargin;
+	const int RectY0 = MinY - RectMargin;
+	const int RectW = MaxX - MinX + 1 + RectMargin * 2;
+	const int RectH = MaxY - MinY + 1 + RectMargin * 2;
+
+	std::vector<uint8_t> WallMask((size_t)RectW * RectH, 0);
+	for(const ivec2 &Cell : vWallQueue)
+		WallMask[(size_t)(Cell.y - RectY0) * RectW + (Cell.x - RectX0)] = 1;
+
+	constexpr size_t MAX_FREE_CELLS = 1 << 21;
+	std::vector<uint8_t> Visited((size_t)RectW * RectH, 0);
+	std::vector<ivec2> vCells;
+	std::vector<ivec2> vQueue;
+	Visited[(size_t)(SeedY - RectY0) * RectW + (SeedX - RectX0)] = 1;
+	vQueue.push_back(ivec2(SeedX, SeedY));
+	size_t Head = 0;
+	while(Head < vQueue.size() && Head < MAX_FREE_CELLS)
+	{
+		const ivec2 Cell = vQueue[Head++];
+		const ivec2 aNeighbors[4] = {ivec2(Cell.x - 1, Cell.y), ivec2(Cell.x + 1, Cell.y), ivec2(Cell.x, Cell.y - 1), ivec2(Cell.x, Cell.y + 1)};
+		const ivec2 aDiagonalNeighbors[4] = {ivec2(Cell.x - 1, Cell.y - 1), ivec2(Cell.x + 1, Cell.y - 1), ivec2(Cell.x - 1, Cell.y + 1), ivec2(Cell.x + 1, Cell.y + 1)};
+		bool IsOutline = false;
+		for(const ivec2 &Neighbor : aNeighbors)
+		{
+			if(Neighbor.x < RectX0 || Neighbor.x >= RectX0 + RectW || Neighbor.y < RectY0 || Neighbor.y >= RectY0 + RectH)
+				continue;
+			if(WallMask[(size_t)(Neighbor.y - RectY0) * RectW + (Neighbor.x - RectX0)])
+				IsOutline = true;
+		}
+		for(const ivec2 &Neighbor : aDiagonalNeighbors)
+		{
+			if(Neighbor.x < RectX0 || Neighbor.x >= RectX0 + RectW || Neighbor.y < RectY0 || Neighbor.y >= RectY0 + RectH)
+				continue;
+			if(WallMask[(size_t)(Neighbor.y - RectY0) * RectW + (Neighbor.x - RectX0)])
+				IsOutline = true;
+		}
+		if(IsOutline)
+			vCells.push_back(Cell);
+		for(const ivec2 &Neighbor : aNeighbors)
+		{
+			if(Neighbor.x < RectX0 || Neighbor.x >= RectX0 + RectW || Neighbor.y < RectY0 || Neighbor.y >= RectY0 + RectH)
+				continue;
+			const size_t Index = (size_t)(Neighbor.y - RectY0) * RectW + (Neighbor.x - RectX0);
+			if(Visited[Index])
+				continue;
+			if(IsFillWall(pMap, Neighbor.x, Neighbor.y, true, true))
+				continue;
+			Visited[Index] = 1;
+			vQueue.push_back(Neighbor);
+		}
+	}
+	return vCells;
+}
+
+static std::vector<ivec2> ComputeOutlineCells(CEditorMap *pMap, int StartX, int StartY)
+{
+	constexpr int MAX_ANCHOR_RADIUS = 192;
+	std::vector<ivec2> vCells;
+
+	int WallX = -1, WallY = -1;
+	for(int r = 0; r <= MAX_ANCHOR_RADIUS && WallX < 0; r++)
+	{
+		int BestDist = -1;
+		auto CheckWall = [&](int x, int y)
+		{
+			if(!IsFillWall(pMap, x, y, true, true))
+				return;
+			const int dx = x - StartX, dy = y - StartY;
+			const int Dist = dx * dx + dy * dy;
+			if(BestDist < 0 || Dist < BestDist)
+			{
+				BestDist = Dist;
+				WallX = x;
+				WallY = y;
+			}
+		};
+		if(r == 0)
+			CheckWall(StartX, StartY);
+		else
+		{
+			for(int i = -r; i <= r; i++)
+			{
+				CheckWall(StartX + i, StartY - r);
+				CheckWall(StartX + i, StartY + r);
+			}
+			for(int i = -r + 1; i <= r - 1; i++)
+			{
+				CheckWall(StartX - r, StartY + i);
+				CheckWall(StartX + r, StartY + i);
+			}
+		}
+	}
+	if(WallX < 0)
+		return vCells;
+
+	int SeedX = -1, SeedY = -1;
+	int SeedDist = -1;
+	auto CheckSeed = [&](int x, int y)
+	{
+		if(IsFillWall(pMap, x, y, true, true))
+			return;
+		const int dx = x - StartX, dy = y - StartY;
+		const int Dist = dx * dx + dy * dy;
+		if(SeedDist < 0 || Dist < SeedDist)
+		{
+			SeedDist = Dist;
+			SeedX = x;
+			SeedY = y;
+		}
+	};
+	CheckSeed(WallX - 1, WallY);
+	CheckSeed(WallX + 1, WallY);
+	CheckSeed(WallX, WallY - 1);
+	CheckSeed(WallX, WallY + 1);
+	if(SeedX < 0)
+	{
+		CheckSeed(WallX - 1, WallY - 1);
+		CheckSeed(WallX + 1, WallY - 1);
+		CheckSeed(WallX - 1, WallY + 1);
+		CheckSeed(WallX + 1, WallY + 1);
+	}
+	if(SeedX < 0)
+	{
+		for(int r = 0; r <= MAX_ANCHOR_RADIUS && SeedX < 0; r++)
+		{
+			int BestDist = -1;
+			auto CheckFree = [&](int x, int y)
+			{
+				if(IsFillWall(pMap, x, y, true, true))
+					return;
+				const int dx = x - StartX, dy = y - StartY;
+				const int Dist = dx * dx + dy * dy;
+				if(BestDist < 0 || Dist < BestDist)
+				{
+					BestDist = Dist;
+					SeedX = x;
+					SeedY = y;
+				}
+			};
+			if(r == 0)
+				CheckFree(StartX, StartY);
+			else
+			{
+				for(int i = -r; i <= r; i++)
+				{
+					CheckFree(StartX + i, StartY - r);
+					CheckFree(StartX + i, StartY + r);
+				}
+				for(int i = -r + 1; i <= r - 1; i++)
+				{
+					CheckFree(StartX - r, StartY + i);
+					CheckFree(StartX + r, StartY + i);
+				}
+			}
+		}
+	}
+	if(SeedX < 0)
+		return vCells;
+
+	return ComputeOutlineWallStroke(pMap, WallX, WallY, SeedX, SeedY);
+}
+
+void CEditor::ApplyFill(vec2 WorldPos)
+{
+	if(m_pBrush->m_vpLayers.empty())
+		return;
+
+	const int StartX = (int)(WorldPos.x / 32.0f);
+	const int StartY = (int)(WorldPos.y / 32.0f);
+
+	std::vector<ivec2> vPaintCells;
+	if(m_FillMode == EFillMode::OUTLINE)
+	{
+		vPaintCells = ComputeOutlineCells(Map(), StartX, StartY);
+	}
+	else
+	{
+		const SFillRegion UserRegion = ComputeFillRegion(Map(), StartX, StartY, true, false);
+		const SFillRegion GameRegion = ComputeFillRegion(Map(), StartX, StartY, false, true);
+		const SFillRegion UnionRegion = ComputeFillRegion(Map(), StartX, StartY, true, true);
+
+		const SFillRegion *pBest = nullptr;
+		for(const SFillRegion *pRegion : {&UserRegion, &GameRegion, &UnionRegion})
+		{
+			if(pRegion->m_Valid && (pBest == nullptr || pRegion->m_vCells.size() < pBest->m_vCells.size()))
+				pBest = pRegion;
+		}
+		if(pBest == nullptr)
+			return;
+
+		vPaintCells = pBest->m_vCells;
+		if(m_FillMode == EFillMode::AREA_WALLS)
+			vPaintCells.insert(vPaintCells.end(), pBest->m_vWalls.begin(), pBest->m_vWalls.end());
+	}
+
+	if(vPaintCells.empty())
+		return;
+
+	int AnchorX = vPaintCells[0].x, AnchorY = vPaintCells[0].y;
+	for(const ivec2 &Cell : vPaintCells)
+	{
+		AnchorX = std::min(AnchorX, Cell.x);
+		AnchorY = std::min(AnchorY, Cell.y);
+	}
+
+	std::vector<std::shared_ptr<CLayer>> vEditLayers;
+	for(size_t i = 0; i < Map()->m_vSelectedLayers.size(); i++)
+	{
+		std::shared_ptr<CLayer> pLayer = Map()->SelectedLayerType(i, LAYERTYPE_TILES);
+		if(pLayer)
+			vEditLayers.push_back(pLayer);
+	}
+	if(vEditLayers.empty())
+		return;
+
+	for(size_t k = 0; k < vEditLayers.size(); k++)
+	{
+		std::shared_ptr<CLayer> &pEditLayer = vEditLayers[k];
+		std::shared_ptr<CLayer> &pBrushLayer = m_pBrush->m_vpLayers[k % m_pBrush->m_vpLayers.size()];
+		if(pEditLayer->m_Type != pBrushLayer->m_Type)
+			continue;
+
+		const CLayerTiles *pBrushTiles = static_cast<const CLayerTiles *>(pBrushLayer.get());
+		const int BrushW = pBrushTiles->m_Width;
+		const int BrushH = pBrushTiles->m_Height;
+		if(BrushW <= 0 || BrushH <= 0)
+			continue;
+
+		for(const ivec2 &Cell : vPaintCells)
+			StampFillCell(pEditLayer.get(), pBrushLayer.get(), Cell, AnchorX, AnchorY, BrushW, BrushH);
+	}
+
+	std::shared_ptr<IEditorAction> pAction = std::make_shared<CEditorBrushDrawAction>(Map(), Map()->m_SelectedGroup);
+	if(!pAction->IsEmpty())
+		Map()->m_EditorHistory.RecordAction(pAction);
+}
+
+void CEditor::ApplyShape(vec2 WorldPos)
+{
+	if(m_ShapeApplyInProgress || m_pBrush->m_vpLayers.empty())
+		return;
+
+	const ivec2 Center((int)(WorldPos.x / 32.0f), (int)(WorldPos.y / 32.0f));
+	m_vShapeApplyCells = ComputeShapeCells(m_ShapeType, Center, m_ShapeRadius, m_ShapeThickness);
+	if(m_vShapeApplyCells.empty())
+		return;
+
+	m_ShapeApplyOffset = 0;
+	m_ShapeApplyAnchorX = m_vShapeApplyCells[0].x;
+	m_ShapeApplyAnchorY = m_vShapeApplyCells[0].y;
+	for(const ivec2 &Cell : m_vShapeApplyCells)
+	{
+		m_ShapeApplyAnchorX = std::min(m_ShapeApplyAnchorX, Cell.x);
+		m_ShapeApplyAnchorY = std::min(m_ShapeApplyAnchorY, Cell.y);
+	}
+
+	m_vShapeApplyTargets.clear();
+	for(size_t i = 0; i < Map()->m_vSelectedLayers.size(); i++)
+	{
+		std::shared_ptr<CLayer> pLayer = Map()->SelectedLayerType(i, LAYERTYPE_TILES);
+		if(!pLayer)
+			continue;
+		std::shared_ptr<CLayer> &pBrushLayer = m_pBrush->m_vpLayers[m_vShapeApplyTargets.size() % m_pBrush->m_vpLayers.size()];
+		if(pLayer->m_Type != pBrushLayer->m_Type)
+			continue;
+		const CLayerTiles *pBrushTiles = static_cast<const CLayerTiles *>(pBrushLayer.get());
+		if(pBrushTiles->m_Width <= 0 || pBrushTiles->m_Height <= 0)
+			continue;
+		m_vShapeApplyTargets.push_back({pLayer, pBrushLayer, pBrushTiles->m_Width, pBrushTiles->m_Height});
+	}
+	if(m_vShapeApplyTargets.empty())
+	{
+		m_vShapeApplyCells.clear();
+		return;
+	}
+
+	m_ShapeApplyInProgress = true;
+}
+
+void CEditor::ProcessShapeApply()
+{
+	if(!m_ShapeApplyInProgress)
+		return;
+
+	constexpr size_t MAX_APPLY_CELLS_PER_FRAME = 1 << 13;
+
+	size_t Processed = 0;
+	while(Processed < MAX_APPLY_CELLS_PER_FRAME && m_ShapeApplyOffset < m_vShapeApplyCells.size())
+	{
+		const ivec2 Cell = m_vShapeApplyCells[m_ShapeApplyOffset];
+		for(const SShapeApplyTarget &Target : m_vShapeApplyTargets)
+			StampFillCell(Target.m_pEditLayer.get(), Target.m_pBrushLayer.get(), Cell, m_ShapeApplyAnchorX, m_ShapeApplyAnchorY, Target.m_BrushW, Target.m_BrushH);
+		m_ShapeApplyOffset++;
+		Processed++;
+	}
+
+	if(m_ShapeApplyOffset >= m_vShapeApplyCells.size())
+	{
+		m_ShapeApplyInProgress = false;
+		m_ShapeApplyOffset = 0;
+		m_vShapeApplyCells.clear();
+		m_vShapeApplyTargets.clear();
+
+		std::shared_ptr<IEditorAction> pAction = std::make_shared<CEditorBrushDrawAction>(Map(), Map()->m_SelectedGroup);
+		if(!pAction->IsEmpty())
+			Map()->m_EditorHistory.RecordAction(pAction);
+	}
 }
 
 void CEditor::RenderModebar(CUIRect View)
@@ -6216,7 +7116,7 @@ void CEditor::RenderMenubar(CUIRect MenuBar)
 	if(DoButton_Ex(&s_ToolsButton, "Tools", 0, &ToolsButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_T, EditorFontSizes::MENU, TEXTALIGN_ML))
 	{
 		static SPopupMenuId s_PopupMenuToolsId;
-		Ui()->DoPopupMenu(&s_PopupMenuToolsId, ToolsButton.x, ToolsButton.y + ToolsButton.h - 1.0f, 200.0f, 78.0f, this, PopupMenuTools, PopupProperties);
+		Ui()->DoPopupMenu(&s_PopupMenuToolsId, ToolsButton.x, ToolsButton.y + ToolsButton.h - 1.0f, 200.0f, 106.0f, this, PopupMenuTools, PopupProperties);
 	}
 
 	MenuBar.VSplitLeft(5.0f, nullptr, &MenuBar);
@@ -6304,12 +7204,13 @@ void CEditor::Render()
 	// render checker
 	RenderBackground(View, m_CheckerTexture, 32.0f, 1.0f);
 
-	CUIRect MenuBar, ModeBar, ToolBar, StatusBar, ExtraEditor, ToolBox;
+	CUIRect MenuBar, MapTabBar, ModeBar, ToolBar, StatusBar, ExtraEditor, ToolBox;
 	m_ShowPicker = Input()->KeyIsPressed(KEY_SPACE) && m_Dialog == DIALOG_NONE && CLineInput::GetActiveInput() == nullptr && Map()->m_vSelectedLayers.size() == 1;
 
 	if(m_GuiActive)
 	{
 		View.HSplitTop(16.0f, &MenuBar, &View);
+		View.HSplitTop(14.0f, &MapTabBar, &View);
 		View.HSplitTop(53.0f, &ToolBar, &View);
 		View.VSplitLeft(m_ToolBoxWidth, &ToolBox, &View);
 
@@ -6332,6 +7233,12 @@ void CEditor::Render()
 
 	if(m_Dialog == DIALOG_NONE && CLineInput::GetActiveInput() == nullptr)
 	{
+		if(Input()->KeyPress(KEY_TAB) && Input()->ModifierIsPressed() && m_vMapTabs.size() > 1)
+		{
+			const int Count = (int)m_vMapTabs.size();
+			const int Step = Input()->ShiftIsPressed() ? Count - 1 : 1;
+			SwitchMapTab((m_ActiveMapTab + Step) % Count);
+		}
 		// handle undo/redo hotkeys
 		if(Ui()->CheckActiveItem(nullptr))
 		{
@@ -6497,6 +7404,7 @@ void CEditor::Render()
 	if(m_GuiActive)
 	{
 		RenderMenubar(MenuBar);
+		RenderMapTabs(MapTabBar);
 		RenderModebar(ModeBar);
 		if(!m_ShowPicker)
 		{
@@ -6545,6 +7453,24 @@ void CEditor::Render()
 		m_PopupEventWasActivated = true;
 	}
 
+	if(m_PopupUnusedTeleportsActivated)
+	{
+		static SPopupMenuId s_PopupUnusedTeleportsId;
+		constexpr float PopupWidth = 300.0f;
+		constexpr float PopupHeight = 360.0f;
+		Ui()->DoPopupMenu(&s_PopupUnusedTeleportsId, Width / 2.0f - PopupWidth / 2.0f, Height / 2.0f - PopupHeight / 2.0f, PopupWidth, PopupHeight, this, PopupUnusedTeleports);
+		m_PopupUnusedTeleportsActivated = false;
+	}
+
+	if(m_PopupShapesActivated)
+	{
+		static SPopupMenuId s_PopupShapesId;
+		constexpr float PopupWidth = 150.0f;
+		constexpr float PopupHeight = 110.0f;
+		Ui()->DoPopupMenu(&s_PopupShapesId, Width / 2.0f - PopupWidth / 2.0f, Height / 2.0f - PopupHeight / 2.0f, PopupWidth, PopupHeight, this, PopupShapes);
+		m_PopupShapesActivated = false;
+	}
+
 	if(m_Dialog == DIALOG_NONE && !Ui()->IsPopupHovered() && Ui()->MouseInside(&View))
 	{
 		// handle zoom hotkeys
@@ -6558,12 +7484,39 @@ void CEditor::Render()
 				MapView()->ResetZoom();
 		}
 
-		if(m_pBrush->IsEmpty() || !Input()->ShiftIsPressed())
+		if(m_ShapeEnabled && (Input()->AltIsPressed() || Input()->ModifierIsPressed()))
 		{
+			const bool ShapeWheelUp = Input()->KeyPress(KEY_MOUSE_WHEEL_UP);
+			const bool ShapeWheelDown = Input()->KeyPress(KEY_MOUSE_WHEEL_DOWN);
+			if(ShapeWheelUp || ShapeWheelDown)
+			{
+				if(Input()->AltIsPressed())
+				{
+					constexpr int MAX_SHAPE_RADIUS = 255;
+					const int ShapeStep = maximum(1, m_ShapeRadius / 16);
+					m_ShapeRadius = ShapeWheelUp ? minimum(MAX_SHAPE_RADIUS, m_ShapeRadius + ShapeStep) : maximum(1, m_ShapeRadius - ShapeStep);
+					m_ShapeThickness = minimum(m_ShapeThickness, 2 * m_ShapeRadius);
+				}
+				else
+				{
+					const int ShapeStep = maximum(1, m_ShapeThickness / 16);
+					m_ShapeThickness = ShapeWheelUp ? minimum(2 * m_ShapeRadius, m_ShapeThickness + ShapeStep) : maximum(1, m_ShapeThickness - ShapeStep);
+				}
+			}
+		}
+		const bool BrushHasSpecialTiles = !m_pBrush->IsEmpty() && std::any_of(m_pBrush->m_vpLayers.begin(), m_pBrush->m_vpLayers.end(), [](const auto &pLayer) {
+			if(pLayer->m_Type != LAYERTYPE_TILES)
+				return false;
+			const std::shared_ptr<CLayerTiles> &pLayerTiles = std::static_pointer_cast<CLayerTiles>(pLayer);
+			return pLayerTiles->m_HasTele || pLayerTiles->m_HasTune || pLayerTiles->m_HasSwitch || pLayerTiles->m_HasSpeedup;
+		});
+		if((m_pBrush->IsEmpty() || !Input()->ShiftIsPressed() || !BrushHasSpecialTiles) && (!m_ShapeEnabled || (!Input()->AltIsPressed() && !Input()->ModifierIsPressed())))
+		{
+			const float ZoomStep = Input()->ShiftIsPressed() ? 200.0f : 20.0f;
 			if(Input()->KeyPress(KEY_MOUSE_WHEEL_DOWN))
-				MapView()->Zoom()->ChangeValue(20.0f);
+				MapView()->Zoom()->ChangeValue(ZoomStep);
 			if(Input()->KeyPress(KEY_MOUSE_WHEEL_UP))
-				MapView()->Zoom()->ChangeValue(-20.0f);
+				MapView()->Zoom()->ChangeValue(-ZoomStep);
 		}
 		if(!m_pBrush->IsEmpty())
 		{
@@ -6573,7 +7526,7 @@ void CEditor::Render()
 			if(HasTeleTiles)
 				str_copy(m_aTooltip, "Use shift+mouse wheel up/down to adjust the tele numbers. Use ctrl+f to change all tele numbers to the first unused number.");
 
-			if(Input()->ShiftIsPressed())
+			if(Input()->ShiftIsPressed() && BrushHasSpecialTiles)
 			{
 				if(Input()->KeyPress(KEY_MOUSE_WHEEL_DOWN))
 					AdjustBrushSpecialTiles(false, -1);
@@ -6602,6 +7555,11 @@ void CEditor::Render()
 	FreeDynamicPopupMenus();
 
 	UpdateColorPipette();
+
+	if(m_ShapeEnabled && m_Dialog == DIALOG_NONE && Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
+	{
+		m_ShapeEnabled = false;
+	}
 
 	if(m_Dialog == DIALOG_NONE && !m_PopupEventActivated && Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
 	{
@@ -6729,6 +7687,8 @@ void CEditor::RenderMousePointer()
 {
 	if(!m_ShowMousePointer)
 		return;
+
+	Graphics()->SetFrameBlendingAllowed(false);
 
 	constexpr float CursorSize = 16.0f;
 
@@ -7204,7 +8164,7 @@ void CEditor::OnMouseMove(vec2 MousePos)
 
 void CEditor::MouseAxisLock(vec2 &CursorRel)
 {
-	if(Input()->AltIsPressed())
+	if(Input()->AltIsPressed() && !m_ShapeEnabled)
 	{
 		// only lock with the paint brush and inside editor map area to avoid duplicate Alt behavior
 		if(m_pBrush->IsEmpty() || Ui()->HotItem() != &m_MapEditorId)
@@ -7470,6 +8430,200 @@ bool CEditor::Save(const char *pFilename)
 		log_error("editor/save", "%s", pErrorMessage);
 	};
 	return Map()->Save(pFilename, ErrorHandler);
+}
+
+
+static void MapTabName(const char *pFilename, char *pOut, size_t OutSize)
+{
+	char aName[IO_MAX_PATH_LENGTH];
+	if(pFilename[0] == '\0')
+		str_copy(aName, "unnamed");
+	else
+		fs_split_file_extension(fs_filename(pFilename), aName, sizeof(aName));
+	str_format(pOut, OutSize, "%s", aName);
+}
+
+void CEditor::SyncActiveMapTab()
+{
+	if(m_vMapTabs.empty() || m_ActiveMapTab < 0 || m_ActiveMapTab >= (int)m_vMapTabs.size())
+		return;
+	SMapTabInfo &Tab = m_vMapTabs[m_ActiveMapTab];
+	str_copy(Tab.m_aSaveFile, Map()->m_aFilename);
+	Tab.m_ValidSaveFile = Map()->m_ValidSaveFilename;
+	Tab.m_Modified = Map()->m_Modified;
+	Tab.m_WorldOffset = MapView()->GetWorldOffset();
+	Tab.m_Zoom = MapView()->Zoom()->GetValue();
+}
+
+bool CEditor::SaveActiveMapTab()
+{
+	if(m_vMapTabs.empty() || m_ActiveMapTab < 0 || m_ActiveMapTab >= (int)m_vMapTabs.size())
+		return false;
+	SMapTabInfo &Tab = m_vMapTabs[m_ActiveMapTab];
+	if(Tab.m_aTempFile[0] == '\0')
+		str_format(Tab.m_aTempFile, sizeof(Tab.m_aTempFile), "editor_tabs/tab_%d.map", m_MapTabFileCounter++);
+	Storage()->CreateFolder("editor_tabs", IStorage::TYPE_SAVE);
+	const auto &&ErrorHandler = [](const char *pErrorMessage) {
+		log_error("editor/tabs", "%s", pErrorMessage);
+	};
+	if(!Map()->Save(Tab.m_aTempFile, ErrorHandler, true))
+	{
+		log_error("editor/tabs", "Failed to store map tab content to '%s'", Tab.m_aTempFile);
+		return false;
+	}
+	Tab.m_Used = true;
+	return true;
+}
+
+
+void CEditor::ApplyMapTab(int TabIndex)
+{
+	if(TabIndex < 0 || TabIndex >= (int)m_vMapTabs.size())
+		return;
+	m_ActiveMapTab = TabIndex;
+	SMapTabInfo &Tab = m_vMapTabs[TabIndex];
+	if(Tab.m_Used)
+	{
+		if(!Load(Tab.m_aTempFile, IStorage::TYPE_SAVE))
+		{
+			log_error("editor/tabs", "Failed to load map tab content from '%s'", Tab.m_aTempFile);
+			Tab.m_Used = false;
+			Reset();
+		}
+	}
+	else
+	{
+		Reset();
+	}
+	str_copy(Map()->m_aFilename, Tab.m_aSaveFile);
+	Map()->m_ValidSaveFilename = Tab.m_ValidSaveFile;
+	Map()->m_Modified = Tab.m_Modified;
+	MapView()->SetWorldOffset(Tab.m_WorldOffset);
+	if(Tab.m_Zoom > 0.0f)
+		MapView()->Zoom()->SetValueInstant(Tab.m_Zoom);
+}
+
+void CEditor::SwitchMapTab(int TabIndex)
+{
+	if(TabIndex == m_ActiveMapTab || TabIndex < 0 || TabIndex >= (int)m_vMapTabs.size())
+		return;
+	SyncActiveMapTab();
+	if(!SaveActiveMapTab())
+	{
+		ShowFileDialogError("Failed to store the current map tab. See local console for details.");
+		return;
+	}
+	ApplyMapTab(TabIndex);
+}
+
+
+void CEditor::AddMapTab()
+{
+	if((int)m_vMapTabs.size() >= MAX_MAP_TABS)
+	{
+		ShowFileDialogError("The maximum amount of map tabs (%d) is already open.", MAX_MAP_TABS);
+		return;
+	}
+	if(!m_vMapTabs.empty())
+	{
+		SyncActiveMapTab();
+		if(!SaveActiveMapTab())
+		{
+			ShowFileDialogError("Failed to store the current map tab. See local console for details.");
+			return;
+		}
+	}
+	m_vMapTabs.push_back(SMapTabInfo{});
+	ApplyMapTab((int)m_vMapTabs.size() - 1);
+}
+
+void CEditor::CloseMapTab(int TabIndex)
+{
+	if(TabIndex < 0 || TabIndex >= (int)m_vMapTabs.size())
+		return;
+	if(m_vMapTabs.size() <= 1)
+	{
+		ShowFileDialogError("At least one map tab must stay open.");
+		return;
+	}
+	const bool Active = TabIndex == m_ActiveMapTab;
+	if(Active)
+		SyncActiveMapTab();
+	if(m_vMapTabs[TabIndex].m_Modified)
+	{
+		ShowFileDialogError("This map tab has unsaved changes. Save the map before closing the tab.");
+		return;
+	}
+	if(m_vMapTabs[TabIndex].m_Used && m_vMapTabs[TabIndex].m_aTempFile[0] != '\0')
+		Storage()->RemoveFile(m_vMapTabs[TabIndex].m_aTempFile, IStorage::TYPE_SAVE);
+	m_vMapTabs.erase(m_vMapTabs.begin() + TabIndex);
+	if(!Active)
+	{
+		if(TabIndex < m_ActiveMapTab)
+			--m_ActiveMapTab;
+		return;
+	}
+	const int NewTab = TabIndex > 0 ? TabIndex - 1 : 0;
+	m_ActiveMapTab = -1;
+	ApplyMapTab(NewTab);
+}
+
+
+void CEditor::RenderMapTabs(CUIRect TabBar)
+{
+	if(m_vMapTabs.empty())
+		m_vMapTabs.push_back(SMapTabInfo{});
+
+	RenderBackground(TabBar, IGraphics::CTextureHandle(), 80.0f, 0.0f);
+	TabBar.Margin(2.0f, &TabBar);
+
+	static int s_aTabButtons[MAX_MAP_TABS];
+	static int s_aTabCloseButtons[MAX_MAP_TABS];
+	static int s_AddTabButton = 0;
+	static int s_TabCountButton = 0;
+
+	CUIRect Button;
+	{
+		char aCount[32];
+		str_format(aCount, sizeof(aCount), "%d/%d", (int)m_vMapTabs.size(), MAX_MAP_TABS);
+		TabBar.VSplitLeft(34.0f, &Button, &TabBar);
+		DoButton_Ex(&s_TabCountButton, aCount, 0, &Button, BUTTONFLAG_LEFT, "Map tabs: each tab keeps its own map.", IGraphics::CORNER_ALL, EditorFontSizes::MENU);
+		TabBar.VSplitLeft(3.0f, nullptr, &TabBar);
+	}
+
+	for(int i = 0; i < (int)m_vMapTabs.size(); i++)
+	{
+		if(TabBar.w <= 30.0f)
+			break;
+		const float TabWidth = minimum(140.0f, TabBar.w - 26.0f);
+		TabBar.VSplitLeft(TabWidth, &Button, &TabBar);
+		CUIRect TabButton, CloseButton;
+		Button.VSplitRight(13.0f, &TabButton, &CloseButton);
+
+		const bool Active = i == m_ActiveMapTab;
+		char aName[64];
+		MapTabName(Active ? Map()->m_aFilename : m_vMapTabs[i].m_aSaveFile, aName, sizeof(aName));
+		const bool Modified = Active ? Map()->m_Modified : m_vMapTabs[i].m_Modified;
+		char aLabel[96];
+		str_format(aLabel, sizeof(aLabel), "%s%s", aName, Modified ? "*" : "");
+
+		if(DoButton_Ex(&s_aTabButtons[i], aLabel, Active ? 1 : 0, &TabButton, BUTTONFLAG_LEFT, "Switch to this map tab.", IGraphics::CORNER_L, EditorFontSizes::MENU, TEXTALIGN_ML))
+			SwitchMapTab(i);
+
+		if(DoButton_Ex(&s_aTabCloseButtons[i], "x", 0, &CloseButton, BUTTONFLAG_LEFT, "Close this map tab.", IGraphics::CORNER_R))
+		{
+			CloseMapTab(i);
+			return;
+		}
+		TabBar.VSplitLeft(3.0f, nullptr, &TabBar);
+	}
+
+	if(TabBar.w >= 18.0f)
+	{
+		TabBar.VSplitLeft(18.0f, &Button, &TabBar);
+		if(DoButton_Ex(&s_AddTabButton, "+", 0, &Button, BUTTONFLAG_LEFT, "Add a new map tab with an empty map.", IGraphics::CORNER_ALL))
+			AddMapTab();
+	}
 }
 
 bool CEditor::HandleMapDrop(const char *pFilename, int StorageType)

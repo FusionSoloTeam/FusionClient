@@ -17,7 +17,7 @@ void CMapView::OnInit(CEditor *pEditor)
 
 void CMapView::OnReset()
 {
-	m_Zoom = CSmoothValue(200.0f, 10.0f, 2000.0f);
+	m_Zoom = CSmoothValue(200.0f, 10.0f, 10000.0f);
 	m_Zoom.OnInit(Editor());
 	m_WorldZoom = 1.0f;
 
@@ -148,7 +148,7 @@ void CMapView::UpdateZoom()
 {
 	float OldLevel = m_Zoom.GetValue();
 	bool UpdatedZoom = m_Zoom.UpdateValue();
-	m_Zoom.SetValueRange(10.0f, g_Config.m_EdLimitMaxZoomLevel ? 2000.0f : std::numeric_limits<float>::max());
+	m_Zoom.SetValueRange(10.0f, g_Config.m_EdLimitMaxZoomLevel ? 10000.0f : std::numeric_limits<float>::max());
 	float NewLevel = m_Zoom.GetValue();
 	if(UpdatedZoom && g_Config.m_EdZoomTarget)
 		ZoomMouseTarget(NewLevel / OldLevel);

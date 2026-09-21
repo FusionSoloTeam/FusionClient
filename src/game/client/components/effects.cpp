@@ -16,6 +16,9 @@
 #include <game/client/components/sounds.h>
 #include <game/client/gameclient.h>
 
+#include <algorithm>
+#include <cmath>
+
 CEffects::CEffects()
 {
 	m_Add5hz = false;
@@ -46,7 +49,8 @@ void CEffects::AirJump(vec2 Pos, float Alpha, float Volume)
 	GameClient()->m_Particles.Add(CParticles::GROUP_GENERAL, &p);
 
 	if(g_Config.m_SndGame)
-		GameClient()->m_Sounds.PlayAt(CSounds::CHN_WORLD, SOUND_PLAYER_AIRJUMP, Volume, Pos);
+		if(!SoundFromOthersMuted(Pos))
+			GameClient()->m_Sounds.PlayAt(CSounds::CHN_WORLD, SOUND_PLAYER_AIRJUMP, Volume, Pos);
 }
 
 void CEffects::DamageIndicator(vec2 Pos, vec2 Dir, float Alpha)
@@ -168,7 +172,8 @@ void CEffects::SkidTrail(vec2 Pos, vec2 Vel, int Direction, float Alpha, float V
 		if(Now - m_SkidSoundTimer > time_freq() / 10)
 		{
 			m_SkidSoundTimer = Now;
-			GameClient()->m_Sounds.PlayAt(CSounds::CHN_WORLD, SOUND_PLAYER_SKID, Volume, Pos);
+			if(!SoundFromOthersMuted(Pos))
+				GameClient()->m_Sounds.PlayAt(CSounds::CHN_WORLD, SOUND_PLAYER_SKID, Volume, Pos);
 		}
 	}
 }
@@ -189,6 +194,13 @@ void CEffects::BulletTrail(vec2 Pos, float Alpha, float TimePassed)
 	p.m_Color.a *= Alpha;
 	p.m_StartAlpha = Alpha;
 	GameClient()->m_Particles.Add(CParticles::GROUP_PROJECTILE_TRAIL, &p, TimePassed);
+}
+
+bool CEffects::SoundFromOthersMuted(vec2 Pos) const
+{
+	if(!g_Config.m_TcMuteOthersSounds)
+		return false;
+	return distance(Pos, GameClient()->m_LocalCharacterPos) >= 48.0f;
 }
 
 void CEffects::PlayerSpawn(vec2 Pos, float Alpha, float Volume)
@@ -212,7 +224,8 @@ void CEffects::PlayerSpawn(vec2 Pos, float Alpha, float Volume)
 		GameClient()->m_Particles.Add(CParticles::GROUP_GENERAL, &p);
 	}
 	if(g_Config.m_SndGame)
-		GameClient()->m_Sounds.PlayAt(CSounds::CHN_WORLD, SOUND_PLAYER_SPAWN, Volume, Pos);
+		if(!SoundFromOthersMuted(Pos))
+			GameClient()->m_Sounds.PlayAt(CSounds::CHN_WORLD, SOUND_PLAYER_SPAWN, Volume, Pos);
 }
 
 void CEffects::PlayerDeath(vec2 Pos, int ClientId, float Alpha)
@@ -325,6 +338,145 @@ void CEffects::Confetti(vec2 Pos, float Alpha)
 	}
 }
 
+void CEffects::AfkAura(vec2 Pos, float Alpha, vec4 BodyColor)
+{
+	const int NUM_SPARKLES = g_Config.m_TcToggleAuraParticlesNum;
+	const float SPARKLE_SIZE = 6.0f;
+	const float AURA_RADIUS = g_Config.m_TcToggleAuraRadius;
+	const float VERTICAL_OFFSET = 0.0f;
+
+	float Time = Client()->LocalTime();
+	vec2 BasePosition = Pos + vec2(0, VERTICAL_OFFSET);
+
+	if(g_Config.m_TcIdleAuraType == 1)
+	{
+		for(int i = 0; i < NUM_SPARKLES; i++)
+		{
+			float BaseAngle = (float)i / NUM_SPARKLES * 2.0f * pi;
+
+			float RotationSpeed = 0.2f + 0.05f * i;
+			float Angle = BaseAngle + Time * RotationSpeed;
+
+			float RadiusPulse = AURA_RADIUS * (0.9f + 0.1f * std::sin(Time * 2.0f + i));
+
+			vec2 SparklePos = BasePosition + vec2(
+				                  std::cos(Angle) * RadiusPulse,
+				                  std::sin(Angle) * RadiusPulse
+				                  );
+
+			float SparkleAlpha = 0.4f + 0.3f * std::sin(Time * 3.0f + i);
+
+			float ColorPhase = Time * 0.5f + i * 0.3f;
+			float R = BodyColor.r * (0.8f + 0.2f * std::sin(ColorPhase));
+			float G = BodyColor.g * (0.8f + 0.2f * std::sin(ColorPhase + 1.0f));
+			float B = BodyColor.b * (0.8f + 0.2f * std::sin(ColorPhase + 2.0f));
+
+			CParticle p;
+			p.SetDefault();
+			p.m_Spr = SPRITE_PART_SPARKLE;
+			p.m_Pos = SparklePos;
+			p.m_Vel = vec2(0.0f, 0.0f);
+			p.m_LifeSpan = 0.05f;
+			p.m_StartSize = SPARKLE_SIZE * 1.2f;
+			p.m_EndSize = SPARKLE_SIZE * 0.8f;
+			p.m_UseAlphaFading = true;
+			p.m_StartAlpha = SparkleAlpha * Alpha;
+			p.m_EndAlpha = 0.0f;
+			p.m_Rot = Angle;
+			p.m_Rotspeed = 0.0f;
+			p.m_Gravity = 0.0f;
+			p.m_Friction = 1.0f;
+			p.m_FlowAffected = 0.0f;
+			p.m_Collides = false;
+			p.m_Color = ColorRGBA(
+				std::clamp(R, 0.0f, 1.0f),
+				std::clamp(G, 0.0f, 1.0f),
+				std::clamp(B, 0.0f, 1.0f),
+				1.0f
+				);
+
+			GameClient()->m_Particles.Add(CParticles::GROUP_EXTRA, &p);
+		}
+	}
+	if(g_Config.m_TcIdleAuraType == 3)
+	{
+		for(int i = 0; i < NUM_SPARKLES; i++)
+		{
+			float BaseAngle = (float)i / NUM_SPARKLES * 2.0f * pi;
+			float RotationSpeed = 0.1f + (float)(i % 4) * 0.15f;
+
+			float AngleNoise = std::sin(Time * 0.3f + i * 0.7f) * 0.5f +
+			                   std::cos(Time * 0.9f + i * 1.1f) * 0.2f;
+			float Angle = BaseAngle + Time * RotationSpeed + AngleNoise;
+
+			float VerticalWave = std::sin(Time * 0.8f + i * 0.5f) * 8.0f +
+			                     std::cos(Time * 0.4f + i * 0.3f) * 4.0f +
+			                     std::sin(Time * 1.2f + i * 0.2f) * 2.0f +
+			                     random_float(-2.0f, 2.0f);
+
+			float RadiusVariation = 1.0f +
+			                        std::sin(Time * 0.6f + i * 0.4f) * 0.2f +
+			                        std::cos(Time * 0.3f + i * 0.6f) * 0.1f +
+			                        random_float(-0.1f, 0.1f);
+			float CurrentRadius = AURA_RADIUS * RadiusVariation;
+
+			vec2 SparklePos = BasePosition + vec2(
+				                  std::cos(Angle) * CurrentRadius + random_float(-1.5f, 1.5f),
+				                  std::sin(Angle) * CurrentRadius + VerticalWave + random_float(-1.5f, 1.5f)
+				                  );
+
+			float SparkleAlpha = 0.4f + 0.3f * std::sin(Time * 1.2f + i * 0.4f) +
+			                     0.2f * std::cos(Time * 0.8f + i * 0.6f);
+
+			float ColorPhase = Time * 0.3f + i * 0.2f;
+			float ColorVariation = 0.15f * std::sin(ColorPhase);
+			float ColorVariation2 = 0.1f * std::cos(ColorPhase * 1.5f);
+
+			float R = BodyColor.r + ColorVariation;
+			float G = BodyColor.g + ColorVariation2;
+			float B = BodyColor.b + ColorVariation * 0.5f;
+
+			float ColorPulse = 0.1f * std::sin(Time * 0.5f + i * 0.3f);
+			R += ColorPulse;
+			G += ColorPulse * 0.5f;
+			B += ColorPulse * 0.3f;
+
+			CParticle p;
+			p.SetDefault();
+			p.m_Spr = SPRITE_PART_SPARKLE;
+			p.m_Pos = SparklePos;
+			p.m_Vel = vec2(0.0f, 0.0f);
+			p.m_LifeSpan = 0.05f;
+
+			float SizeNoise = SPARKLE_SIZE * (0.8f + 0.4f * std::sin(Time + i));
+			p.m_StartSize = SizeNoise;
+			p.m_EndSize = SizeNoise * 0.5f;
+
+			p.m_UseAlphaFading = true;
+
+			float RandomAlphaMul = random_float(0.5f, 1.0f);
+			p.m_StartAlpha = SparkleAlpha * Alpha * RandomAlphaMul;
+			p.m_EndAlpha = 0.0f;
+
+			p.m_Rot = Time * 2.0f + i * 0.5f +
+			          std::sin(Time * 0.7f + i * 0.4f) * 0.5f;
+			p.m_Rotspeed = random_float(-1.0f, 1.0f);
+			p.m_Gravity = 0.0f;
+			p.m_Friction = 1.0f;
+			p.m_FlowAffected = 0.0f;
+			p.m_Collides = false;
+			p.m_Color = ColorRGBA(
+				std::clamp(R, 0.0f, 1.0f),
+				std::clamp(G, 0.0f, 1.0f),
+				std::clamp(B, 0.0f, 1.0f),
+				1.0f
+				);
+
+			GameClient()->m_Particles.Add(CParticles::GROUP_EXTRA, &p);
+		}
+	}
+}
+
 void CEffects::Explosion(vec2 Pos, float Alpha)
 {
 	// add to flow
@@ -406,7 +558,8 @@ void CEffects::HammerHit(vec2 Pos, float Alpha, float Volume)
 	p.m_StartAlpha = Alpha;
 	GameClient()->m_Particles.Add(CParticles::GROUP_EXPLOSIONS, &p);
 	if(g_Config.m_SndGame)
-		GameClient()->m_Sounds.PlayAt(CSounds::CHN_WORLD, SOUND_HAMMER_HIT, Volume, Pos);
+		if(!SoundFromOthersMuted(Pos))
+			GameClient()->m_Sounds.PlayAt(CSounds::CHN_WORLD, SOUND_HAMMER_HIT, Volume, Pos);
 }
 
 void CEffects::OnRender()

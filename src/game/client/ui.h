@@ -408,6 +408,7 @@ private:
 	unsigned m_LastMouseButtons = 0;
 	CTouchState m_TouchState;
 	bool m_MouseSlow = false;
+	float m_ScreenScale = 1.0f;
 	bool m_MouseLock = false;
 	const void *m_pMouseLockId = nullptr;
 
@@ -562,6 +563,7 @@ public:
 	void ConvertMouseMove(float *pX, float *pY, IInput::ECursorType CursorType) const;
 	void UpdateTouchState(CTouchState &State) const;
 	void SetMouseSlow(bool MouseSlow) { m_MouseSlow = MouseSlow; }
+	void SetScreenScale(float Scale) { m_ScreenScale = Scale; }
 
 	bool ConsumeHotkey(EHotkey Hotkey);
 	void ClearHotkeys() { m_HotkeysPressed = 0; }

@@ -41,9 +41,8 @@ class CDataFileWriterFinishJob : public IJob
 	char m_aErrorMessage[2 * IO_MAX_PATH_LENGTH + 128];
 	CDataFileWriter m_Writer;
 
-	void Run() override;
-
 public:
+	void Run() override;
 	CDataFileWriterFinishJob(IStorage *pStorage, const char *pRealFilename, const char *pTempFilename, CDataFileWriter &&Writer);
 	const char *RealFilename() const { return m_aRealFilename; }
 	const char *ErrorMessage() const { return m_aErrorMessage; }
@@ -177,7 +176,7 @@ public:
 	void ModifySoundIndex(const FIndexModifyFunction &IndexModifyFunction);
 
 	// I/O
-	bool Save(const char *pFilename, const FErrorHandler &ErrorHandler);
+	bool Save(const char *pFilename, const FErrorHandler &ErrorHandler, bool Synchronous = false);
 	bool PerformPreSaveSanityChecks(const FErrorHandler &ErrorHandler);
 	bool Load(const char *pFilename, int StorageType, const FErrorHandler &ErrorHandler);
 	bool Append(const char *pFilename, int StorageType, bool IgnoreHistory, const FErrorHandler &ErrorHandler);

@@ -9,6 +9,7 @@
 
 #include <generated/protocol.h>
 
+#include <game/client/components/hud_layout.h>
 #include <game/client/components/scoreboard.h>
 #include <game/client/components/sounds.h>
 #include <game/client/gameclient.h>
@@ -352,6 +353,16 @@ void CVoting::Render()
 		return;
 	}
 
+	const CUIRect Screen = *Ui()->Screen();
+	float SaveX0, SaveY0, SaveX1, SaveY1;
+	Graphics()->GetScreen(&SaveX0, &SaveY0, &SaveX1, &SaveY1);
+	const float HudWidth = HudLayout::CANVAS_HEIGHT * Graphics()->ScreenAspect();
+	const auto VoteLayout = HudLayout::Get(HudLayout::MODULE_VOTE, HudWidth, HudLayout::CANVAS_HEIGHT);
+	const float VoteScale = std::clamp(VoteLayout.m_Scale / 100.0f, 0.25f, 3.0f);
+	const float OffsetX = -(VoteLayout.m_X * 2.0f) / VoteScale;
+	const float OffsetY = 60.0f - (VoteLayout.m_Y * 2.0f) / VoteScale;
+	Graphics()->MapScreen(OffsetX, OffsetY, OffsetX + Screen.w / VoteScale, OffsetY + Screen.h / VoteScale);
+
 	CUIRect View = {0.0f, 60.0f, 120.0f, 38.0f};
 	View.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.4f), IGraphics::CORNER_R, 3.0f);
 	View.Margin(3.0f, &View);
@@ -404,6 +415,7 @@ void CVoting::Render()
 	Ui()->DoLabel(&RightColumn, aBuf, 6.0f, TEXTALIGN_MR);
 
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
+	Graphics()->MapScreen(SaveX0, SaveY0, SaveX1, SaveY1);
 }
 
 void CVoting::RenderBars(CUIRect Bars) const
@@ -421,6 +433,12 @@ void CVoting::RenderBars(CUIRect Bars) const
 			CUIRect YesArea;
 			Bars.VSplitLeft(Bars.w * m_Yes / m_Total, &YesArea, nullptr);
 			YesArea.Draw(ColorRGBA(0.2f, 0.9f, 0.2f, 0.85f), IGraphics::CORNER_ALL, YesArea.h / 2.0f);
+			if(g_Config.m_TcShowhudVotingPercent)
+			{
+				char PercentChar[32];
+				str_format(PercentChar, sizeof(PercentChar), "%i%%", m_Yes * 100 / m_Total);
+				Ui()->DoLabel(&YesArea, PercentChar, YesArea.h, TEXTALIGN_MC);
+			}
 		}
 
 		if(m_No)
@@ -428,6 +446,12 @@ void CVoting::RenderBars(CUIRect Bars) const
 			CUIRect NoArea;
 			Bars.VSplitRight(Bars.w * m_No / m_Total, nullptr, &NoArea);
 			NoArea.Draw(ColorRGBA(0.9f, 0.2f, 0.2f, 0.85f), IGraphics::CORNER_ALL, NoArea.h / 2.0f);
+			if(g_Config.m_TcShowhudVotingPercent)
+			{
+				char PercentChar[32];
+				str_format(PercentChar, sizeof(PercentChar), "%i%%", m_No * 100 / m_Total);
+				Ui()->DoLabel(&NoArea, PercentChar, NoArea.h, TEXTALIGN_MC);
+			}
 		}
 	}
 }

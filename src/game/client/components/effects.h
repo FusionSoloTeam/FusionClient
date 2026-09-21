@@ -36,10 +36,12 @@ public:
 	void DamageIndicator(vec2 Pos, vec2 Dir, float Alpha);
 	void PlayerSpawn(vec2 Pos, float Alpha, float Volume);
 	void PlayerDeath(vec2 Pos, int ClientId, float Alpha);
+	bool SoundFromOthersMuted(vec2 Pos) const;
 	void PowerupShine(vec2 Pos, vec2 Size, float Alpha);
 	void FreezingFlakes(vec2 Pos, vec2 Size, float Alpha);
 	void SparkleTrail(vec2 Pos, float Alpha);
 	void Confetti(vec2 Pos, float Alpha);
+	void AfkAura(vec2 Pos, float Alpha, vec4 BodyColor);
 
 	void Update();
 };

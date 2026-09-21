@@ -49,6 +49,40 @@ void CMapImages::Unload()
 	{
 		Graphics()->UnloadTexture(&m_aTextures[i]);
 	}
+	m_NumLoadedTextures = 0;
+}
+
+void CMapImages::ReloadAll()
+{
+	Unload();
+
+	for(int ModType = 0; ModType < MAP_IMAGE_MOD_TYPE_COUNT * 2; ++ModType)
+	{
+		if(m_aEntitiesIsLoaded[ModType])
+		{
+			for(int LayerType = 0; LayerType < MAP_IMAGE_ENTITY_LAYER_TYPE_COUNT; ++LayerType)
+				Graphics()->UnloadTexture(&m_aaEntitiesTextures[ModType][LayerType]);
+			m_aEntitiesIsLoaded[ModType] = false;
+		}
+	}
+
+	if(m_SpeedupArrowIsLoaded)
+	{
+		Graphics()->UnloadTexture(&m_SpeedupArrowTexture);
+		m_SpeedupArrowIsLoaded = false;
+	}
+
+	if(m_OverlayCenterTexture.IsValid())
+	{
+		Graphics()->UnloadTexture(&m_OverlayBottomTexture);
+		Graphics()->UnloadTexture(&m_OverlayTopTexture);
+		Graphics()->UnloadTexture(&m_OverlayCenterTexture);
+	}
+
+	InitOverlayTextures();
+
+	if(GameClient()->Map() != nullptr && GameClient()->Map()->IsLoaded())
+		OnMapLoad();
 }
 
 void CMapImages::OnMapLoadImpl(class CLayers *pLayers, IMap *pMap)
@@ -169,6 +203,13 @@ void CMapImages::OnMapLoadImpl(class CLayers *pLayers, IMap *pMap)
 			}
 		}
 		pMap->UnloadData(pImg->m_ImageName);
+		if(i >= 0 && (size_t)i < MAX_MAPIMAGES && !m_aTextures[i].IsNullTexture())
+		{
+			str_copy(m_aLoadedTextures[i].m_aName, pName, sizeof(m_aLoadedTextures[i].m_aName));
+			m_aLoadedTextures[i].m_Width = pImg->m_Width;
+			m_aLoadedTextures[i].m_Height = pImg->m_Height;
+			m_NumLoadedTextures = std::max(m_NumLoadedTextures, i + 1);
+		}
 		ShowWarning = ShowWarning || m_aTextures[i].IsNullTexture();
 	}
 	if(ShowWarning)
