@@ -100,7 +100,8 @@ void CItems::RenderProjectile(const CProjectileData *pCurrent, int ItemId)
 	// don't check for validity of the projectile for the current weapon here, so particle effects are rendered for mod compatibility
 	if(CurWeapon == WEAPON_GRENADE)
 	{
-		GameClient()->m_Effects.SmokeTrail(Pos, Vel * -1, Alpha, 0.0f);
+		if(!GameClient()->m_WeaponVfx.RenderRocketTrail(*pCurrent, Ct, Curvature, Speed, Alpha))
+			GameClient()->m_Effects.SmokeTrail(Pos, Vel * -1, Alpha, 0.0f);
 		static float s_Time = 0.0f;
 		static float s_LastLocalTime = LocalTime();
 
@@ -351,6 +352,9 @@ void CItems::RenderLaser(const CLaserData *pCurrent, bool IsPredicted)
 void CItems::RenderLaser(vec2 From, vec2 Pos, ColorRGBA OuterColor, ColorRGBA InnerColor, float TicksBody, float TicksHead, int Type) const
 {
 	float Len = distance(Pos, From);
+
+	if(GameClient()->m_WeaponVfx.RenderWeaponLaser(From, Pos, OuterColor, InnerColor, TicksBody, TicksHead, Type))
+		return;
 
 	if(Len > 0)
 	{

@@ -2678,6 +2678,47 @@ if(CLIENT)
     components/tclient/notify_on_move.h
     components/tclient/system_audio.cpp
     components/tclient/system_audio.h
+    components/tclient/inputs.cpp
+    components/tclient/inputs.h
+    components/tclient/weapon_vfx.cpp
+    components/tclient/weapon_vfx.h
+    components/tclient/laser_glow.cpp
+    components/tclient/nuke_vfx.cpp
+    components/tclient/rocket_glow.cpp
+    components/tclient/fx/fgf_glow.cpp
+    components/tclient/fx/own_tee.cpp
+    components/tclient/fx/fgf_ki.cpp
+    components/tclient/fx/fgf_ki.h
+    components/tclient/fx/fgf_glow.h
+    components/tclient/fx/fgf_weather.cpp
+    components/tclient/fx/fgf_weather.h
+    components/tclient/fx/fgf_actions.cpp
+    components/tclient/fx/fgf_actions.h
+    components/tclient/fx/fx_screen_rect.h
+    components/tclient/fx/hookgrip.cpp
+    components/tclient/fx/hookgrip.h
+    components/tclient/fx/hookblackhole.cpp
+    components/tclient/fx/hookblackhole.h
+    components/tclient/fx/hookfire.cpp
+    components/tclient/fx/hookfire.h
+    components/tclient/fx/hookfrost.cpp
+    components/tclient/fx/hookfrost.h
+    components/tclient/fx/hooklightning.cpp
+    components/tclient/fx/hooklightning.h
+    components/tclient/fx/hookmagic.cpp
+    components/tclient/fx/hookmagic.h
+    components/tclient/fx/hookrainbow.cpp
+    components/tclient/fx/hookrainbow.h
+    components/tclient/fx/hookrope.cpp
+    components/tclient/fx/hookrope.h
+    components/tclient/fx/hooktentacle.cpp
+    components/tclient/fx/hooktentacle.h
+    components/tclient/fx/hooktroll.cpp
+    components/tclient/fx/hooktroll.h
+    components/tclient/fx/hookwind.cpp
+    components/tclient/fx/hookwind.h
+    components/tclient/fx/lightning.cpp
+    components/tclient/fx/lightning.h
     components/tooltips.cpp
     components/tooltips.h
     components/touch_controls.cpp

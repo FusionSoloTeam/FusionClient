@@ -485,6 +485,7 @@ void CMenus::RenderServerbrowserServerList(CUIRect View, bool &WasListboxItemAct
 	}
 
 	const int NewSelected = s_ListBox.DoEnd();
+
 	if(NewSelected != m_SelectedIndex)
 	{
 		m_SelectedIndex = NewSelected;
@@ -501,6 +502,7 @@ void CMenus::RenderServerbrowserServerList(CUIRect View, bool &WasListboxItemAct
 	}
 
 	WasListboxItemActivated = s_ListBox.WasItemActivated();
+
 }
 
 void CMenus::RenderServerbrowserStatusBox(CUIRect StatusBox, bool WasListboxItemActivated)

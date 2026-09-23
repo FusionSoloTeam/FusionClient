@@ -479,6 +479,8 @@ void CEffects::AfkAura(vec2 Pos, float Alpha, vec4 BodyColor)
 
 void CEffects::Explosion(vec2 Pos, float Alpha)
 {
+	const bool CustomExplosion = GameClient()->m_WeaponVfx.TriggerExplosion(Pos, Alpha);
+
 	// add to flow
 	for(int y = -8; y <= 8; y++)
 		for(int x = -8; x <= 8; x++)
@@ -501,7 +503,8 @@ void CEffects::Explosion(vec2 Pos, float Alpha)
 	p.m_Rot = random_angle();
 	p.m_Color.a = Alpha;
 	p.m_StartAlpha = Alpha;
-	GameClient()->m_Particles.Add(CParticles::GROUP_EXPLOSIONS, &p);
+	if(!CustomExplosion)
+		GameClient()->m_Particles.Add(CParticles::GROUP_EXPLOSIONS, &p);
 
 	// Nudge position slightly to edge of closest tile so the
 	// smoke doesn't get stuck inside the tile.
@@ -526,7 +529,7 @@ void CEffects::Explosion(vec2 Pos, float Alpha)
 	}
 
 	// add the smoke
-	for(int i = 0; i < 24; i++)
+	for(int i = 0; !CustomExplosion && i < 24; i++)
 	{
 		p.SetDefault();
 		p.m_Spr = SPRITE_PART_SMOKE;

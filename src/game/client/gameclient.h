@@ -91,6 +91,9 @@
 #include "components/tclient/react_bypass.h"
 #include "components/tclient/warlist.h"
 #include "components/tclient/heartlist.h"
+#include "components/tclient/inputs.h"
+#include "components/tclient/weapon_vfx.h"
+#include "components/tclient/fx/components.h"
 #include "components/tclient/notify_on_move.h"
 #include "components/tclient/afk_aura.h"
 #include "components/tclient/hover_notification.h"
@@ -257,6 +260,21 @@ public:
 	CMovingTiles m_MovingTilesForeground = CMovingTiles{ true };
 	CCursorTrail m_CursorTrailBackground = CCursorTrail{ false };
 	CCursorTrail m_CursorTrailForeground = CCursorTrail{ true };
+
+	CWeaponVfx m_WeaponVfx;
+	CFgfWeather m_FgfWeather;
+	CLightning m_Lightning;
+	CHookWind m_HookWind;
+	CHookBlackHole m_HookBlackHole;
+	CHookMagic m_HookMagic;
+	CHookRainbow m_HookRainbow;
+	CHookLightning m_HookLightning;
+	CHookTentacle m_HookTentacle;
+	CHookFrost m_HookFrost;
+	CHookFire m_HookFire;
+	CHookTroll m_HookTroll;
+	CHookRope m_HookRope;
+	CFgfActions m_FgfActions;
 
 private:
 	std::vector<class CComponent *> m_vpAll;
@@ -790,6 +808,7 @@ public:
 	void DummyResetInput() override;
 	void Echo(const char *pString) override;
 	bool IsOtherTeam(int ClientId) const;
+	bool IsCameraAllowedServer() const;
 	int SwitchStateTeam() const;
 	bool IsLocalCharSuper() const;
 	bool CanDisplayWarning() const override;

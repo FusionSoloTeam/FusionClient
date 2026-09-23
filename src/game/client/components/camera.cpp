@@ -300,8 +300,9 @@ void CCamera::UpdateTClientCameras()
 	m_RenderZoom = m_Zoom;
 	m_DriftOffset = vec2(0.0f, 0.0f);
 
-	const bool Dynamic = g_Config.m_TcDynamicCamera != 0;
-	const bool Drift = g_Config.m_TcDriftCamera != 0;
+	const bool CameraAllowed = GameClient()->IsCameraAllowedServer();
+	const bool Dynamic = g_Config.m_TcDynamicCamera != 0 && CameraAllowed;
+	const bool Drift = g_Config.m_TcDriftCamera != 0 && CameraAllowed;
 	if(!Dynamic && !Drift)
 		return;
 	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
@@ -492,6 +493,9 @@ void CCamera::OnRender()
 
 	// demo always count as spectating
 	m_WasSpectating = GameClient()->m_Snap.m_SpecInfo.m_Active;
+
+	GameClient()->m_WeaponVfx.ApplyCameraShake(m_Center);
+	GameClient()->m_Lightning.ApplyCameraShake(m_Center);
 
 	m_Center += m_DriftOffset;
 }

@@ -786,14 +786,38 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	Ui()->DoLabel(&Label, TCLocalize("Input"), HeadlineFontSize, TEXTALIGN_ML);
 	Column.HSplitTop(MarginSmall, nullptr, &Column);
 
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcFastInput, TCLocalize("Fast Input (reduced visual delay)"), &g_Config.m_TcFastInput, &Column, LineSize);
-	if(g_Config.m_TcFastInput)
+	{
+		static std::vector<CButtonContainer> s_vInputModeButtons = {{}, {}, {}};
+		int InputModeValue = g_Config.m_TcInputs == 2 ? 2 : (g_Config.m_TcFastInput || g_Config.m_TcInputs == 1 ? 1 : 0);
+		if(DoLine_RadioMenu(Column, TCLocalize("Mode"), s_vInputModeButtons, {Localize("None"), Localize("Tater"), Localize("Best")}, {0, 1, 2}, InputModeValue))
+		{
+			g_Config.m_TcInputs = InputModeValue;
+			g_Config.m_TcFastInput = InputModeValue == 1 ? 1 : 0;
+		}
+	}
+	if(g_Config.m_TcInputs == 1 || g_Config.m_TcFastInput)
 	{
 		Column.HSplitTop(LineSize, &Button, &Column);
 		DoSliderWithScaledValue(&g_Config.m_TcFastInputAmount, &g_Config.m_TcFastInputAmount, &Button, TCLocalize("Amount"), 1, 40, 1, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "ms");
 
 		Column.HSplitTop(MarginSmall, nullptr, &Column);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcFastInputOthers, TCLocalize("Fast Input others"), &g_Config.m_TcFastInputOthers, &Column, LineSize);
+	}
+	if(g_Config.m_TcInputs == 2)
+	{
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcBestInputAmount, &g_Config.m_TcBestInputAmount, &Button, TCLocalize("Amount"), 0, 500, &CUi::ms_LinearScrollbarScale, 0, "0.01t");
+		{
+			static std::vector<CButtonContainer> s_vBestInterpButtons = {{}, {}, {}};
+			int BestInterp = std::clamp(g_Config.m_TcBestInputInterpolation, 1, 3);
+			if(DoLine_RadioMenu(Column, TCLocalize("Interpolation"), s_vBestInterpButtons, {Localize("Linear"), Localize("Cubic"), Localize("Smooth")}, {1, 2, 3}, BestInterp))
+				g_Config.m_TcBestInputInterpolation = BestInterp;
+		}
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcBestInputSmoothing, &g_Config.m_TcBestInputSmoothing, &Button, TCLocalize("Smoothing"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcBestInputLatencyComp, &g_Config.m_TcBestInputLatencyComp, &Button, TCLocalize("Latency compensation"), 0, 50, &CUi::ms_LinearScrollbarScale, 0, "%");
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcBestInputOthers, TCLocalize("Best Input others"), &g_Config.m_TcBestInputOthers, &Column, LineSize);
 	}
 
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClSubTickAiming, TCLocalize("Sub-Tick aiming"), &g_Config.m_ClSubTickAiming, &Column, LineSize);
@@ -1298,6 +1322,232 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 		Column.HSplitTop(LineSize, &Button, &Column);
 		Ui()->DoScrollbarOption(&g_Config.m_TcJellyTeeDuration, &g_Config.m_TcJellyTeeDuration, &Button, TCLocalize("Duration"), 1, 500);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcJellyTeeOthers, TCLocalize("Apply to other players"), &g_Config.m_TcJellyTeeOthers, &Column, LineSize);
+	}
+
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+
+	}
+	// ***** Custom Hooks ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"hook", "style", "custom", "effect"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Custom Hooks"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	{
+		static std::vector<const char *> s_HookStyleNames;
+		s_HookStyleNames = {TCLocalize("None"), TCLocalize("Whirlwind"), TCLocalize("Black hole"), TCLocalize("Magic"), TCLocalize("Fire"), TCLocalize("Rainbow"), TCLocalize("Lightning"), TCLocalize("Tentacle"), TCLocalize("Frost")};
+		static const int s_aHookStyleValues[] = {0, 1, 2, 3, 4, 6, 7, 8, 9};
+		static CUi::SDropDownState s_HookStyleState;
+		static CScrollRegion s_HookStyleScroll;
+		s_HookStyleState.m_SelectionPopupContext.m_pScrollRegion = &s_HookStyleScroll;
+		CUIRect DropDownRect;
+		Column.HSplitTop(LineSize, &DropDownRect, &Column);
+		DropDownRect.VSplitLeft(110.0f, &Label, &DropDownRect);
+		Ui()->DoLabel(&Label, TCLocalize("Hook"), FontSize, TEXTALIGN_ML);
+		int HookStyleIndex = 0;
+		for(int HookStyle = 0; HookStyle < (int)(sizeof(s_aHookStyleValues) / sizeof(s_aHookStyleValues[0])); HookStyle++)
+		{
+			if(s_aHookStyleValues[HookStyle] == g_Config.m_TcHookStyle)
+				HookStyleIndex = HookStyle;
+		}
+		HookStyleIndex = Ui()->DoDropDown(&DropDownRect, HookStyleIndex, s_HookStyleNames.data(), s_HookStyleNames.size(), s_HookStyleState);
+		g_Config.m_TcHookStyle = s_aHookStyleValues[std::clamp(HookStyleIndex, 0, (int)(sizeof(s_aHookStyleValues) / sizeof(s_aHookStyleValues[0])) - 1)];
+	}
+
+	Column.HSplitTop(LineSize, &Button, &Column);
+	Ui()->DoScrollbarOption(&g_Config.m_TcHookSize, &g_Config.m_TcHookSize, &Button, TCLocalize("Size"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+	Column.HSplitTop(LineSize, &Button, &Column);
+	Ui()->DoScrollbarOption(&g_Config.m_TcHookChargeTime, &g_Config.m_TcHookChargeTime, &Button, TCLocalize("Grow time"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHookRope, TCLocalize("Style the hook rope"), &g_Config.m_TcHookRope, &Column, LineSize);
+
+	if(g_Config.m_TcHookStyle == 1)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHookWindEye, TCLocalize("Eye"), &g_Config.m_TcHookWindEye, &Column, LineSize);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookWindSpin, &g_Config.m_TcHookWindSpin, &Button, TCLocalize("Spin speed"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookWindOpacity, &g_Config.m_TcHookWindOpacity, &Button, TCLocalize("Wind opacity"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookWindThickness, &g_Config.m_TcHookWindThickness, &Button, TCLocalize("Line thickness"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookWindLeafAmount, &g_Config.m_TcHookWindLeafAmount, &Button, TCLocalize("Leaves"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookWindDust, &g_Config.m_TcHookWindDust, &Button, TCLocalize("Dust"), 0, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHookWindBurst, TCLocalize("Grab gust"), &g_Config.m_TcHookWindBurst, &Column, LineSize);
+		static CButtonContainer s_HookWindColorId;
+		DoLine_ColorPicker(&s_HookWindColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Wind color"), &g_Config.m_TcHookWindColor, ColorRGBA(0.75f, 0.85f, 1.0f, 1.0f), false);
+	}
+	else if(g_Config.m_TcHookStyle == 2)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHookHoleDisk, TCLocalize("Disk"), &g_Config.m_TcHookHoleDisk, &Column, LineSize);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookHoleStreaks, &g_Config.m_TcHookHoleStreaks, &Button, TCLocalize("Matter"), 0, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookHoleSpin, &g_Config.m_TcHookHoleSpin, &Button, TCLocalize("Spin"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		static CButtonContainer s_HookHoleColorId;
+		DoLine_ColorPicker(&s_HookHoleColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Disk color"), &g_Config.m_TcHookHoleColor, ColorRGBA(0.65f, 0.35f, 1.0f, 1.0f), false);
+	}
+	else if(g_Config.m_TcHookStyle == 3)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHookMagicRunes, TCLocalize("Runes"), &g_Config.m_TcHookMagicRunes, &Column, LineSize);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookMagicSparkles, &g_Config.m_TcHookMagicSparkles, &Button, TCLocalize("Sparkles"), 0, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookMagicSpin, &g_Config.m_TcHookMagicSpin, &Button, TCLocalize("Spin"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		static CButtonContainer s_HookMagicColorId;
+		DoLine_ColorPicker(&s_HookMagicColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Spell color"), &g_Config.m_TcHookMagicColor, ColorRGBA(0.45f, 0.85f, 1.0f, 1.0f), false);
+	}
+	else if(g_Config.m_TcHookStyle == 4)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHookFireSmoke, TCLocalize("Smoke"), &g_Config.m_TcHookFireSmoke, &Column, LineSize);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookFireEmbers, &g_Config.m_TcHookFireEmbers, &Button, TCLocalize("Embers"), 0, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookFireIntensity, &g_Config.m_TcHookFireIntensity, &Button, TCLocalize("Power"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		static CButtonContainer s_HookFireColorId;
+		DoLine_ColorPicker(&s_HookFireColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Fire color"), &g_Config.m_TcHookFireColor, ColorRGBA(1.0f, 0.5f, 0.15f, 1.0f), false);
+	}
+	else if(g_Config.m_TcHookStyle == 6)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHookRainbowRays, TCLocalize("Rays"), &g_Config.m_TcHookRainbowRays, &Column, LineSize);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookRainbowGlitter, &g_Config.m_TcHookRainbowGlitter, &Button, TCLocalize("Glitter"), 0, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookRainbowWidth, &g_Config.m_TcHookRainbowWidth, &Button, TCLocalize("Ribbon width"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookRainbowSpeed, &g_Config.m_TcHookRainbowSpeed, &Button, TCLocalize("Flow"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+	}
+	else if(g_Config.m_TcHookStyle == 7)
+	{
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookBoltArc, &g_Config.m_TcHookBoltArc, &Button, TCLocalize("Wall arcs"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookBoltBranches, &g_Config.m_TcHookBoltBranches, &Button, TCLocalize("Forks"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookBoltJitter, &g_Config.m_TcHookBoltJitter, &Button, TCLocalize("Jitter"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookBoltSparks, &g_Config.m_TcHookBoltSparks, &Button, TCLocalize("Sparks"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		static CButtonContainer s_HookBoltColorId;
+		DoLine_ColorPicker(&s_HookBoltColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Lightning color"), &g_Config.m_TcHookBoltColor, ColorRGBA(0.6f, 0.8f, 1.0f, 1.0f), false);
+	}
+	else if(g_Config.m_TcHookStyle == 8)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHookTentacleSuckers, TCLocalize("Suckers"), &g_Config.m_TcHookTentacleSuckers, &Column, LineSize);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookTentacleWaves, &g_Config.m_TcHookTentacleWaves, &Button, TCLocalize("Writhing"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookTentacleThickness, &g_Config.m_TcHookTentacleThickness, &Button, TCLocalize("Thickness"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookTentacleSlime, &g_Config.m_TcHookTentacleSlime, &Button, TCLocalize("Slime"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		static CButtonContainer s_HookTentacleColorId;
+		DoLine_ColorPicker(&s_HookTentacleColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Flesh color"), &g_Config.m_TcHookTentacleColor, ColorRGBA(0.85f, 0.4f, 0.55f, 1.0f), false);
+	}
+	else if(g_Config.m_TcHookStyle == 9)
+	{
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookFrostCrystals, &g_Config.m_TcHookFrostCrystals, &Button, TCLocalize("Crystals"), 3, 24, &CUi::ms_LinearScrollbarScale, 0, "");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookFrostGrowth, &g_Config.m_TcHookFrostGrowth, &Button, TCLocalize("Growth"), 25, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookFrostSnow, &g_Config.m_TcHookFrostSnow, &Button, TCLocalize("Snowfall"), 0, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcHookFrostMist, &g_Config.m_TcHookFrostMist, &Button, TCLocalize("Mist"), 0, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+		static CButtonContainer s_HookFrostColorId;
+		DoLine_ColorPicker(&s_HookFrostColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Frost color"), &g_Config.m_TcHookFrostColor, ColorRGBA(0.62f, 0.85f, 1.0f, 1.0f), false);
+	}
+
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+
+	}
+	// ***** Hook Effects ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"hook", "effects", "jump", "hammer", "hold"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Hook Effects"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAirJump, TCLocalize("Air jump ring"), &g_Config.m_TcAirJump, &Column, LineSize);
+	if(g_Config.m_TcAirJump)
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAirJumpHideParticles, TCLocalize("Disable jump particles"), &g_Config.m_TcAirJumpHideParticles, &Column, LineSize);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHammerSlash, TCLocalize("Hammer slash"), &g_Config.m_TcHammerSlash, &Column, LineSize);
+	if(g_Config.m_TcHammerSlash)
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHammerHideParticles, TCLocalize("Disable hammer particles"), &g_Config.m_TcHammerHideParticles, &Column, LineSize);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHookTether, TCLocalize("Hook lasso"), &g_Config.m_TcHookTether, &Column, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHookLassoBox, TCLocalize("Hook box"), &g_Config.m_TcHookLassoBox, &Column, LineSize);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcGatheredEnergy, TCLocalize("Hook hold"), &g_Config.m_TcGatheredEnergy, &Column, LineSize);
+	if(g_Config.m_TcGatheredEnergy)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcGatheredEnergyAura, TCLocalize("Hold aura"), &g_Config.m_TcGatheredEnergyAura, &Column, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcGatheredEnergyBurst, TCLocalize("Hold burst"), &g_Config.m_TcGatheredEnergyBurst, &Column, LineSize);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcGatheredEnergyAmount, &g_Config.m_TcGatheredEnergyAmount, &Button, TCLocalize("Energy motes"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+	}
+
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+
+	}
+	// ***** Weather ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"weather", "snow", "rain", "fireflies", "dust"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Weather"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAtmosphere, TCLocalize("Enable"), &g_Config.m_TcAtmosphere, &Column, LineSize);
+	if(g_Config.m_TcAtmosphere)
+	{
+		static std::vector<const char *> s_WeatherNames;
+		s_WeatherNames = {TCLocalize("Snow"), TCLocalize("Rain"), TCLocalize("Fireflies")};
+		static CUi::SDropDownState s_WeatherState;
+		static CScrollRegion s_WeatherScroll;
+		s_WeatherState.m_SelectionPopupContext.m_pScrollRegion = &s_WeatherScroll;
+		CUIRect DropDownRect;
+		Column.HSplitTop(LineSize, &DropDownRect, &Column);
+		DropDownRect.VSplitLeft(110.0f, &Label, &DropDownRect);
+		Ui()->DoLabel(&Label, TCLocalize("Type"), FontSize, TEXTALIGN_ML);
+		g_Config.m_TcWeather = std::clamp(Ui()->DoDropDown(&DropDownRect, g_Config.m_TcWeather, s_WeatherNames.data(), s_WeatherNames.size(), s_WeatherState), 0, 2);
+	}
+	Column.HSplitTop(LineSize, &Button, &Column);
+	Ui()->DoScrollbarOption(&g_Config.m_TcWeatherAmount, &g_Config.m_TcWeatherAmount, &Button, TCLocalize("Amount"), 25, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+
+	if(g_Config.m_TcWeather == 0)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcWeatherSnowflakes, TCLocalize("Snowflakes"), &g_Config.m_TcWeatherSnowflakes, &Column, LineSize);
+		static CButtonContainer s_WeatherSnowColorId;
+		DoLine_ColorPicker(&s_WeatherSnowColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Snow color"), &g_Config.m_TcWeatherSnowColor, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f), false);
+	}
+	else if(g_Config.m_TcWeather == 1)
+	{
+		static CButtonContainer s_WeatherRainColorId;
+		DoLine_ColorPicker(&s_WeatherRainColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Rain color"), &g_Config.m_TcWeatherRainColor, ColorRGBA(0.6f, 0.8f, 1.0f, 1.0f), false);
+	}
+	else if(g_Config.m_TcWeather == 2)
+	{
+		static CButtonContainer s_WeatherFireflyColorId;
+		DoLine_ColorPicker(&s_WeatherFireflyColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Firefly color"), &g_Config.m_TcWeatherFireflyColor, ColorRGBA(1.0f, 0.9f, 0.4f, 1.0f), false);
+	}
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAmbientDust, TCLocalize("Ambient dust"), &g_Config.m_TcAmbientDust, &Column, LineSize);
+	if(g_Config.m_TcAmbientDust)
+	{
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcAmbientDustAmount, &g_Config.m_TcAmbientDustAmount, &Button, TCLocalize("Amount"), 25, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		static CButtonContainer s_AmbientDustColorId;
+		DoLine_ColorPicker(&s_AmbientDustColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Dust color"), &g_Config.m_TcAmbientDustColor, ColorRGBA(0.8f, 0.75f, 0.6f, 1.0f), false);
 	}
 
 	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
@@ -1837,7 +2087,16 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	Ui()->DoLabel(&Label, TCLocalize("Dynamic Camera"), HeadlineFontSize, TEXTALIGN_ML);
 	Column.HSplitTop(MarginSmall, nullptr, &Column);
 
+	const bool CameraAllowed = GameClient()->IsCameraAllowedServer();
+	if(!CameraAllowed)
+		g_Config.m_TcDynamicCamera = 0;
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcDynamicCamera, TCLocalize("Zoom based on your speed"), &g_Config.m_TcDynamicCamera, &Column, LineSize);
+	if(!CameraAllowed)
+	{
+		g_Config.m_TcDynamicCamera = 0;
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoLabel(&Button, TCLocalize("Only allowed on listed server types"), FontSize, TEXTALIGN_ML);
+	}
 	if(g_Config.m_TcDynamicCamera)
 	{
 		{
@@ -1894,7 +2153,12 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	Ui()->DoLabel(&Label, TCLocalize("Drift Camera"), HeadlineFontSize, TEXTALIGN_ML);
 	Column.HSplitTop(MarginSmall, nullptr, &Column);
 
+	const bool CameraAllowed = GameClient()->IsCameraAllowedServer();
+	if(!CameraAllowed)
+		g_Config.m_TcDriftCamera = 0;
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcDriftCamera, TCLocalize("Camera drifts with your speed"), &g_Config.m_TcDriftCamera, &Column, LineSize);
+	if(!CameraAllowed)
+		g_Config.m_TcDriftCamera = 0;
 	if(g_Config.m_TcDriftCamera)
 	{
 		{
@@ -1940,6 +2204,170 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
 
 	}
+	// ***** Laser Glow ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"laser", "glow", "rifle"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Laser Glow"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcLaserGlow, TCLocalize("Enable"), &g_Config.m_TcLaserGlow, &Column, LineSize);
+	if(g_Config.m_TcLaserGlow)
+	{
+		{
+			static std::vector<const char *> s_LaserGlowModeNames;
+			s_LaserGlowModeNames = {TCLocalize("Classic"), TCLocalize("Prism"), TCLocalize("Pulse"), TCLocalize("Crystal"), TCLocalize("Plasma"), TCLocalize("Aurora")};
+			static CUi::SDropDownState s_LaserGlowModeState;
+			static CScrollRegion s_LaserGlowModeScroll;
+			s_LaserGlowModeState.m_SelectionPopupContext.m_pScrollRegion = &s_LaserGlowModeScroll;
+			CUIRect DropDownRect;
+			Column.HSplitTop(LineSize, &DropDownRect, &Column);
+			DropDownRect.VSplitLeft(110.0f, &Label, &DropDownRect);
+			Ui()->DoLabel(&Label, TCLocalize("Mode"), FontSize, TEXTALIGN_ML);
+			g_Config.m_TcLaserGlowMode = Ui()->DoDropDown(&DropDownRect, g_Config.m_TcLaserGlowMode, s_LaserGlowModeNames.data(), s_LaserGlowModeNames.size(), s_LaserGlowModeState);
+		}
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcLaserGlowPower, &g_Config.m_TcLaserGlowPower, &Button, TCLocalize("Power"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		static CButtonContainer s_LaserGlowColorId;
+		DoLine_ColorPicker(&s_LaserGlowColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Color"), &g_Config.m_TcLaserGlowColor, ColorRGBA(0.55f, 0.45f, 1.0f, 1.0f), false);
+	}
+
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+
+	}
+	// ***** Shotgun Glow ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"shotgun", "glow"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Shotgun Glow"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcShotgunGlow, TCLocalize("Enable"), &g_Config.m_TcShotgunGlow, &Column, LineSize);
+	if(g_Config.m_TcShotgunGlow)
+	{
+		{
+			static std::vector<const char *> s_ShotgunGlowModeNames;
+			s_ShotgunGlowModeNames = {TCLocalize("Classic"), TCLocalize("Prism"), TCLocalize("Pulse"), TCLocalize("Crystal"), TCLocalize("Plasma"), TCLocalize("Aurora")};
+			static CUi::SDropDownState s_ShotgunGlowModeState;
+			static CScrollRegion s_ShotgunGlowModeScroll;
+			s_ShotgunGlowModeState.m_SelectionPopupContext.m_pScrollRegion = &s_ShotgunGlowModeScroll;
+			CUIRect DropDownRect;
+			Column.HSplitTop(LineSize, &DropDownRect, &Column);
+			DropDownRect.VSplitLeft(110.0f, &Label, &DropDownRect);
+			Ui()->DoLabel(&Label, TCLocalize("Mode"), FontSize, TEXTALIGN_ML);
+			g_Config.m_TcShotgunGlowMode = Ui()->DoDropDown(&DropDownRect, g_Config.m_TcShotgunGlowMode, s_ShotgunGlowModeNames.data(), s_ShotgunGlowModeNames.size(), s_ShotgunGlowModeState);
+		}
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcShotgunGlowPower, &g_Config.m_TcShotgunGlowPower, &Button, TCLocalize("Power"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		static CButtonContainer s_ShotgunGlowColorId;
+		DoLine_ColorPicker(&s_ShotgunGlowColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Color"), &g_Config.m_TcShotgunGlowColor, ColorRGBA(0.55f, 0.45f, 1.0f, 1.0f), false);
+	}
+
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+
+	}
+	// ***** Rocket Glow ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"rocket", "grenade", "glow"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Rocket Glow"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcRocketGlow, TCLocalize("Enable"), &g_Config.m_TcRocketGlow, &Column, LineSize);
+	if(g_Config.m_TcRocketGlow)
+	{
+		{
+			static std::vector<const char *> s_RocketGlowModeNames;
+			s_RocketGlowModeNames = {TCLocalize("Classic"), TCLocalize("Prism"), TCLocalize("Pulse"), TCLocalize("Crystal")};
+			static CUi::SDropDownState s_RocketGlowModeState;
+			static CScrollRegion s_RocketGlowModeScroll;
+			s_RocketGlowModeState.m_SelectionPopupContext.m_pScrollRegion = &s_RocketGlowModeScroll;
+			CUIRect DropDownRect;
+			Column.HSplitTop(LineSize, &DropDownRect, &Column);
+			DropDownRect.VSplitLeft(110.0f, &Label, &DropDownRect);
+			Ui()->DoLabel(&Label, TCLocalize("Mode"), FontSize, TEXTALIGN_ML);
+			g_Config.m_TcRocketGlowMode = Ui()->DoDropDown(&DropDownRect, g_Config.m_TcRocketGlowMode, s_RocketGlowModeNames.data(), s_RocketGlowModeNames.size(), s_RocketGlowModeState);
+		}
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcRocketGlowPower, &g_Config.m_TcRocketGlowPower, &Button, TCLocalize("Power"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		static CButtonContainer s_RocketGlowColorId;
+		DoLine_ColorPicker(&s_RocketGlowColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Color"), &g_Config.m_TcRocketGlowColor, ColorRGBA(1.0f, 0.55f, 0.25f, 1.0f), false);
+	}
+
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+
+	}
+	// ***** Freeze Lightning ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"freeze", "lightning", "frost", "strike"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Freeze Lightning"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcFreezeLightning, TCLocalize("Enable"), &g_Config.m_TcFreezeLightning, &Column, LineSize);
+	if(g_Config.m_TcFreezeLightning)
+	{
+		{
+			static std::vector<const char *> s_FreezeStyleNames;
+			s_FreezeStyleNames = {TCLocalize("Lightning"), TCLocalize("Frost nova"), TCLocalize("Ice shards")};
+			static CUi::SDropDownState s_FreezeStyleState;
+			static CScrollRegion s_FreezeStyleScroll;
+			s_FreezeStyleState.m_SelectionPopupContext.m_pScrollRegion = &s_FreezeStyleScroll;
+			CUIRect DropDownRect;
+			Column.HSplitTop(LineSize, &DropDownRect, &Column);
+			DropDownRect.VSplitLeft(110.0f, &Label, &DropDownRect);
+			Ui()->DoLabel(&Label, TCLocalize("Style"), FontSize, TEXTALIGN_ML);
+			g_Config.m_TcFreezeLightningStyle = Ui()->DoDropDown(&DropDownRect, g_Config.m_TcFreezeLightningStyle, s_FreezeStyleNames.data(), s_FreezeStyleNames.size(), s_FreezeStyleState);
+		}
+		if(g_Config.m_TcFreezeLightningStyle == 0)
+		{
+			Column.HSplitTop(LineSize, &Button, &Column);
+			Ui()->DoScrollbarOption(&g_Config.m_TcFreezeLightningHeight, &g_Config.m_TcFreezeLightningHeight, &Button, TCLocalize("Height"), 100, 900, &CUi::ms_LinearScrollbarScale, 0, "");
+			Column.HSplitTop(LineSize, &Button, &Column);
+			Ui()->DoScrollbarOption(&g_Config.m_TcFreezeLightningThickness, &g_Config.m_TcFreezeLightningThickness, &Button, TCLocalize("Thickness"), 50, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+			Column.HSplitTop(LineSize, &Button, &Column);
+			Ui()->DoScrollbarOption(&g_Config.m_TcFreezeLightningBranches, &g_Config.m_TcFreezeLightningBranches, &Button, TCLocalize("Branches"), 0, 8);
+		}
+		else
+		{
+			Column.HSplitTop(LineSize, &Button, &Column);
+			Ui()->DoScrollbarOption(&g_Config.m_TcFreezeLightningSize, &g_Config.m_TcFreezeLightningSize, &Button, TCLocalize("Size"), 50, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+			Column.HSplitTop(LineSize, &Button, &Column);
+			Ui()->DoScrollbarOption(&g_Config.m_TcFreezeLightningBranches, &g_Config.m_TcFreezeLightningBranches, &Button, TCLocalize("Shards"), 0, 8);
+		}
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcFreezeLightningImpact, TCLocalize("Impact flash and sparks"), &g_Config.m_TcFreezeLightningImpact, &Column, LineSize);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcFreezeLightningShake, &g_Config.m_TcFreezeLightningShake, &Button, TCLocalize("Screen shake"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		static CButtonContainer s_FreezeLightningColorId;
+		DoLine_ColorPicker(&s_FreezeLightningColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Color"), &g_Config.m_TcFreezeLightningColor, ColorRGBA(0.35f, 0.65f, 1.0f, 1.0f), false);
+
+		static CButtonContainer s_FreezeLightningTestId;
+		Column.HSplitTop(LineSize, &Button, &Column);
+		if(Ui()->DoButtonLogic(&s_FreezeLightningTestId, false, &Button, BUTTONFLAG_LEFT))
+		{
+			GameClient()->m_Lightning.Strike(GameClient()->m_LocalCharacterPos, 1.0f, true);
+			if(g_Config.m_TcFreezeLightningShake > 0)
+				GameClient()->m_Lightning.AddShake(g_Config.m_TcFreezeLightningShake / 100.0f * 14.0f);
+		}
+		Ui()->DoLabel(&Button, TCLocalize("Preview"), FontSize, TEXTALIGN_MC);
+	}
+
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+
+	}
+
 	// ***** END OF PAGE 1 SETTINGS ***** //
 	RightView = Column;
 

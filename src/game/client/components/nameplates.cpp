@@ -895,10 +895,10 @@ static void RenderFlyingNamePlateLine(CGameClient &This, vec2 AnchorPos, vec2 Na
 	This.Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
-// Where the string attaches to the player (a little below the tee).
+// Where the string attaches to the player (center of the tee).
 static vec2 FlyingNamePlateAnchorPos(vec2 TeePos)
 {
-	return TeePos + vec2(0.0f, 18.0f);
+	return TeePos;
 }
 
 ColorRGBA CNamePlates::FlyingNamePlateColorForPlayer(vec2 Position, const CNetObj_PlayerInfo *pPlayerInfo, float Alpha) const
