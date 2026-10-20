@@ -4,7 +4,7 @@
 <!-- [![Code coverage](https://github.com/TaterClient/TClient/branch/master/graph/badge.svg)](https://codecov.io/gh/TaterClient/TClient/branch/master) -->
 <!-- [![Translation status](https://hosted.weblate.org/widget/ddnet/ddnet/svg-badge.svg)](https://hosted.weblate.org/engage/ddnet/) -->
 
-### Taters custom ddnet client with some modifications
+### Official VClient repository
 
 Not guaranteed to be bug free, but I will try to fix them.
 
