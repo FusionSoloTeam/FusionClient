@@ -17,9 +17,12 @@ private:
 
 public:
 	int Sizeof() const override { return sizeof(*this); }
+	void OnInit() override;
 	void OnMapLoad() override;
 	void OnRender() override;
 	~COutlines() override { delete[] m_pMapData; }
+
+	CSystemAudio &SystemAudio() { return m_SystemAudio; }
 };
 
 #endif

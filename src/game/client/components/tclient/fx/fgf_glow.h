@@ -13,6 +13,7 @@ IGraphics::CTextureHandle CreateRingTexture(IGraphics *pGraphics);
 IGraphics::CTextureHandle CreateDiscTexture(IGraphics *pGraphics);
 IGraphics::CTextureHandle CreateBeamTexture(IGraphics *pGraphics);
 IGraphics::CTextureHandle CreateLeafTexture(IGraphics *pGraphics);
+IGraphics::CTextureHandle CreatePetalTexture(IGraphics *pGraphics);
 
 ColorRGBA Whiten(ColorRGBA Color, float Amount);
 ColorRGBA Blend(ColorRGBA A, ColorRGBA B, float Amount);

@@ -11,6 +11,7 @@ class IDiscord : public IInterface
 {
 	MACRO_INTERFACE("discord")
 public:
+	virtual void SetClientInfo(const char *pName, const char *pVersion) = 0;
 	virtual void Update(bool Enabled) = 0;
 
 	virtual void ClearGameInfo() = 0;

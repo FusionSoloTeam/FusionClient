@@ -13,6 +13,7 @@
 
 #include <game/teamscore.h>
 
+#include <functional>
 #include <set>
 #include <vector>
 
@@ -177,6 +178,8 @@ public:
 	std::vector<SSwitchers> m_vSwitchers;
 };
 
+typedef std::function<void(int ClientId, bool DisallowReset)> FAntiPingInterferenceCallback;
+
 class CCharacterCore
 {
 	CWorldCore *m_pWorld = nullptr;
@@ -273,11 +276,15 @@ public:
 	bool m_LiveFrozen;
 	CTuningParams m_Tuning;
 
+	void SetAntiPingInterferenceCallback(FAntiPingInterferenceCallback Callback);
+
 private:
 	CTeamsCore *m_pTeams;
 	int m_MoveRestrictions;
 	int m_HookedPlayer;
 	static bool IsSwitchActiveCb(int Number, void *pUser);
+
+	FAntiPingInterferenceCallback m_AntiPingInterferenceCallback = [](int, bool) {};
 };
 
 // input count

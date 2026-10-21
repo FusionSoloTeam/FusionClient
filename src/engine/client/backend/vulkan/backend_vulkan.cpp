@@ -865,6 +865,8 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 		bool m_HasForcedViewport = false;
 		VkExtent2D m_ForcedViewport;
 
+		VkOffset2D m_ForcedViewportOffset = {0, 0};
+
 		// the viewport of the resulting presented image on the screen
 		// if there is a forced viewport the resulting image is smaller
 		// than the full swap image size
@@ -3406,8 +3408,8 @@ protected:
 			// else check if there is a forced viewport
 			else if(m_VKSwapImgAndViewportExtent.m_HasForcedViewport)
 			{
-				Viewport.x = 0.0f;
-				Viewport.y = 0.0f;
+				Viewport.x = (float)m_VKSwapImgAndViewportExtent.m_ForcedViewportOffset.x;
+				Viewport.y = (float)m_VKSwapImgAndViewportExtent.m_ForcedViewportOffset.y;
 				Viewport.width = (float)m_VKSwapImgAndViewportExtent.m_ForcedViewport.width;
 				Viewport.height = (float)m_VKSwapImgAndViewportExtent.m_ForcedViewport.height;
 				Viewport.minDepth = 0.0f;
@@ -3429,16 +3431,18 @@ protected:
 			// the scissor always assumes the presented viewport, because the front-end keeps the calculation
 			// for the forced viewport in sync
 			auto ScissorViewport = m_VKSwapImgAndViewportExtent.GetPresentedImageViewport();
+			const int32_t ForcedViewportOffsetX = m_VKSwapImgAndViewportExtent.m_ForcedViewportOffset.x;
+			const int32_t ForcedViewportOffsetY = m_VKSwapImgAndViewportExtent.m_ForcedViewportOffset.y;
 			if(State.m_ClipEnable)
 			{
 				int32_t ScissorY = (int32_t)ScissorViewport.height - ((int32_t)State.m_ClipY + (int32_t)State.m_ClipH);
 				uint32_t ScissorH = (int32_t)State.m_ClipH;
-				Scissor.offset = {(int32_t)State.m_ClipX, ScissorY};
+				Scissor.offset = {(int32_t)State.m_ClipX + ForcedViewportOffsetX, ScissorY + ForcedViewportOffsetY};
 				Scissor.extent = {(uint32_t)State.m_ClipW, ScissorH};
 			}
 			else
 			{
-				Scissor.offset = {0, 0};
+				Scissor.offset = {ForcedViewportOffsetX, ForcedViewportOffsetY};
 				Scissor.extent = {ScissorViewport.width, ScissorViewport.height};
 			}
 
@@ -4217,17 +4221,33 @@ public:
 
 		VkExtent2D AutoViewportExtent = RetSize;
 		bool UsesForcedViewport = false;
+		VkOffset2D ForcedViewportOffset = {0, 0};
 		// keep this in sync with graphics_threaded AdjustViewport's check
-		if(AutoViewportExtent.height > 4 * AutoViewportExtent.width / 5 && g_GraphicsForcedAspect)
+		const SForcedAspectRatio Forced = CalculateForcedAspectRatio(GetAspectRatioSettings(), (int)AutoViewportExtent.width, (int)AutoViewportExtent.height);
+
+		if(Forced.m_Stretch)
 		{
-			AutoViewportExtent.height = 4 * AutoViewportExtent.width / 5;
+			// Stretch mode: use full swap image size, but indicate world aspect is forced
 			UsesForcedViewport = true;
+			// For stretch mode, the forced viewport equals the full swap image
+			// The actual stretching is done via the custom world aspect ratio in the front-end
+		}
+		else if(Forced.m_Forced)
+		{
+			// Letterbox mode: shrink the viewport
+			AutoViewportExtent.width = (uint32_t)Forced.m_Width;
+			AutoViewportExtent.height = (uint32_t)Forced.m_Height;
+			UsesForcedViewport = true;
+			// center the game inside the window
+			ForcedViewportOffset.x = (int32_t)std::max(0, ((int32_t)RetSize.width - (int32_t)Forced.m_Width) / 2);
+			ForcedViewportOffset.y = (int32_t)std::max(0, ((int32_t)RetSize.height - (int32_t)Forced.m_Height) / 2);
 		}
 
 		SSwapImgViewportExtent Ext;
 		Ext.m_SwapImageViewport = RetSize;
 		Ext.m_ForcedViewport = AutoViewportExtent;
 		Ext.m_HasForcedViewport = UsesForcedViewport;
+		Ext.m_ForcedViewportOffset = ForcedViewportOffset;
 
 		return Ext;
 	}
@@ -7125,6 +7145,8 @@ public:
 			if(!GetGraphicCommandBuffer(pCommandBuffer, ExecBuffer.m_ThreadIndex))
 				return false;
 			auto &CommandBuffer = *pCommandBuffer;
+			const VkRect2D FullScissor = {{0, 0}, m_VKSwapImgAndViewportExtent.m_SwapImageViewport};
+			vkCmdSetScissor(CommandBuffer, 0, 1, &FullScissor);
 			vkCmdClearAttachments(CommandBuffer, aAttachments.size(), aAttachments.data(), aClearRects.size(), aClearRects.data());
 		}
 
@@ -7177,10 +7199,7 @@ public:
 		if(SourceCount <= 0)
 			return true;
 
-		// Single-pass blend: the previous frame is drawn once over the current frame.
-		// This keeps the current frame prominent (e.g. ~53% visible at strength 50) so
-		// fast-moving elements like the cursor stay sharp and continuous instead of
-		// being washed out into a choppy trail.
+		// how the fuck this code still here
 		const float Strength = (float)g_Config.m_TcMotionBlurStrength;
 		const float TotalBlendStrength = 0.90f * std::sqrt(std::min(Strength, 95.0f) / 95.0f);
 		if(TotalBlendStrength <= 0.0f)
@@ -7189,10 +7208,7 @@ public:
 		for(int Source = 0; Source < SourceCount; ++Source)
 			aSourceAlphas[Source] = TotalBlendStrength * (aSourceWeights[Source] / WeightSum);
 
-		// With multiple render threads the render pass was begun with
-		// VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS — inline draws into the primary
-		// command buffer are invalid there, so record the blend quad into a dedicated
-		// secondary command buffer and execute it.
+		// same as above
 		const bool UseSecondaryCommandBuffer = m_ThreadCount > 1;
 		VkCommandBuffer CommandBuffer = MainCommandBuffer;
 		if(UseSecondaryCommandBuffer)

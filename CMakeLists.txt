@@ -2629,6 +2629,8 @@ if(CLIENT)
     components/tclient/data_version.h
     components/tclient/hover_notification.cpp
     components/tclient/hover_notification.h
+    components/tclient/lyrics.cpp
+    components/tclient/lyrics.h
     components/tclient/menus_assets_editor.cpp
     components/tclient/menus_tclient.cpp
     components/tclient/r_jelly.cpp
@@ -2661,6 +2663,8 @@ if(CLIENT)
     components/tclient/scripting/impl.h
     components/tclient/skinprofiles.cpp
     components/tclient/skinprofiles.h
+    components/tclient/smtc.cpp
+    components/tclient/smtc.h
     components/tclient/statusbar.cpp
     components/tclient/statusbar.h
     components/tclient/tclient.cpp
@@ -2669,6 +2673,8 @@ if(CLIENT)
     components/tclient/trails.h
     components/tclient/translate.cpp
     components/tclient/translate.h
+    components/tclient/vignette.cpp
+    components/tclient/vignette.h
     components/tclient/react_bypass.cpp
     components/tclient/warlist.cpp
     components/tclient/warlist.h

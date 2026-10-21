@@ -134,6 +134,9 @@ public:
 	bool GrenadeHitDisabled() const { return m_Core.m_GrenadeHitDisabled; }
 
 	bool IsSuper() const { return m_Core.m_Super; }
+
+	void AntiPingInterference(int ClientId, bool DisallowReset = false, bool RequireUnfrozen = false);
+	bool IsInterfering() const { return m_Interfering; }
 	int m_FreezeAccumulation;
 	int m_AliveAccumulation;
 
@@ -186,6 +189,8 @@ private:
 
 	int m_LastWeaponSwitchTick;
 	int m_LastTuneZoneTick;
+
+	bool m_Interfering = false;
 };
 
 #endif

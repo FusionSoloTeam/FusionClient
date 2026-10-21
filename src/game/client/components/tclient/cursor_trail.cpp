@@ -66,7 +66,7 @@ void CCursorTrail::SampleCurrentPos()
 		{
 			const vec2 Center = GameClient()->m_Camera.m_Center;
 			float aPoints[4];
-			Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->ScreenAspect(), 1.0f, aPoints);
+			Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->WorldAspect(), 1.0f, aPoints);
 			const vec2 HalfSize = vec2(Center.x - aPoints[0], Center.y - aPoints[1]);
 			const vec2 ScreenPos = (GameClient()->m_CursorInfo.WorldTarget() - Center) / GameClient()->m_Camera.m_RenderZoom;
 			const float ClampFactor = maximum(1.0f, absolute(ScreenPos.x / HalfSize.x), absolute(ScreenPos.y / HalfSize.y));
@@ -134,7 +134,7 @@ void CCursorTrail::RenderTrail() const
 	float ScreenX0, ScreenY0, ScreenX1, ScreenY1;
 	Graphics()->GetScreen(&ScreenX0, &ScreenY0, &ScreenX1, &ScreenY1);
 	float aPoints[4];
-	Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->ScreenAspect(), 1.0f, aPoints);
+	Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->WorldAspect(), 1.0f, aPoints);
 	Graphics()->TextureClear();
 	Graphics()->MapScreen(aPoints[0], aPoints[1], aPoints[2], aPoints[3]);
 

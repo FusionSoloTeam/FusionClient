@@ -408,6 +408,12 @@ bool CLineInput::ProcessInput(const IInput::CEvent &Event)
 	return KeyHandled;
 }
 
+void CLineInput::MarkRendered()
+{
+	UpdateStrData();
+	m_WasRendered = true;
+}
+
 STextBoundingBox CLineInput::Render(const CUIRect *pRect, float FontSize, int Align, bool Changed, float LineWidth, float LineSpacing, const std::vector<STextColorSplit> &vColorSplits)
 {
 	// update derived attributes to handle external changes to the buffer

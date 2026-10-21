@@ -110,6 +110,7 @@ void CGameClient::OnConsoleInit()
 	m_pFriends = Kernel()->RequestInterface<IFriends>();
 	m_pFoes = Client()->Foes();
 	m_pDiscord = Kernel()->RequestInterface<IDiscord>();
+	m_pDiscord->SetClientInfo(VCLIENT_NAME, VCLIENT_VERSION);
 #if defined(CONF_AUTOUPDATE)
 	m_pUpdater = Kernel()->RequestInterface<IUpdater>();
 #endif
@@ -168,6 +169,7 @@ void CGameClient::OnConsoleInit()
 					      &m_FgfActions,
 					      &m_WeaponVfx,
 					      &m_Particles.m_RenderExplosions,
+					      &m_Lyrics, // TClient
 					      &m_NamePlates,
 					      &m_Particles.m_RenderExtra,
 					      &m_Particles.m_RenderGeneral,
@@ -180,6 +182,7 @@ void CGameClient::OnConsoleInit()
 					      &m_BcGradient, // TClient
 					      &m_Mod, // TClient
 					      &m_CustomCommunities, // TClient
+					      &m_Vignette, // TClient
 					      &m_Hud,
 					      &m_Spectator,
 					      &m_Emoticon,
@@ -1217,6 +1220,8 @@ void CGameClient::OnMessage(int MsgId, CUnpacker *pUnpacker, int Conn, bool Dumm
 	else if(MsgId == NETMSGTYPE_SV_KILLMSG)
 	{
 		CNetMsg_Sv_KillMsg *pMsg = (CNetMsg_Sv_KillMsg *)pRawMsg;
+		if(pMsg->m_Victim == m_aLocalIds[0] || (Client()->DummyConnected() && pMsg->m_Victim == m_aLocalIds[1]))
+			m_LocalDeathTime = Client()->LocalTime();
 		// reset character prediction
 		if(!(m_GameWorld.m_WorldConfig.m_IsFNG && pMsg->m_Weapon == WEAPON_LASER))
 		{
@@ -2378,7 +2383,7 @@ void CGameClient::OnNewSnapshot()
 		{
 			CNetMsg_Cl_ShowDistance Msg;
 			float x, y;
-			Graphics()->CalcScreenParams(Graphics()->ScreenAspect(), ShowDistanceZoom, &x, &y);
+			Graphics()->CalcScreenParams(Graphics()->WorldAspect(), ShowDistanceZoom, &x, &y);
 			Msg.m_X = x;
 			Msg.m_Y = y;
 			CMsgPacker Packer(&Msg);
@@ -2397,11 +2402,11 @@ void CGameClient::OnNewSnapshot()
 	}
 
 	// send show distance
-	if(ShowDistanceZoom != m_LastShowDistanceZoom || Graphics()->ScreenAspect() != m_LastScreenAspect)
+	if(ShowDistanceZoom != m_LastShowDistanceZoom || Graphics()->WorldAspect() != m_LastScreenAspect)
 	{
 		CNetMsg_Cl_ShowDistance Msg;
 		float x, y;
-		Graphics()->CalcScreenParams(Graphics()->ScreenAspect(), ShowDistanceZoom, &x, &y);
+		Graphics()->CalcScreenParams(Graphics()->WorldAspect(), ShowDistanceZoom, &x, &y);
 		Msg.m_X = x;
 		Msg.m_Y = y;
 		Client()->ChecksumData()->m_Zoom = ShowDistanceZoom;
@@ -2430,7 +2435,7 @@ void CGameClient::OnNewSnapshot()
 
 	m_LastShowDistanceZoom = ShowDistanceZoom;
 	m_LastZoom = Zoom;
-	m_LastScreenAspect = Graphics()->ScreenAspect();
+	m_LastScreenAspect = Graphics()->WorldAspect();
 	m_LastDeadzone = Deadzone;
 	m_LastFollowFactor = FollowFactor;
 	m_LastDummyConnected = Client()->DummyConnected();
@@ -4171,8 +4176,18 @@ void CGameClient::UpdateSpectatorCursor()
 	}
 
 	// if we are in auto spec mode, use camera zoom to smooth out cursor transitions
-	const float Zoom = (m_Camera.m_Zooming && m_Camera.m_AutoSpecCameraZooming) ? m_Camera.m_Zoom : m_Snap.m_SpecInfo.m_Zoom;
+	const float Zoom = (m_Camera.UserZoomActive() || (m_Camera.m_Zooming && m_Camera.m_AutoSpecCameraZooming)) ? m_Camera.m_Zoom : m_Snap.m_SpecInfo.m_Zoom;
 	m_CursorInfo.m_WorldTarget = m_CursorInfo.m_Position + (m_CursorInfo.m_Target - TargetCameraOffset) * Zoom + TargetCameraOffset;
+}
+
+bool CGameClient::AntiPingPlayer(int ClientId, bool IsDummy, const CCharacter *pChar) const
+{
+	const int Mode = AntiPingPlayers();
+	if(Mode <= 0)
+		return false;
+	if(Mode == 1 || IsDummy)
+		return true;
+	return pChar != nullptr && pChar->IsInterfering();
 }
 
 void CGameClient::UpdateRenderedCharacters()
@@ -4196,7 +4211,8 @@ void CGameClient::UpdateRenderedCharacters()
 		if(i == m_Snap.m_LocalClientId)
 			Client()->m_IsLocalFrozen = pChar && pChar->m_FreezeTime > 0;
 
-		if(Predict() && (i == m_Snap.m_LocalClientId || (AntiPingPlayers() && !IsOtherTeam(i))) && pChar)
+		const bool IsDummy = PredictDummy() && i == m_aLocalIds[!g_Config.m_ClDummy];
+		if(Predict() && (i == m_Snap.m_LocalClientId || (AntiPingPlayer(i, IsDummy, pChar) && !IsOtherTeam(i))) && pChar)
 		{
 			m_aClients[i].m_Predicted.Write(&m_aClients[i].m_RenderCur);
 			m_aClients[i].m_PrevPredicted.Write(&m_aClients[i].m_RenderPrev);
@@ -4210,10 +4226,10 @@ void CGameClient::UpdateRenderedCharacters()
 
 			if(g_Config.m_TcRemoveAnti)
 				Pos = GetFreezePos(i);
-			else if(TcInputs::FastInputActive() && (i == m_Snap.m_LocalClientId || (PredictDummy() && i == m_aLocalIds[!g_Config.m_ClDummy])))
+			else if(TcInputs::FastInputActive() && (i == m_Snap.m_LocalClientId || IsDummy))
 				Pos = GetFastInputPos(i);
 
-			if(i == m_Snap.m_LocalClientId || (PredictDummy() && i == m_aLocalIds[!g_Config.m_ClDummy]))
+			if(i == m_Snap.m_LocalClientId || IsDummy)
 			{
 				m_aClients[i].m_IsPredictedLocal = true;
 				if(AntiPingGunfire() && ((pChar->m_NinjaJetpack && pChar->m_FreezeTime == 0) || m_Snap.m_aCharacters[i].m_Cur.m_Weapon != WEAPON_NINJA || m_Snap.m_aCharacters[i].m_Cur.m_Weapon == m_aClients[i].m_Predicted.m_ActiveWeapon))
@@ -4530,8 +4546,8 @@ bool CGameClient::IsCameraAllowedServer() const
 	while(*pGameType == ' ')
 		pGameType++;
 	if(pGameType[0] == '\0')
-		return false;
-	static const char *s_apAllowedGameTypes[] = {"TestDDrace", "0XF", "E-Gores", "Gores", "DDRace"};
+		return true;
+	static const char *s_apAllowedGameTypes[] = {"TestDDrace", "0XF", "E-Gores", "Gores", "DDRace", "DDNet"};
 	for(const char *pAllowed : s_apAllowedGameTypes)
 	{
 		if(str_comp_nocase_num(pGameType, pAllowed, str_length(pAllowed)) == 0)
@@ -5632,7 +5648,7 @@ bool CGameClient::InitMultiView(int Team)
 	m_MultiView.m_IsInit = true;
 
 	// get the current view coordinates
-	Graphics()->CalcScreenParams(Graphics()->ScreenAspect(), m_Camera.m_Zoom, &Width, &Height);
+	Graphics()->CalcScreenParams(Graphics()->WorldAspect(), m_Camera.m_Zoom, &Width, &Height);
 	vec2 AxisX = vec2(m_Camera.m_Center.x - (Width / 2.0f), m_Camera.m_Center.x + (Width / 2.0f));
 	vec2 AxisY = vec2(m_Camera.m_Center.y - (Height / 2.0f), m_Camera.m_Center.y + (Height / 2.0f));
 
@@ -5759,7 +5775,7 @@ float CGameClient::CalculateMultiViewMultiplier(vec2 TargetPos)
 
 float CGameClient::CalculateMultiViewZoom(vec2 MinPos, vec2 MaxPos, float Vel)
 {
-	float Ratio = Graphics()->ScreenAspect();
+	float Ratio = Graphics()->WorldAspect();
 	float ZoomX = 0.0f, ZoomY;
 
 	// only calc two axis if the aspect ratio is not 1:1

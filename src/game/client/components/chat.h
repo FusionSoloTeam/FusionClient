@@ -82,6 +82,32 @@ class CChat : public CComponent
 	// TClient: chat history scrolling
 	int m_HistoryScrollOffset = 0;
 
+	struct SSmoothGhost
+	{
+		char m_aText[8];
+		float m_X;
+		float m_Time;
+	};
+
+	std::vector<SSmoothGhost> m_vSmoothGhosts;
+	std::vector<float> m_vSmoothCharSpawnTime;
+	std::string m_SmoothText;
+	float m_SmoothDeleteTimer = 0.0f;
+	float m_SmoothCaretX = -1.0f;
+	float m_SmoothSlotScale = 1.0f;
+	float m_SmoothSendTime = -1.0f;
+	float m_SmoothSendX = -1.0f;
+	float m_SmoothSendY = 0.0f;
+	float m_SmoothLastInputX = 0.0f;
+	float m_SmoothLastInputY = 0.0f;
+	bool m_SmoothWasDeleting = false;
+	char m_aSmoothSentText[MAX_LINE_LENGTH] = "";
+	std::vector<STextColorSplit> m_vSmoothSentGradientSplits;
+
+	float m_ChatSlide = 0.0f;
+	float m_LastGradientPhase = -1.0f;
+	bool m_WasRevealing = false;
+
 	enum
 	{
 		// client IDs for special messages
@@ -235,6 +261,10 @@ public:
 	void SendChatQueued(const char *pLine);
 
 	// ----- TClient -----
+	// почему тут написано тклиент и я пишу сюда свою залупу
+	void StartSmoothSend(const char *pText);
+	void AddSmoothGhost(int CharIndex, float FontSize, float LineWidth, float Now);
+	STextBoundingBox RenderSmoothInput(const CUIRect *pRect, float FontSize, float LineWidth, float ScrollOffset);
 
 	bool GetLayoutFixCommand(char *pOut, int OutSize) const;
 	const char *FindCommandByPrefix(const char *pName) const;

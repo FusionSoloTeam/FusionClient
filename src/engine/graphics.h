@@ -221,6 +221,7 @@ public:
 	int ScreenWidth() const { return m_ScreenWidth; }
 	int ScreenHeight() const { return m_ScreenHeight; }
 	float ScreenAspect() const { return (float)ScreenWidth() / (float)ScreenHeight(); }
+	virtual float WorldAspect() const { return ScreenAspect(); }
 	float ScreenHiDPIScale() const { return m_ScreenHiDPIScale; }
 	int WindowWidth() const { return m_ScreenWidth / m_ScreenHiDPIScale; }
 	int WindowHeight() const { return m_ScreenHeight / m_ScreenHiDPIScale; }

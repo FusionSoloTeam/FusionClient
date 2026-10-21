@@ -1,0 +1,99 @@
+name: Release Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag for the release (e.g. v0.0.9)'
+        required: true
+      release_name:
+        description: 'Name of the release'
+        required: true
+      body:
+        description: 'Release description'
+        required: false
+      prerelease:
+        description: 'Mark the release as prerelease'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: build (${{ matrix.artifact }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: win64
+            arch: x64
+            vulkan: 'ON'
+            rust_target: x86_64-pc-windows-msvc
+          - artifact: win32
+            arch: Win32
+            vulkan: 'OFF'
+            rust_target: i686-pc-windows-msvc
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Add rust target
+        run: rustup target add ${{ matrix.rust_target }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B release -A ${{ matrix.arch }}
+          -DCMAKE_BUILD_TYPE=Release
+          -DVULKAN=${{ matrix.vulkan }}
+          -DDISCORD=ON
+          -DTOOLS=OFF
+          -DAUTOUPDATE=ON
+          -DDOWNLOAD_GTEST=ON
+          -DCMAKE_RUST_COMPILER_TARGET=${{ matrix.rust_target }}
+          -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=.
+
+      - name: Build
+        run: cmake --build release --config Release --target everything
+
+      - name: Package
+        shell: bash
+        run: |
+          cmake --build release --config Release --target package_default
+          mkdir -p artifacts
+          mv release/*.zip artifacts/TClient-${{ matrix.artifact }}.zip
+          ls -l artifacts
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TClient-${{ matrix.artifact }}
+          path: artifacts/TClient-${{ matrix.artifact }}.zip
+          if-no-files-found: error
+
+  release:
+    name: publish
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: TClient-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: ${{ inputs.release_name }}
+          body: ${{ inputs.body }}
+          prerelease: ${{ inputs.prerelease }}
+          files: artifacts/*.zip
+          fail_on_unmatched_files: true

@@ -907,7 +907,7 @@ void CHud::RenderCursor()
 
 	const vec2 Center = GameClient()->m_Camera.m_Center;
 	float aPoints[4];
-	Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->ScreenAspect(), 1.0f, aPoints);
+	Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->WorldAspect(), 1.0f, aPoints);
 	Graphics()->MapScreen(aPoints[0], aPoints[1], aPoints[2], aPoints[3]);
 
 	if(Client()->State() != IClient::STATE_DEMOPLAYBACK && GameClient()->m_Snap.m_pLocalCharacter)

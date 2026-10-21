@@ -447,7 +447,10 @@ float CUi::ButtonColorMul(const void *pId)
 const CUIRect *CUi::Screen()
 {
 	m_Screen.h = 600.0f / std::clamp(m_ScreenScale, 0.25f, 4.0f);
-	m_Screen.w = Graphics()->ScreenAspect() * m_Screen.h;
+	float Aspect = Graphics()->ScreenAspect();
+	if(g_Config.m_TcCustomAspectRatioApplyMode == 2 && g_Config.m_TcCustomAspectRatioMode > 0 && g_Config.m_GfxScreenWidth > 0 && g_Config.m_GfxScreenHeight > 0)
+		Aspect = (float)g_Config.m_GfxScreenWidth / (float)g_Config.m_GfxScreenHeight;
+	m_Screen.w = Aspect * m_Screen.h;
 	return &m_Screen;
 }
 

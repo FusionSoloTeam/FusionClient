@@ -32,6 +32,28 @@
 #include <game/client/components/tclient/r_jelly.h>
 #include <game/client/prediction/entities/character.h>
 
+static void RenderSettingsBadge(IGraphics *pGraphics, vec2 TeePos, float Alpha)
+{
+	const float Radius = 64.0f / 8.5f;
+
+	pGraphics->TextureClear();
+	pGraphics->QuadsBegin();
+
+	static constexpr float s_aGlowRadius[] = {1.90f, 1.55f, 1.25f, 1.08f};
+	static constexpr float s_aGlowAlpha[] = {0.04f, 0.06f, 0.10f, 0.16f};
+	for(int i = 0; i < 4; i++)
+	{
+		pGraphics->SetColor(1.0f, 1.0f, 1.0f, s_aGlowAlpha[i] * Alpha);
+		pGraphics->DrawCircle(TeePos.x, TeePos.y, Radius * s_aGlowRadius[i], 32);
+	}
+
+	pGraphics->SetColor(1.0f, 1.0f, 1.0f, Alpha);
+	pGraphics->DrawCircle(TeePos.x, TeePos.y, Radius, 32);
+
+	pGraphics->QuadsEnd();
+	pGraphics->TextureClear();
+}
+
 static float CalculateHandAngle(vec2 Dir, float AngleOffset)
 {
 	const float Angle = angle(Dir);
@@ -1102,10 +1124,7 @@ void CPlayers::RenderPlayer(
 	{
 		if((Player.m_PlayerFlags & PLAYERFLAG_IN_MENU) && !GameClient()->m_aClients[ClientId].m_Afk)
 		{
-			Graphics()->TextureSet(g_pData->m_aImages[IMAGE_SETTINGS_ICON].m_Id);
-
-			Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
-			Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffsetToEmoticon, Position.x + 24.f, Position.y - 40.f);
+			RenderSettingsBadge(Graphics(), Position, Alpha);
 
 			Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
 			Graphics()->QuadsSetRotation(0);
@@ -1542,10 +1561,7 @@ void CPlayers::RenderPlayerGhost(
 	{
 		if((Player.m_PlayerFlags & PLAYERFLAG_IN_MENU) && !GameClient()->m_aClients[ClientId].m_Afk)
 		{
-			Graphics()->TextureSet(g_pData->m_aImages[IMAGE_SETTINGS_ICON].m_Id);
-
-			Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
-			Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffsetToEmoticon, Position.x + 24.f, Position.y - 40.f);
+			RenderSettingsBadge(Graphics(), Position, Alpha);
 
 			Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
 			Graphics()->QuadsSetRotation(0);

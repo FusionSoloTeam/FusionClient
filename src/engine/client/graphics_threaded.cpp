@@ -24,6 +24,14 @@
 
 #include "graphics_threaded.h"
 
+#if !defined(CONF_BACKEND_VULKAN)
+#include <engine/shared/vram_stats.h>
+
+std::atomic<uint64_t> g_VramFallbackBytes{0};
+std::atomic<uint64_t> g_VramFallbackCount{0};
+std::atomic<uint64_t> g_VramFallbackBytesByUsage[4]{};
+#endif
+
 class CSemaphore;
 
 static CVideoMode g_aFakeModes[] = {
@@ -2237,17 +2245,118 @@ int CGraphics_Threaded::IssueInit()
 }
 
 // TClient
-bool g_GraphicsForcedAspect = true;
+std::atomic<bool> g_GraphicsForcedAspect{true};
+
+SAspectRatioSettings GetAspectRatioSettings()
+{
+	SAspectRatioSettings Settings;
+	Settings.m_Force = g_GraphicsForcedAspect;
+	Settings.m_Mode = g_Config.m_TcCustomAspectRatioMode;
+	Settings.m_Value = g_Config.m_TcCustomAspectRatio;
+	Settings.m_Num = g_Config.m_TcCustomAspectRatioNum;
+	Settings.m_Den = g_Config.m_TcCustomAspectRatioDen;
+	Settings.m_ApplyMode = g_Config.m_TcCustomAspectRatioApplyMode;
+	Settings.m_aNumStr = g_Config.m_TcCustomAspectRatioNumStr;
+	Settings.m_aDenStr = g_Config.m_TcCustomAspectRatioDenStr;
+	return Settings;
+}
+
+SForcedAspectRatio CalculateForcedAspectRatio(const SAspectRatioSettings &Settings, int Width, int Height)
+{
+	SForcedAspectRatio Result;
+	if(Width <= 0 || Height <= 0 || !Settings.m_Force)
+		return Result;
+
+	if(Settings.m_Mode == 0)
+		return Result;
+
+	if(Settings.m_Mode < 0)
+	{
+		if(Height > 4 * Width / 5)
+		{
+			Result.m_Forced = true;
+			Result.m_Width = Width;
+			Result.m_Height = 4 * Width / 5;
+		}
+		return Result;
+	}
+
+	bool Stretch = (Settings.m_ApplyMode == 3);
+
+	float Aspect = 0.0f;
+	if(Settings.m_Mode == 1)
+	{
+		if(Settings.m_Value <= 0)
+			return Result;
+		Aspect = Settings.m_Value / 100.0f;
+	}
+	else if(Settings.m_Mode == 2)
+	{
+		int Num = Settings.m_Num;
+		int Den = Settings.m_Den;
+		if(Num <= 0 || Den <= 0)
+		{
+			Num = str_toint(Settings.m_aNumStr.c_str());
+			Den = str_toint(Settings.m_aDenStr.c_str());
+		}
+		if(Num <= 0 || Den <= 0)
+			return Result;
+		Aspect = (float)Num / (float)Den;
+	}
+	else
+		return Result;
+
+	if(Aspect <= 0.0f)
+		return Result;
+
+	if(!Stretch)
+	{
+		if((float)Width / (float)Height > Aspect)
+		{
+			Result.m_Width = (int)((float)Height * Aspect);
+			Result.m_Height = Height;
+		}
+		else
+		{
+			Result.m_Width = Width;
+			Result.m_Height = (int)((float)Width / Aspect);
+		}
+
+		Result.m_Width = std::clamp(Result.m_Width, 1, Width);
+		Result.m_Height = std::clamp(Result.m_Height, 1, Height);
+		Result.m_Forced = Result.m_Width < Width || Result.m_Height < Height;
+		if(!Result.m_Forced)
+		{
+			Result.m_Width = Width;
+			Result.m_Height = Height;
+		}
+	}
+	else
+	{
+		Result.m_Width = Width;
+		Result.m_Height = Height;
+		Result.m_Forced = true;
+		Result.m_Stretch = true;
+		Result.m_Aspect = Aspect;
+	}
+	return Result;
+}
+
 void CGraphics_Threaded::SetForcedAspect(bool Force)
 {
 	if(!IsBackendInitialized())
 		return;
-	if(g_GraphicsForcedAspect == Force)
+
+	SAspectRatioSettings Settings = GetAspectRatioSettings();
+	Settings.m_Force = Force;
+	if(Settings == m_LastAspectRatioSettings)
 		return;
+	m_LastAspectRatioSettings = Settings;
+
 	g_GraphicsForcedAspect = Force;
 	m_pBackend->GetViewportSize(m_ScreenWidth, m_ScreenHeight);
 	AdjustViewport(false);
-	UpdateViewport(0, 0, m_ScreenWidth, m_ScreenHeight, false);
+	UpdateViewport(m_ForcedViewportOffsetX, m_ForcedViewportOffsetY, m_ScreenWidth, m_ScreenHeight, true);
 
 	// kick the command buffer and wait
 	KickCommandBuffer();
@@ -2268,19 +2377,43 @@ void CGraphics_Threaded::AdjustViewport(bool SendViewportChangeToBackend)
 {
 	// adjust the viewport to only allow certain aspect ratios
 	// keep this in sync with backend_vulkan GetSwapImageSize's check
-	if(m_ScreenHeight > 4 * m_ScreenWidth / 5 && g_GraphicsForcedAspect)
+	const int WindowWidth = m_ScreenWidth;
+	const int WindowHeight = m_ScreenHeight;
+	const SForcedAspectRatio Forced = CalculateForcedAspectRatio(GetAspectRatioSettings(), WindowWidth, WindowHeight);
+
+	m_ForcedViewportOffsetX = 0;
+	m_ForcedViewportOffsetY = 0;
+	m_WorldAspectRatio = 0.0f;
+
+	if(Forced.m_Stretch)
 	{
 		m_IsForcedViewport = true;
-		m_ScreenHeight = 4 * m_ScreenWidth / 5;
+		m_WorldAspectRatio = Forced.m_Aspect;
+		m_ScreenWidth = WindowWidth;
+		m_ScreenHeight = WindowHeight;
 
 		if(SendViewportChangeToBackend)
 		{
 			UpdateViewport(0, 0, m_ScreenWidth, m_ScreenHeight, true);
 		}
 	}
+	else if(Forced.m_Forced)
+	{
+		m_IsForcedViewport = true;
+		m_ScreenWidth = Forced.m_Width;
+		m_ScreenHeight = Forced.m_Height;
+		m_ForcedViewportOffsetX = (WindowWidth - Forced.m_Width) / 2;
+		m_ForcedViewportOffsetY = (WindowHeight - Forced.m_Height) / 2;
+
+		if(SendViewportChangeToBackend)
+		{
+			UpdateViewport(m_ForcedViewportOffsetX, m_ForcedViewportOffsetY, m_ScreenWidth, m_ScreenHeight, true);
+		}
+	}
 	else
 	{
 		m_IsForcedViewport = false;
+		m_WorldAspectRatio = 0.0f;
 	}
 }
 
@@ -2679,7 +2812,10 @@ void CGraphics_Threaded::GotResized(int w, int h, int RefreshRate)
 	// if the size change event is triggered, set all parameters and change the viewport
 	auto PrevCanvasWidth = m_ScreenWidth;
 	auto PrevCanvasHeight = m_ScreenHeight;
-	m_pBackend->GetViewportSize(m_ScreenWidth, m_ScreenHeight);
+	int DrawableWidth, DrawableHeight;
+	m_pBackend->GetViewportSize(DrawableWidth, DrawableHeight);
+	m_ScreenWidth = DrawableWidth;
+	m_ScreenHeight = DrawableHeight;
 
 	AdjustViewport(false);
 
@@ -2690,7 +2826,7 @@ void CGraphics_Threaded::GotResized(int w, int h, int RefreshRate)
 	g_Config.m_GfxScreenRefreshRate = m_ScreenRefreshRate;
 
 	auto OldDpi = m_ScreenHiDPIScale;
-	m_ScreenHiDPIScale = m_ScreenWidth / (float)g_Config.m_GfxScreenWidth;
+	m_ScreenHiDPIScale = DrawableWidth / (float)g_Config.m_GfxScreenWidth;
 
 	// A DPI change must notify the listeners, since e.g. video modes
 	// currently depend on it.
@@ -2700,7 +2836,7 @@ void CGraphics_Threaded::GotResized(int w, int h, int RefreshRate)
 			PropChangedListener();
 	}
 
-	UpdateViewport(0, 0, m_ScreenWidth, m_ScreenHeight, true);
+	UpdateViewport(m_ForcedViewportOffsetX, m_ForcedViewportOffsetY, m_ScreenWidth, m_ScreenHeight, true);
 
 	// kick the command buffer and wait
 	KickCommandBuffer();

@@ -85,7 +85,7 @@ void CReactBypass::ReactToRename(int ClientId, const char *pOld, const char *pNe
 	if(pOld[0] == '\0' || pNew[0] == '\0')
 		return;
 
-	// мут (у DDNet мут привязан к client id, поэтому запоминаем имя и перемьючиваем по нему)
+	// "vibecode" ahhhh
 	if(IsMuteName(pOld))
 	{
 		AddMuteName(pNew);
@@ -93,14 +93,12 @@ void CReactBypass::ReactToRename(int ClientId, const char *pOld, const char *pNe
 		GameClient()->m_aClients[ClientId].m_ChatIgnore = true;
 	}
 
-	// вар (список врагов DDNet — по именам)
 	if(GameClient()->Foes()->GetFriendState(pOld, "") == IFriends::FRIEND_PLAYER)
 	{
 		GameClient()->Foes()->AddFriend(pNew, "");
 		AddTemp(pOld, pNew, KIND_FOE, "", "");
 	}
 
-	// варлист TClient
 	for(const CWarEntry &Entry : GameClient()->m_WarList.m_vWarEntries)
 	{
 		if(Entry.m_aName[0] == '\0' || Entry.m_pWarType == nullptr || str_comp(Entry.m_aName, pOld) != 0)
@@ -110,7 +108,6 @@ void CReactBypass::ReactToRename(int ClientId, const char *pOld, const char *pNe
 		break;
 	}
 
-	// сердечки (привязка к друзьям DDNet)
 	for(const CHeartEntry &Entry : GameClient()->m_HeartList.m_vHeartEntries)
 	{
 		if(Entry.m_aName[0] == '\0' || Entry.m_pHeartType == nullptr || str_comp(Entry.m_aName, pOld) != 0)

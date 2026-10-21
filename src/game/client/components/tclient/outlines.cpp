@@ -136,8 +136,33 @@ void COutlines::OnMapLoad()
 	}
 }
 
+void COutlines::OnInit()
+{
+	if(g_Config.m_TcOutlineGradientColor1 == 16744703)
+		g_Config.m_TcOutlineGradientColor1 = 4278255488;
+	if(g_Config.m_TcOutlineGradientColor2 == 2583658751)
+		g_Config.m_TcOutlineGradientColor2 = 4288282496;
+
+	auto MigratePickedColor = [](unsigned int &Value) {
+		if((Value >> 24) != 0)
+			return;
+		Value = color_cast<ColorHSLA>(ColorRGBA(((Value >> 16) & 0xFF) / 255.0f, ((Value >> 8) & 0xFF) / 255.0f, (Value & 0xFF) / 255.0f, 1.0f)).Pack(true);
+	};
+	MigratePickedColor(g_Config.m_TcOutlineGradientColor1);
+	MigratePickedColor(g_Config.m_TcOutlineGradientColor2);
+
+	if(g_Config.m_TcOutlineGradient)
+	{
+		g_Config.m_TcOutlineGradientSolid = g_Config.m_TcOutlineGradientFreeze = g_Config.m_TcOutlineGradientUnfreeze = g_Config.m_TcOutlineGradientKill = g_Config.m_TcOutlineGradientTele = 1;
+		g_Config.m_TcOutlineGradientColor2Solid = g_Config.m_TcOutlineGradientColor2Freeze = g_Config.m_TcOutlineGradientColor2Unfreeze = g_Config.m_TcOutlineGradientColor2Kill = g_Config.m_TcOutlineGradientColor2Tele = g_Config.m_TcOutlineGradientColor2;
+		g_Config.m_TcOutlineGradient = 0;
+	}
+}
+
+// для растяга <3
 void COutlines::OnRender()
 {
+	m_SystemAudio.SetEnabled(g_Config.m_TcOutlinePulsate || g_Config.m_TcLyricsBeat);
 	if(!m_pMapData)
 		return;
 	if(GameClient()->m_MapLayersBackground.m_OnlineOnly && Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
@@ -147,35 +172,24 @@ void COutlines::OnRender()
 	if(!g_Config.m_TcOutline)
 		return;
 
-	m_SystemAudio.SetEnabled(g_Config.m_TcOutlinePulsate);
-	if(g_Config.m_TcOutlineGradientColor1 == 16744703)
-		g_Config.m_TcOutlineGradientColor1 = 4278255488;
-	if(g_Config.m_TcOutlineGradientColor2 == 2583658751)
-		g_Config.m_TcOutlineGradientColor2 = 4288282496;
-	auto MigratePickedColor = [](unsigned int &Value) {
-		if((Value >> 24) != 0)
-			return;
-		Value = color_cast<ColorHSLA>(ColorRGBA(((Value >> 16) & 0xFF) / 255.0f, ((Value >> 8) & 0xFF) / 255.0f, (Value & 0xFF) / 255.0f, 1.0f)).Pack(true);
-	};
-	MigratePickedColor(g_Config.m_TcOutlineGradientColor1);
-	MigratePickedColor(g_Config.m_TcOutlineGradientColor2);
-	if(g_Config.m_TcOutlineGradient)
-	{
-		g_Config.m_TcOutlineGradientSolid = g_Config.m_TcOutlineGradientFreeze = g_Config.m_TcOutlineGradientUnfreeze = g_Config.m_TcOutlineGradientKill = g_Config.m_TcOutlineGradientTele = 1;
-		g_Config.m_TcOutlineGradientColor2Solid = g_Config.m_TcOutlineGradientColor2Freeze = g_Config.m_TcOutlineGradientColor2Unfreeze = g_Config.m_TcOutlineGradientColor2Kill = g_Config.m_TcOutlineGradientColor2Tele = g_Config.m_TcOutlineGradientColor2;
-		g_Config.m_TcOutlineGradient = 0;
-	}
 	const float PulsateBonus = g_Config.m_TcOutlinePulsate ? m_SystemAudio.Level() * (g_Config.m_TcOutlinePulsateStrength / 100.0f) * 64.0f : 0.0f;
 	const float GradientOffset = g_Config.m_TcOutlineGradientSpeed > 0 ? (float)(time_get() / (double)time_freq()) * (g_Config.m_TcOutlineGradientSpeed / 100.0f) * 0.5f : 0.0f;
+
+	float PrevX0, PrevY0, PrevX1, PrevY1;
+	Graphics()->GetScreen(&PrevX0, &PrevY0, &PrevX1, &PrevY1);
+
+	float aWorldPoints[4];
+	Graphics()->MapScreenToWorld(GameClient()->m_Camera.m_Center.x, GameClient()->m_Camera.m_Center.y, 100.0f, 100.0f, 100.0f, 0.0f, 0.0f, Graphics()->WorldAspect(), GameClient()->m_Camera.m_RenderZoom, aWorldPoints);
+	Graphics()->MapScreen(aWorldPoints[0], aWorldPoints[1], aWorldPoints[2], aWorldPoints[3]);
 
 	const float Scale = 32.0f;
 
 	float ScreenX0, ScreenY0, ScreenX1, ScreenY1;
 	Graphics()->GetScreen(&ScreenX0, &ScreenY0, &ScreenX1, &ScreenY1);
-	int StartY = (int)(ScreenY0 / Scale) - 1;
-	int StartX = (int)(ScreenX0 / Scale) - 1;
-	int EndY = (int)(ScreenY1 / Scale) + 1;
-	int EndX = (int)(ScreenX1 / Scale) + 1;
+	int StartY = std::clamp((int)std::floor(ScreenY0 / Scale) - 1, 0, m_MapDataSize.y);
+	int StartX = std::clamp((int)std::floor(ScreenX0 / Scale) - 1, 0, m_MapDataSize.x);
+	int EndY = std::clamp((int)std::ceil(ScreenY1 / Scale) + 1, 0, m_MapDataSize.y);
+	int EndX = std::clamp((int)std::ceil(ScreenX1 / Scale) + 1, 0, m_MapDataSize.x);
 	int MaxScale = 12;
 	if(EndX - StartX > Graphics()->ScreenWidth() / MaxScale || EndY - StartY > Graphics()->ScreenHeight() / MaxScale)
 	{
@@ -298,4 +312,6 @@ void COutlines::OnRender()
 	}
 
 	Graphics()->QuadsEnd();
+
+	Graphics()->MapScreen(PrevX0, PrevY0, PrevX1, PrevY1);
 }

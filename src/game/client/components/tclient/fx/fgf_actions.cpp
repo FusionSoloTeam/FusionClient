@@ -98,7 +98,9 @@ void CFgfActions::Swing(int ClientId, float Angle, ColorRGBA Core)
 
 void CFgfActions::Catch(vec2 Target, ColorRGBA Main, ColorRGBA Core)
 {
-	m_Sparks.AddRing(Target, 0.3f, 20.0f, 80.0f, 0.7f, Core);
+	// ура не забыл добавить
+	if(g_Config.m_TcHookRings)
+		m_Sparks.AddRing(Target, 0.3f, 20.0f, 80.0f, 0.7f, Core);
 	for(int i = 0; i < 14; i++)
 	{
 		CGlowParticles::CSpark *pSpark = m_Sparks.NewSpark();

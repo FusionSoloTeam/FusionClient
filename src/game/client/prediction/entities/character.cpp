@@ -369,6 +369,8 @@ void CCharacter::FireWeapon()
 			pTarget->Unfreeze();
 
 			Hits++;
+
+			AntiPingInterference(pTarget->GetCid());
 		}
 
 		// if we Hit anything, we have to wait for the reload
@@ -624,6 +626,14 @@ void CCharacter::Tick()
 	HandleWeapons();
 
 	DDRacePostCoreTick();
+
+	if(IsInterfering())
+	{
+		const bool KeepFrozenPrediction = m_FreezeTime && g_Config.m_ClAntiPingPlayers == 3;
+		const bool ChangedInput = m_Input.m_Direction != m_PrevInput.m_Direction || m_Input.m_Jump != m_PrevInput.m_Jump;
+		if(!KeepFrozenPrediction && (ChangedInput || (m_Core.m_TriggeredEvents & COREEVENT_HOOK_ATTACH_GROUND)))
+			m_Interfering = false;
+	}
 
 	// Previnput
 	m_PrevInput = m_Input;
@@ -1453,6 +1463,7 @@ void CCharacter::ResetPrediction()
 	}
 	m_LastWeaponSwitchTick = 0;
 	m_LastTuneZoneTick = 0;
+	m_Interfering = false;
 }
 
 void CCharacter::Read(CNetObj_Character *pChar, CNetObj_DDNetCharacter *pExtended, bool IsLocal)
@@ -1485,6 +1496,9 @@ void CCharacter::Read(CNetObj_Character *pChar, CNetObj_DDNetCharacter *pExtende
 			}
 			else if(pExtended->m_FreezeEnd == -1)
 				m_Core.m_DeepFrozen = true;
+
+			if(pExtended->m_FreezeEnd != 0 && g_Config.m_ClAntiPingPlayers == 3)
+				m_Interfering = true;
 		}
 		else
 			Unfreeze();
@@ -1635,6 +1649,28 @@ void CCharacter::Read(CNetObj_Character *pChar, CNetObj_DDNetCharacter *pExtende
 void CCharacter::SetCoreWorld(CGameWorld *pGameWorld)
 {
 	m_Core.SetCoreWorld(&pGameWorld->m_Core, pGameWorld->Collision(), pGameWorld->Teams());
+	m_Core.SetAntiPingInterferenceCallback([this](int ClientId, bool DisallowReset) {
+		AntiPingInterference(ClientId, DisallowReset, true);
+	});
+}
+
+void CCharacter::AntiPingInterference(int ClientId, bool DisallowReset, bool RequireUnfrozen)
+{
+	if(RequireUnfrozen && m_FreezeTime)
+		return;
+
+	CCharacter *pChar = GameWorld()->GetCharacterById(ClientId);
+	if(!pChar)
+		return;
+
+	if(m_IsLocal || m_Interfering)
+	{
+		pChar->m_Interfering = true;
+		return;
+	}
+
+	if(!DisallowReset && (!pChar->m_FreezeTime || g_Config.m_ClAntiPingPlayers != 3))
+		pChar->m_Interfering = false;
 }
 
 bool CCharacter::Match(CCharacter *pChar) const

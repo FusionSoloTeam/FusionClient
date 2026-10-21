@@ -487,6 +487,8 @@ void CSystemAudio::ThreadRun()
 	if(Device.m_pCapture != nullptr)
 	{
 		float GateState = 0.0f;
+		float BeatAverage = 0.0f;
+		int64_t LastBeatTime = 0;
 
 		while(m_WantEnabled.load(std::memory_order_relaxed))
 		{
@@ -543,6 +545,20 @@ void CSystemAudio::ThreadRun()
 				GateState += (Level - GateState) * 0.1f;
 			m_Level.store(GateState, std::memory_order_relaxed);
 
+			const int64_t BeatNow = time_get();
+			if(GateState - BeatAverage > 0.06f && GateState > 0.05f && BeatNow - LastBeatTime >= 200)
+			{
+				if(LastBeatTime > 0)
+					m_BeatInterval.store((float)(BeatNow - LastBeatTime) / 1000.0f, std::memory_order_relaxed);
+				LastBeatTime = BeatNow;
+				m_Beat.store(1.0f, std::memory_order_relaxed);
+			}
+			else
+			{
+				m_Beat.store(m_Beat.load(std::memory_order_relaxed) * 0.8f, std::memory_order_relaxed);
+			}
+			BeatAverage += (GateState - BeatAverage) * 0.02f;
+
 			Sleep(5);
 		}
 	}
@@ -558,6 +574,8 @@ void CSystemAudio::ThreadRun()
 	CoUninitialize();
 
 	m_Level.store(0.0f, std::memory_order_relaxed);
+	m_Beat.store(0.0f, std::memory_order_relaxed);
+	m_BeatInterval.store(0.0f, std::memory_order_relaxed);
 }
 
 #else

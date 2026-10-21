@@ -12,9 +12,10 @@ bool CTrails::ShouldPredictPlayer(int ClientId)
 	if(!GameClient()->Predict())
 		return false;
 	CCharacter *pChar = GameClient()->m_PredictedWorld.GetCharacterById(ClientId);
-	if(GameClient()->Predict() && (ClientId == GameClient()->m_Snap.m_LocalClientId || (GameClient()->AntiPingPlayers() && !GameClient()->IsOtherTeam(ClientId))) && pChar)
-		return true;
-	return false;
+	if(!pChar)
+		return false;
+	const bool IsDummy = GameClient()->PredictDummy() && ClientId == GameClient()->m_aLocalIds[!g_Config.m_ClDummy];
+	return ClientId == GameClient()->m_Snap.m_LocalClientId || (GameClient()->AntiPingPlayer(ClientId, IsDummy, pChar) && !GameClient()->IsOtherTeam(ClientId));
 }
 
 void CTrails::ClearAllHistory()

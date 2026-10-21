@@ -83,6 +83,7 @@ private:
 	char m_ClearButtonId;
 
 	void UpdateStrData();
+
 	enum EMoveDirection
 	{
 		FORWARD,
@@ -188,6 +189,7 @@ public:
 	}
 
 	STextBoundingBox Render(const CUIRect *pRect, float FontSize, int Align, bool Changed, float LineWidth, float LineSpacing, const std::vector<STextColorSplit> &vColorSplits = {});
+	void MarkRendered();
 	SMouseSelection *GetMouseSelection() { return &m_MouseSelection; }
 
 	const void *GetClearButtonId() const { return &m_ClearButtonId; }

@@ -91,7 +91,8 @@ void CHookLightning::Strike(int Owner, const CHookGripTracker::CGrip &Grip, floa
 	CBoltState &State = m_aStates[Owner];
 	State.m_Flash = 1.0f;
 	const ColorRGBA Color = BoltColor();
-	m_Sparks.AddRing(Grip.m_Pos, 0.28f, 6.0f * Scale, 90.0f * Scale, 0.85f * Grip.m_Alpha, Whiten(Color, 0.5f));
+	if(g_Config.m_TcHookRings)
+		m_Sparks.AddRing(Grip.m_Pos, 0.28f, 6.0f * Scale, 90.0f * Scale, 0.85f * Grip.m_Alpha, Whiten(Color, 0.5f));
 
 	const int Count = std::max(0, round_to_int(22.0f * BoltSparks()));
 	for(int i = 0; i < Count; i++)
@@ -107,7 +108,8 @@ void CHookLightning::Charged(int Owner, const CHookGripTracker::CGrip &Grip, flo
 {
 	CBoltState &State = m_aStates[Owner];
 	State.m_Flash = 1.0f;
-	m_Sparks.AddRing(Grip.m_Pos, 0.45f, 16.0f * Scale, 150.0f * Scale, 0.9f * Grip.m_Alpha, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f));
+	if(g_Config.m_TcHookRings)
+		m_Sparks.AddRing(Grip.m_Pos, 0.45f, 16.0f * Scale, 150.0f * Scale, 0.9f * Grip.m_Alpha, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f));
 }
 
 void CHookLightning::Snap(int Owner, const CHookGripTracker::CGrip &Grip, float Scale)
@@ -118,7 +120,8 @@ void CHookLightning::Snap(int Owner, const CHookGripTracker::CGrip &Grip, float 
 		AddSpark(Grip.m_Pos + random_direction() * random_float(0.0f, 14.0f) * Scale,
 			random_direction() * random_float(90.0f, mix(220.0f, 480.0f, Grip.m_Charge)) * Scale,
 			random_float(3.0f, 5.5f) * Scale, random_float(0.25f, 0.5f), 0.9f * Grip.m_Alpha, Color);
-	m_Sparks.AddRing(Grip.m_Pos, 0.3f, 10.0f * Scale, mix(60.0f, 130.0f, Grip.m_Charge) * Scale, 0.6f * Grip.m_Alpha, Color);
+	if(g_Config.m_TcHookRings)
+		m_Sparks.AddRing(Grip.m_Pos, 0.3f, 10.0f * Scale, mix(60.0f, 130.0f, Grip.m_Charge) * Scale, 0.6f * Grip.m_Alpha, Color);
 }
 
 void CHookLightning::EmitSparks(int Owner, const CHookGripTracker::CGrip &Grip, float Passed, float Scale)

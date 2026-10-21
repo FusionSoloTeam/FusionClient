@@ -491,7 +491,8 @@ void CHookRope::RenderVoid(int ClientId, vec2 TeePos, vec2 HookPos, bool Flying,
 		while(State.m_RingAccumulator >= 1.0f)
 		{
 			State.m_RingAccumulator -= 1.0f;
-			m_Particles.AddRing(HookPos, 0.28f, 44.0f * Scale, 6.0f * Scale, 0.35f * Alpha, Hot);
+			if(g_Config.m_TcHookRings)
+				m_Particles.AddRing(HookPos, 0.28f, 44.0f * Scale, 6.0f * Scale, 0.35f * Alpha, Hot);
 		}
 	}
 }

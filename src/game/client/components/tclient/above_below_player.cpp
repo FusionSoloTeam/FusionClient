@@ -1,6 +1,7 @@
 #include "above_below_player.h"
 
 #include "game/client/gameclient.h"
+#include "game/mapitems.h"
 #include "engine/shared/config.h"
 
 float CAboveBelowPlayer::EaseInOutQuad(const float T)
@@ -21,6 +22,20 @@ void CAboveBelowPlayer::OnReset()
 	m_PlayerAbove = false;
 	m_PlayerSame = false;
 	m_PlayerBelow = false;
+}
+
+static bool IsWallBetween(const CCollision *pCollision, vec2 From, vec2 To)
+{
+	const float Dist = distance(From, To);
+	const int Steps = (int)(Dist * 2.0f);
+	for(int i = 1; i < Steps; i++)
+	{
+		const vec2 Pos = mix(From, To, (float)i / (float)Steps) * 32.0f;
+		const int Index = pCollision->GetCollisionAt(Pos.x, Pos.y);
+		if(Index == TILE_SOLID || Index == TILE_NOHOOK)
+			return true;
+	}
+	return false;
 }
 
 void CAboveBelowPlayer::OnRender()
@@ -51,6 +66,16 @@ void CAboveBelowPlayer::OnRender()
 		m_LocalPos = vec2(pLocalChar->m_X, pLocalChar->m_Y) / 32.0f;
 	}
 
+	const CCollision *pCollision = GameClient()->Collision();
+	const auto UpdateOffset = [](int &Offset, int Diff) {
+		if(Offset < 0 || Diff < Offset)
+			Offset = Diff;
+	};
+
+	int OffAbove = -1;
+	int OffSame = -1;
+	int OffBelow = -1;
+
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
 		if(!GameClient()->m_aClients[i].m_Active)
@@ -63,15 +88,27 @@ void CAboveBelowPlayer::OnRender()
 			continue;
 
 		const CNetObj_Character *pCurChar = &GameClient()->m_Snap.m_aCharacters[i].m_Cur;
-		vec2 m_PlayerPos = vec2(pCurChar->m_X, pCurChar->m_Y) / 32.0f;
-		if(m_PlayerPos.x == m_LocalPos.x)
+		const vec2 PlayerPos = vec2(pCurChar->m_X, pCurChar->m_Y) / 32.0f;
+		const float DiffTiles = absolute(PlayerPos.x - m_LocalPos.x);
+		const int Diff = (int)lroundf(DiffTiles * 100.0f);
+		const bool WithinSkew = g_Config.m_TcAboveBelowSkew > 0 ? Diff <= g_Config.m_TcAboveBelowSkew : DiffTiles == 0.0f;
+		if(!WithinSkew || IsWallBetween(pCollision, m_LocalPos, PlayerPos))
+			continue;
+
+		if(PlayerPos.y == m_LocalPos.y && g_Config.m_TcNotifyWhenSamePosPlayer)
 		{
-			if(m_PlayerPos.y == m_LocalPos.y && g_Config.m_TcNotifyWhenSamePosPlayer)
-				m_PlayerSame = true;
-			if(m_PlayerPos.y < m_LocalPos.y && g_Config.m_TcNotifyWhenBelowPosPlayer)
-				m_PlayerBelow = true;
-			if(m_PlayerPos.y > m_LocalPos.y && g_Config.m_TcNotifyWhenAbovePosPlayer)
-				m_PlayerAbove = true;
+			m_PlayerSame = true;
+			UpdateOffset(OffSame, Diff);
+		}
+		if(PlayerPos.y < m_LocalPos.y && g_Config.m_TcNotifyWhenBelowPosPlayer)
+		{
+			m_PlayerBelow = true;
+			UpdateOffset(OffBelow, Diff);
+		}
+		if(PlayerPos.y > m_LocalPos.y && g_Config.m_TcNotifyWhenAbovePosPlayer)
+		{
+			m_PlayerAbove = true;
+			UpdateOffset(OffAbove, Diff);
 		}
 	}
 
@@ -107,7 +144,12 @@ void CAboveBelowPlayer::OnRender()
 			CurLine.Draw(ColorRGBA(0.25f, 0.70f, 0.40f, 0.5f * EaseInOutQuad(m_AboveAnim)), IGraphics::CORNER_ALL, CurLine.h / 3.0f);
 			SLabelProperties Props;
 			Props.SetColor(ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f * EaseInOutQuad(m_AboveAnim)));
-			Ui()->DoLabel(&CurLine, "/\\ You Above /\\", FontSize, TEXTALIGN_MC, Props);
+			char aAbove[64];
+			if(g_Config.m_TcAboveBelowSkew > 0 && OffAbove >= 0)
+				str_format(aAbove, sizeof(aAbove), "/\\ You Above /\\ (%d)", OffAbove);
+			else
+				str_copy(aAbove, "/\\ You Above /\\");
+			Ui()->DoLabel(&CurLine, aAbove, FontSize, TEXTALIGN_MC, Props);
 			Line.HSplitTop(Margin, nullptr, &Line);
 		}
 	}
@@ -125,7 +167,12 @@ void CAboveBelowPlayer::OnRender()
 			CurLine.Draw(ColorRGBA(0.90f, 0.65f, 0.20f, 0.5f * EaseInOutQuad(m_SameAnim)), IGraphics::CORNER_ALL, CurLine.h / 3.0f);
 			SLabelProperties Props;
 			Props.SetColor(ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f * EaseInOutQuad(m_SameAnim)));
-			Ui()->DoLabel(&CurLine, "= Same =", FontSize, TEXTALIGN_MC, Props);
+			char aSame[64];
+			if(g_Config.m_TcAboveBelowSkew > 0 && OffSame >= 0)
+				str_format(aSame, sizeof(aSame), "= Same = (%d)", OffSame);
+			else
+				str_copy(aSame, "= Same =");
+			Ui()->DoLabel(&CurLine, aSame, FontSize, TEXTALIGN_MC, Props);
 			Line.HSplitTop(Margin, nullptr, &Line);
 		}
 	}
@@ -143,7 +190,12 @@ void CAboveBelowPlayer::OnRender()
 			CurLine.Draw(ColorRGBA(0.85f, 0.30f, 0.30f, 0.5f * EaseInOutQuad(m_BelowAnim)), IGraphics::CORNER_ALL, CurLine.h / 3.0f);
 			SLabelProperties Props;
 			Props.SetColor(ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f * EaseInOutQuad(m_BelowAnim)));
-			Ui()->DoLabel(&CurLine, "\\/ You Below \\/", FontSize, TEXTALIGN_MC, Props);
+			char aBelow[64];
+			if(g_Config.m_TcAboveBelowSkew > 0 && OffBelow >= 0)
+				str_format(aBelow, sizeof(aBelow), "\\/ You Below \\/ (%d)", OffBelow);
+			else
+				str_copy(aBelow, "\\/ You Below \\/");
+			Ui()->DoLabel(&CurLine, aBelow, FontSize, TEXTALIGN_MC, Props);
 		}
 	}
 }

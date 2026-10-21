@@ -1060,11 +1060,10 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 		g_Config.m_GfxHighDetail ^= 1;
 	GameClient()->m_Tooltips.DoToolTip(&g_Config.m_GfxHighDetail, &Button, Localize("Allows maps to render with more detail"));
 
-	// TClient: motion blur (Vulkan backend only)
 	MainView.HSplitTop(20.0f, &Button, &MainView);
 	if(DoButton_CheckBox(&g_Config.m_TcMotionBlur, Localize("Motion Blur"), g_Config.m_TcMotionBlur, &Button))
 		g_Config.m_TcMotionBlur ^= 1;
-	GameClient()->m_Tooltips.DoToolTip(&g_Config.m_TcMotionBlur, &Button, Localize("Blends the previous frame into the current one for a motion blur effect (Vulkan backend only)"));
+	GameClient()->m_Tooltips.DoToolTip(&g_Config.m_TcMotionBlur, &Button, Localize("Blends the previous frame into the current one for a motion blur effect"));
 	if(g_Config.m_TcMotionBlur)
 	{
 		MainView.HSplitTop(20.0f, &Button, &MainView);
@@ -3049,10 +3048,24 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 
 	if(g_Config.m_ClAntiPing)
 	{
-		Right.HSplitTop(20.0f, &Button, &Right);
-		if(DoButton_CheckBox(&g_Config.m_ClAntiPingPlayers, Localize("AntiPing: predict other players"), g_Config.m_ClAntiPingPlayers, &Button))
+		int Pressed = std::min(g_Config.m_ClAntiPingPlayers, 2);
+		const int Prev = Pressed;
+		DoLine_RadioMenu(Right, Localize("AntiPing: predict other players"),
+			m_vButtonContainersAntiPingPlayers,
+			{Localize("Off", "AntiPing: predict other players"), Localize("All", "AntiPing: predict other players"), Localize("Interact", "AntiPing: predict other players")},
+			{0, 1, 2},
+			Pressed);
+		if(Pressed != Prev)
+			g_Config.m_ClAntiPingPlayers = Pressed;
+
+		if(g_Config.m_ClAntiPingPlayers >= 2)
 		{
-			g_Config.m_ClAntiPingPlayers ^= 1;
+			const bool PrevChecked = g_Config.m_ClAntiPingPlayers == 3;
+			Right.HSplitTop(20.0f, &Button, &Right);
+			if(DoButton_CheckBox(&g_Config.m_ClAntiPingPlayers, Localize("Always predict frozen players"), PrevChecked, &Button))
+			{
+				g_Config.m_ClAntiPingPlayers = PrevChecked ? 2 : 3;
+			}
 		}
 
 		Right.HSplitTop(20.0f, &Button, &Right);

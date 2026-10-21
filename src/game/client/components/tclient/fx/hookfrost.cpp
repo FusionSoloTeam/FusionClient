@@ -90,7 +90,8 @@ void CHookFrost::Grow(int Owner, const CHookGripTracker::CGrip &Grip, float Scal
 	State.m_Flash = 1.0f;
 
 	const ColorRGBA Color = FrostColor();
-	m_Snow.AddRing(Grip.m_Pos, 0.35f, 8.0f * Scale, 90.0f * Scale, 0.8f * Grip.m_Alpha, Whiten(Color, 0.4f));
+	if(g_Config.m_TcHookRings)
+		m_Snow.AddRing(Grip.m_Pos, 0.35f, 8.0f * Scale, 90.0f * Scale, 0.8f * Grip.m_Alpha, Whiten(Color, 0.4f));
 	const int Count = std::max(0, round_to_int(18.0f * mix(0.5f, 1.0f, FrostSnow())));
 	for(int i = 0; i < Count; i++)
 	{
@@ -105,8 +106,11 @@ void CHookFrost::Flash(int Owner, const CHookGripTracker::CGrip &Grip, float Sca
 	CFrostState &State = m_aStates[Owner];
 	State.m_Flash = 1.0f;
 	const ColorRGBA Color = FrostColor();
-	m_Snow.AddRing(Grip.m_Pos, 0.5f, 14.0f * Scale, 150.0f * Scale, 0.9f * Grip.m_Alpha, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f));
-	m_Snow.AddRing(Grip.m_Pos, 0.3f, 8.0f * Scale, 60.0f * Scale, 0.7f * Grip.m_Alpha, Whiten(Color, 0.6f));
+	if(g_Config.m_TcHookRings)
+	{
+		m_Snow.AddRing(Grip.m_Pos, 0.5f, 14.0f * Scale, 150.0f * Scale, 0.9f * Grip.m_Alpha, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f));
+		m_Snow.AddRing(Grip.m_Pos, 0.3f, 8.0f * Scale, 60.0f * Scale, 0.7f * Grip.m_Alpha, Whiten(Color, 0.6f));
+	}
 }
 
 void CHookFrost::Shatter(int Owner, const CHookGripTracker::CGrip &Grip, float Scale)
@@ -117,7 +121,8 @@ void CHookFrost::Shatter(int Owner, const CHookGripTracker::CGrip &Grip, float S
 		AddShard(Grip.m_Pos + random_direction() * random_float(0.0f, 12.0f) * Scale,
 			random_direction() * random_float(110.0f, mix(240.0f, 520.0f, Grip.m_Charge)) * Scale,
 			random_float(2.5f, 5.0f) * Scale, random_float(0.3f, 0.6f), 0.9f * Grip.m_Alpha, Color);
-	m_Snow.AddRing(Grip.m_Pos, 0.3f, 10.0f * Scale, mix(70.0f, 160.0f, Grip.m_Charge) * Scale, 0.65f * Grip.m_Alpha, Whiten(Color, 0.5f));
+	if(g_Config.m_TcHookRings)
+		m_Snow.AddRing(Grip.m_Pos, 0.3f, 10.0f * Scale, mix(70.0f, 160.0f, Grip.m_Charge) * Scale, 0.65f * Grip.m_Alpha, Whiten(Color, 0.5f));
 }
 
 void CHookFrost::EmitSnow(int Owner, const CHookGripTracker::CGrip &Grip, float Passed, float Scale)

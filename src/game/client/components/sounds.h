@@ -25,6 +25,10 @@ class CSounds : public CComponent
 	enum
 	{
 		QUEUE_SIZE = 32,
+		MAX_ECHOES = 24,
+		MAX_OCCLUSION_WALLS = 4,
+		MAX_OCCLUSION_TRACES_PER_FRAME = 12,
+		MAX_ECHOES_PER_SOUND = 3,
 	};
 	class CQueueEntry
 	{
@@ -38,8 +42,36 @@ class CSounds : public CComponent
 	std::shared_ptr<CSoundLoading> m_pSoundJob;
 	bool m_WaitForSoundJob;
 
+	class CEcho
+	{
+	public:
+		float m_Time;
+		int m_SampleId;
+		float m_Volume;
+		vec2 m_Position;
+	};
+	CEcho m_aEchoes[MAX_ECHOES];
+	int m_NumEchoes = 0;
+	float m_Enclosure = 0.0f;
+	float m_EnclosureTime = -1.0f;
+	int m_OcclusionTraces = 0;
+
 	void UpdateChannels();
 	int GetSampleId(int SetId);
+
+	static constexpr float MAX_SOUND_DISTANCE = 1500.0f;
+	static constexpr float OCCLUSION_MAX_DISTANCE = 1000.0f;
+	static constexpr float ECHO_MAX_DISTANCE = 1200.0f;
+	static constexpr float SOUND_SOURCE_RADIUS = 56.0f;
+	static constexpr float ENCLOSURE_RADIUS = 420.0f;
+
+	int CountWalls(vec2 From, vec2 To) const;
+	float ApplyOcclusion(int SampleId, float Volume, vec2 Position);
+	float GetEnclosure(vec2 Pos);
+	int FindSoundSource(vec2 Pos) const;
+	bool IsBlockedTeammateSound(vec2 Pos) const;
+	void ScheduleEchoes(int SampleId, float Volume, vec2 Position, float Distance);
+	void UpdateEchoes();
 
 	float m_GuiSoundVolume = -1.0f;
 	float m_GameSoundVolume = -1.0f;

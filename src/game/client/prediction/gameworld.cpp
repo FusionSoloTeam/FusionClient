@@ -367,22 +367,25 @@ void CGameWorld::CreateExplosion(vec2 Pos, int Owner, int Weapon, bool NoDamage,
 		if(l)
 			ForceDir = normalize(Diff);
 		l = 1 - std::clamp((l - InnerRadius) / (Radius - InnerRadius), 0.0f, 1.0f);
+		CCharacter *pOwnerChar = GetCharacterById(Owner);
 		float Strength;
-		if(Owner == -1 || !GetCharacterById(Owner))
+		if(Owner == -1 || !pOwnerChar)
 			Strength = GlobalTuning()->m_ExplosionStrength;
 		else
-			Strength = GetCharacterById(Owner)->GetTuning(GetCharacterById(Owner)->GetOverriddenTuneZone())->m_ExplosionStrength;
+			Strength = pOwnerChar->GetTuning(pOwnerChar->GetOverriddenTuneZone())->m_ExplosionStrength;
 
 		float Dmg = Strength * l;
 		if((int)Dmg)
-			if((GetCharacterById(Owner) ? !GetCharacterById(Owner)->GrenadeHitDisabled() : g_Config.m_SvHit || NoDamage) || Owner == pChar->GetCid())
+			if((pOwnerChar ? !pOwnerChar->GrenadeHitDisabled() : g_Config.m_SvHit || NoDamage) || Owner == pChar->GetCid())
 			{
 				if(Owner != -1 && !pChar->CanCollide(Owner))
 					continue;
 				if(Owner == -1 && ActivatedTeam != -1 && pChar->Team() != ActivatedTeam)
 					continue;
 				pChar->TakeDamage(ForceDir * Dmg * 2, (int)Dmg, Owner, Weapon);
-				if(GetCharacterById(Owner) ? GetCharacterById(Owner)->GrenadeHitDisabled() : !g_Config.m_SvHit || NoDamage)
+				if(pOwnerChar)
+					pOwnerChar->AntiPingInterference(pChar->GetCid());
+				if(pOwnerChar ? pOwnerChar->GrenadeHitDisabled() : !g_Config.m_SvHit || NoDamage)
 					break;
 			}
 	}

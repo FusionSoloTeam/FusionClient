@@ -73,6 +73,9 @@ void CCamera::ScaleZoom(float Factor)
 	ChangeZoom(CurrentTarget * Factor, GameClient()->m_Snap.m_SpecInfo.m_Active && GameClient()->m_MultiViewActivated ? g_Config.m_ClMultiViewZoomSmoothness : g_Config.m_ClSmoothZoomTime, true);
 
 	m_AutoSpecCamera = false;
+	m_UsingAutoSpecCamera = false;
+	m_AutoSpecCameraZooming = false;
+	m_UserZoomActive = true;
 }
 
 float CCamera::MaxZoomLevel()
@@ -295,26 +298,41 @@ void CCamera::UpdateCamera()
 	m_UsingAutoSpecCamera = UsingAutoSpecCamera;
 }
 
+static float TClientCameraSmoothSpeed(int Smoothness)
+{
+	return (1.0f - Smoothness / 100.0f) * 9.5f + 0.5f;
+}
+
 void CCamera::UpdateTClientCameras()
 {
 	m_RenderZoom = m_Zoom;
-	m_DriftOffset = vec2(0.0f, 0.0f);
 
 	const bool CameraAllowed = GameClient()->IsCameraAllowedServer();
 	const bool Dynamic = g_Config.m_TcDynamicCamera != 0 && CameraAllowed;
 	const bool Drift = g_Config.m_TcDriftCamera != 0 && CameraAllowed;
-	if(!Dynamic && !Drift)
+	const bool AnyEnabled = Dynamic || Drift;
+	const bool InGame = Client()->State() == IClient::STATE_ONLINE || Client()->State() == IClient::STATE_DEMOPLAYBACK;
+
+	if(!AnyEnabled || !InGame)
+	{
+		m_DriftOffset = vec2(0.0f, 0.0f);
 		return;
-	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
-		return;
+	}
 
 	const bool Spectating = GameClient()->m_Snap.m_SpecInfo.m_Active;
 	const int ClientId = Spectating ? GameClient()->m_Snap.m_SpecInfo.m_SpectatorId : GameClient()->m_aLocalIds[g_Config.m_ClDummy];
-	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS || !GameClient()->m_Snap.m_aCharacters[ClientId].m_Active)
+	{
+		const int Smooth = Drift ? g_Config.m_TcDriftCameraSmooth : g_Config.m_TcDynamicCameraSmooth;
+		const float FrameTime = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.1f);
+		m_DriftOffsetCurrent += -m_DriftOffsetCurrent * minimum(FrameTime * TClientCameraSmoothSpeed(Smooth), 1.0f);
+		m_DriftOffset = m_DriftOffsetCurrent;
 		return;
+	}
+
+	m_DriftOffset = vec2(0.0f, 0.0f);
+
 	const bool Other = Spectating && ClientId != GameClient()->m_aLocalIds[0] && (!Client()->DummyConnected() || ClientId != GameClient()->m_aLocalIds[1]);
-	if(!GameClient()->m_Snap.m_aCharacters[ClientId].m_Active)
-		return;
 
 	const CNetObj_Character *pPrev = &GameClient()->m_Snap.m_aCharacters[ClientId].m_Prev;
 	const CNetObj_Character *pCur = &GameClient()->m_Snap.m_aCharacters[ClientId].m_Cur;
@@ -342,10 +360,7 @@ void CCamera::UpdateTClientCameras()
 		if(Smooth <= 0)
 			m_DynamicZoomCurrent = Target;
 		else
-		{
-			const float CameraSpeed = (1.0f - (Smooth / 100.0f)) * 9.5f + 0.5f;
-			m_DynamicZoomCurrent += (Target - m_DynamicZoomCurrent) * minimum(DeltaTime * CameraSpeed, 1.0f);
-		}
+			m_DynamicZoomCurrent += (Target - m_DynamicZoomCurrent) * minimum(DeltaTime * TClientCameraSmoothSpeed(Smooth), 1.0f);
 		m_DynamicZoomCurrent = std::clamp(m_DynamicZoomCurrent, 0.1f, 4.0f);
 		m_RenderZoom = std::clamp(m_Zoom * m_DynamicZoomCurrent, MinZoomLevel(), MaxZoomLevel());
 		if(g_Config.m_TcDynamicCameraLimit > 0 && g_Config.m_TcDynamicCameraMode == 0)
@@ -370,11 +385,52 @@ void CCamera::UpdateTClientCameras()
 	if(DriftSmooth <= 0)
 		m_DriftOffsetCurrent = DriftTarget;
 	else
-	{
-		const float CameraSpeed = (1.0f - (DriftSmooth / 100.0f)) * 9.5f + 0.5f;
-		m_DriftOffsetCurrent += (DriftTarget - m_DriftOffsetCurrent) * minimum(DeltaTime * CameraSpeed, 1.0f);
-	}
+		m_DriftOffsetCurrent += (DriftTarget - m_DriftOffsetCurrent) * minimum(DeltaTime * TClientCameraSmoothSpeed(DriftSmooth), 1.0f);
 	m_DriftOffset = m_DriftOffsetCurrent;
+}
+
+void CCamera::UpdateSmoothCamera()
+{
+	if(!GameClient()->IsCameraAllowedServer())
+	{
+		m_SmoothCamActive = false;
+		return;
+	}
+
+	const vec2 Desired = m_Center;
+	const bool SpecActive = GameClient()->m_Snap.m_SpecInfo.m_Active;
+	const bool LeftSpec = m_WasSpectating && !SpecActive;
+	const bool RecentlyDied = Client()->LocalTime() - GameClient()->m_LocalDeathTime < 2.0f;
+	const float Dist = distance(Desired, m_PrevCenter);
+
+	if(!m_SmoothCamActive)
+	{
+		float Speed = 0.0f;
+		if(LeftSpec && g_Config.m_TcSmoothCameraSpec)
+			Speed = 5.0f;
+		else if(!SpecActive && m_CamType == CAMTYPE_PLAYER && Client()->State() == IClient::STATE_ONLINE && Dist > 240.0f)
+		{
+			if(RecentlyDied && g_Config.m_TcSmoothRespawnCamera)
+				Speed = 4.5f;
+			else if(!RecentlyDied && g_Config.m_TcSmoothCameraTeleport)
+				Speed = 8.0f;
+		}
+
+		if(Speed <= 0.0f)
+			return;
+
+		m_SmoothCamActive = true;
+		m_SmoothCamTime = 0.0f;
+		m_SmoothCamSpeed = Speed;
+	}
+
+	const float Dt = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.1f);
+	const float Blend = 1.0f - expf(-Dt * m_SmoothCamSpeed);
+	m_SmoothCamTime += Dt;
+	m_Center = mix(m_PrevCenter, Desired, Blend);
+
+	if(distance(m_Center, Desired) < 18.0f || m_SmoothCamTime > 2.0f)
+		m_SmoothCamActive = false;
 }
 
 void CCamera::OnRender()
@@ -488,6 +544,11 @@ void CCamera::OnRender()
 	if(m_CameraSmoothing)
 		m_Center = m_CameraSmoothingCenter;
 
+	UpdateSmoothCamera();
+
+	if(!GameClient()->m_Snap.m_SpecInfo.m_Active || SpecId != m_PrevSpecId)
+		m_UserZoomActive = false;
+
 	m_PrevCenter = m_Center;
 	m_PrevSpecId = SpecId;
 
@@ -519,6 +580,8 @@ void CCamera::OnReset()
 	m_Zooming = false;
 	m_AutoSpecCameraZooming = false;
 	m_UserZoomTarget = CCamera::ZoomStepsToValue(g_Config.m_ClDefaultZoom - 10);
+	m_SmoothCamActive = false;
+	m_UserZoomActive = false;
 }
 
 void CCamera::ConZoomPlus(IConsole::IResult *pResult, void *pUserData)

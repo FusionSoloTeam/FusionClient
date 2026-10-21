@@ -429,7 +429,7 @@ static const char *const s_apAutoReplyKeywords[] = {"reply", "message"};
 static const char *const s_apPlayerIndicatorKeywords[] = {"indicator", "player"};
 static const char *const s_apPetKeywords[] = {"pet"};
 static const char *const s_apSwapTimerKeywords[] = {"swap", "timer"};
-static const char *const s_apNameplateGradientKeywords[] = {"gradient", "nameplate", "clan", "skin"};
+static const char *const s_apNameplateGradientKeywords[] = {"gradient", "nameplate", "clan", "skin", "chat", "message"};
 static const char *const s_apHudKeywords[] = {"hud", "checkpoint", "heart", "vote", "percent"};
 static const char *const s_apFrozenKeywords[] = {"frozen", "freeze", "tee", "display"};
 static const char *const s_apTileOutlinesKeywords[] = {"outline", "tile"};
@@ -440,6 +440,11 @@ static const char *const s_apCursorTrailKeywords[] = {"cursor", "trail"};
 static const char *const s_apBgDrawKeywords[] = {"background", "draw", "bg"};
 static const char *const s_apFinishNameKeywords[] = {"finish", "name"};
 static const char *const s_apNotifyOnSwitchKeywords[] = {"notify", "button", "switch", "press"};
+static const char *const s_apSoundKeywords[] = {"sound", "3d", "raycast", "echo", "occlusion", "audio"};
+static const char *const s_apCameraKeywords[] = {"camera", "respawn", "smooth camera"};
+static const char *const s_apLyricsKeywords[] = {"lyrics", "song", "music", "karaoke", "lrc", "3d text", "sing"};
+static const char *const s_apVignetteKeywords[] = {"vignette", "blur", "edge", "screen", "color"};
+static const char *const s_apDiscordKeywords[] = {"discord", "rpc", "rich presence", "status"};
 
 static const SSettingsSectionKeywords s_AllSettingsSections[] = {
 	{s_apVisualKeywords, 4},
@@ -457,7 +462,7 @@ static const SSettingsSectionKeywords s_AllSettingsSections[] = {
 	{s_apPlayerIndicatorKeywords, 2},
 	{s_apPetKeywords, 1},
 	{s_apSwapTimerKeywords, 2},
-	{s_apNameplateGradientKeywords, 4},
+	{s_apNameplateGradientKeywords, 6},
 	{s_apHudKeywords, 4},
 	{s_apFrozenKeywords, 4},
 	{s_apTileOutlinesKeywords, 2},
@@ -468,6 +473,11 @@ static const SSettingsSectionKeywords s_AllSettingsSections[] = {
 	{s_apFinishNameKeywords, 2},
 	{s_apNotifyOnSwitchKeywords, 4},
 	{s_apCursorTrailKeywords, 2},
+	{s_apSoundKeywords, 6},
+	{s_apCameraKeywords, 3},
+	{s_apLyricsKeywords, 7},
+	{s_apVignetteKeywords, 5},
+	{s_apDiscordKeywords, 4},
 };
 static const int s_NumAllSettingsSections = (int)(sizeof(s_AllSettingsSections) / sizeof(s_AllSettingsSections[0]));
 
@@ -752,6 +762,124 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
 
 	}
+	if(SettingsSectionVisible(pSettingsSearch, {"aspect", "ratio", "custom", "screen", "viewport"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Aspect Ratio"), HeadlineFontSize, TEXTALIGN_ML);
+		Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+		const auto ApplyAspectRatioSetting = [this](const char *pName, int Value) {
+			char aBuf[128];
+			str_format(aBuf, sizeof(aBuf), "%s %d", pName, Value);
+			Console()->ExecuteLine(aBuf, IConsole::CLIENT_ID_UNSPECIFIED);
+		};
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	{
+		static std::vector<const char *> s_AspectRatioModeNames;
+		s_AspectRatioModeNames = {"Legacy Auto", "Off", "Preset", "Custom"};
+		static CUi::SDropDownState s_AspectRatioModeState;
+		static CScrollRegion s_AspectRatioModeScroll;
+		s_AspectRatioModeState.m_SelectionPopupContext.m_pScrollRegion = &s_AspectRatioModeScroll;
+		CUIRect DropDownRect;
+		Column.HSplitTop(LineSize, &DropDownRect, &Column);
+		DropDownRect.VSplitLeft(100.0f, &Label, &DropDownRect);
+		Ui()->DoLabel(&Label, "Mode", FontSize, TEXTALIGN_ML);
+		const int NewMode = Ui()->DoDropDown(&DropDownRect, g_Config.m_TcCustomAspectRatioMode + 1, s_AspectRatioModeNames.data(), s_AspectRatioModeNames.size(), s_AspectRatioModeState) - 1;
+			if(NewMode != g_Config.m_TcCustomAspectRatioMode)
+				ApplyAspectRatioSetting("tc_custom_aspect_ratio_mode", NewMode);
+	}
+
+	if(g_Config.m_TcCustomAspectRatioMode == 1)
+	{
+		{
+			Column.HSplitTop(MarginSmall, nullptr, &Column);
+			static std::vector<const char *> s_AspectRatioPresetNames;
+			s_AspectRatioPresetNames = {"5:4", "4:3", "3:2", "16:9", "16:10", "21:9"};
+			static CUi::SDropDownState s_AspectRatioPresetState;
+			static CScrollRegion s_AspectRatioPresetScroll;
+			s_AspectRatioPresetState.m_SelectionPopupContext.m_pScrollRegion = &s_AspectRatioPresetScroll;
+			CUIRect DropDownRect;
+			Column.HSplitTop(LineSize, &DropDownRect, &Column);
+			DropDownRect.VSplitLeft(100.0f, &Label, &DropDownRect);
+			Ui()->DoLabel(&Label, "Preset", FontSize, TEXTALIGN_ML);
+			int PresetIndex = -1;
+			if(g_Config.m_TcCustomAspectRatio == 125) PresetIndex = 0;
+			else if(g_Config.m_TcCustomAspectRatio == 133) PresetIndex = 1;
+			else if(g_Config.m_TcCustomAspectRatio == 150) PresetIndex = 2;
+			else if(g_Config.m_TcCustomAspectRatio == 178) PresetIndex = 3;
+			else if(g_Config.m_TcCustomAspectRatio == 160) PresetIndex = 4;
+			else if(g_Config.m_TcCustomAspectRatio == 235) PresetIndex = 5;
+			const int NewPresetIndex = Ui()->DoDropDown(&DropDownRect, PresetIndex, s_AspectRatioPresetNames.data(), s_AspectRatioPresetNames.size(), s_AspectRatioPresetState);
+			if(NewPresetIndex >= 0 && NewPresetIndex != PresetIndex)
+			{
+				switch(NewPresetIndex)
+				{
+				case 0: ApplyAspectRatioSetting("tc_custom_aspect_ratio", 125); break; // 5:4
+				case 1: ApplyAspectRatioSetting("tc_custom_aspect_ratio", 133); break; // 4:3
+				case 2: ApplyAspectRatioSetting("tc_custom_aspect_ratio", 150); break; // 3:2
+				case 3: ApplyAspectRatioSetting("tc_custom_aspect_ratio", 178); break; // 16:9
+				case 4: ApplyAspectRatioSetting("tc_custom_aspect_ratio", 160); break; // 16:10
+				case 5: ApplyAspectRatioSetting("tc_custom_aspect_ratio", 235); break; // 21:9
+				}
+			}
+		}
+	}
+	else if(g_Config.m_TcCustomAspectRatioMode == 2)
+	{
+		Column.HSplitTop(MarginSmall, nullptr, &Column);
+		CUIRect NumRect, DenRect;
+		Column.HSplitTop(LineSize, &NumRect, &Column);
+		NumRect.VSplitMid(&NumRect, &DenRect, MarginSmall);
+		NumRect.VSplitLeft(100.0f, &Label, &NumRect);
+		Ui()->DoLabel(&Label, "Width (num)", FontSize, TEXTALIGN_ML);
+		static CLineInput s_AspectRatioNumInput;
+		s_AspectRatioNumInput.SetBuffer(g_Config.m_TcCustomAspectRatioNumStr, sizeof(g_Config.m_TcCustomAspectRatioNumStr));
+		s_AspectRatioNumInput.SetEmptyText("16");
+		if(Ui()->DoEditBox(&s_AspectRatioNumInput, &NumRect, EditBoxFontSize))
+		{
+			const int Num = str_toint(g_Config.m_TcCustomAspectRatioNumStr);
+			if(Num > 0)
+				ApplyAspectRatioSetting("tc_custom_aspect_ratio_num", Num);
+		}
+
+		Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+		Column.HSplitTop(LineSize, &DenRect, &Column);
+		DenRect.VSplitLeft(100.0f, &Label, &DenRect);
+		Ui()->DoLabel(&Label, "Height (den)", FontSize, TEXTALIGN_ML);
+		static CLineInput s_AspectRatioDenInput;
+		s_AspectRatioDenInput.SetBuffer(g_Config.m_TcCustomAspectRatioDenStr, sizeof(g_Config.m_TcCustomAspectRatioDenStr));
+		s_AspectRatioDenInput.SetEmptyText("9");
+		if(Ui()->DoEditBox(&s_AspectRatioDenInput, &DenRect, EditBoxFontSize))
+		{
+			const int Den = str_toint(g_Config.m_TcCustomAspectRatioDenStr);
+			if(Den > 0)
+				ApplyAspectRatioSetting("tc_custom_aspect_ratio_den", Den);
+		}
+	}
+
+	{
+		Column.HSplitTop(MarginSmall, nullptr, &Column);
+		static std::vector<const char *> s_AspectRatioApplyModeNames;
+		s_AspectRatioApplyModeNames = {"Game only", "Full", "Game no HUD", "Stretch"};
+		static CUi::SDropDownState s_AspectRatioApplyModeState;
+		static CScrollRegion s_AspectRatioApplyModeScroll;
+		s_AspectRatioApplyModeState.m_SelectionPopupContext.m_pScrollRegion = &s_AspectRatioApplyModeScroll;
+		CUIRect DropDownRect;
+		Column.HSplitTop(LineSize, &DropDownRect, &Column);
+		DropDownRect.VSplitLeft(100.0f, &Label, &DropDownRect);
+		Ui()->DoLabel(&Label, "Apply to", FontSize, TEXTALIGN_ML);
+		const int NewApplyMode = Ui()->DoDropDown(&DropDownRect, g_Config.m_TcCustomAspectRatioApplyMode, s_AspectRatioApplyModeNames.data(), s_AspectRatioApplyModeNames.size(), s_AspectRatioApplyModeState);
+		if(NewApplyMode != g_Config.m_TcCustomAspectRatioApplyMode)
+			ApplyAspectRatioSetting("tc_custom_aspect_ratio_apply_mode", NewApplyMode);
+	}
+
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+
+	}
 	// ***** Flying Name Plates (ported from BestClient) ***** //
 	if(SettingsSectionVisible(pSettingsSearch, {"flying", "nameplate", "kite"}))
 	{
@@ -912,6 +1040,20 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 
+	// ***** Discord ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"discord", "rpc", "rich presence", "status"}))
+	{
+		Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+		s_SectionBoxes.push_back(Column);
+		Column.HSplitTop(HeadlineHeight, &Label, &Column);
+		Ui()->DoLabel(&Label, TCLocalize("Discord Rich Presence"), HeadlineFontSize, TEXTALIGN_ML);
+		Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcDiscordRPC, TCLocalize("Show VClient in your Discord profile"), &g_Config.m_TcDiscordRPC, &Column, LineSize);
+
+		s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+	}
+
 	// ***** Info ***** //
 	if(SettingsSectionVisible(pSettingsSearch, {"info", "vram", "ram", "memory", "overlay"}))
 	{
@@ -1030,6 +1172,27 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
 
 	}
+	// ***** Camera ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"camera", "respawn", "smooth camera"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Camera"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+	const bool CameraAllowed = GameClient()->IsCameraAllowedServer();
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcSmoothRespawnCamera, TCLocalize("Smooth camera flight after respawn"), &g_Config.m_TcSmoothRespawnCamera, &Column, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcSmoothCameraTeleport, TCLocalize("Smooth camera flight after teleport"), &g_Config.m_TcSmoothCameraTeleport, &Column, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcSmoothCameraSpec, TCLocalize("Smooth camera flight on /spec and /pause"), &g_Config.m_TcSmoothCameraSpec, &Column, LineSize);
+	if(!CameraAllowed)
+	{
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoLabel(&Button, TCLocalize("Only allowed on listed server types"), FontSize, TEXTALIGN_ML);
+	}
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+	}
+
 	// ***** Above/Below Player ***** //
 	if(SettingsSectionVisible(pSettingsSearch, {"above", "below", "player", "position", "notify"}))
 	{
@@ -1042,6 +1205,20 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcNotifyWhenAbovePosPlayer, TCLocalize("Notify when above player"), &g_Config.m_TcNotifyWhenAbovePosPlayer, &Column, LineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcNotifyWhenSamePosPlayer, TCLocalize("Notify when same pos as player"), &g_Config.m_TcNotifyWhenSamePosPlayer, &Column, LineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcNotifyWhenBelowPosPlayer, TCLocalize("Notify when below player"), &g_Config.m_TcNotifyWhenBelowPosPlayer, &Column, LineSize);
+	Column.HSplitTop(LineSize, &Button, &Column);
+	{
+		CUIRect EditLabel, EditBox;
+		Button.VSplitLeft(Button.w * 0.60f, &EditLabel, &EditBox);
+		Ui()->DoLabel(&EditLabel, TCLocalize("Horizontal offset (1/100 tile):"), FontSize, TEXTALIGN_ML);
+		static CLineInputNumber s_AboveBelowSkew;
+		if(!s_AboveBelowSkew.IsActive())
+			s_AboveBelowSkew.SetInteger(g_Config.m_TcAboveBelowSkew);
+		if(Ui()->DoEditBox(&s_AboveBelowSkew, &EditBox, FontSize))
+		{
+			const int Value = std::clamp(s_AboveBelowSkew.GetInteger(), 0, 128);
+			g_Config.m_TcAboveBelowSkew = Value;
+		}
+	}
 	Column.HSplitTop(LineSize, &Button, &Column);
 	Ui()->DoScrollbarOption(&g_Config.m_TcNotifyWhenPosPlayerPosX, &g_Config.m_TcNotifyWhenPosPlayerPosX, &Button, TCLocalize("Text pos x"), 0, 100, &CUi::ms_LinearScrollbarScale, 0);
 	Column.HSplitTop(LineSize, &Button, &Column);
@@ -1364,6 +1541,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	Ui()->DoScrollbarOption(&g_Config.m_TcHookChargeTime, &g_Config.m_TcHookChargeTime, &Button, TCLocalize("Grow time"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
 
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHookRope, TCLocalize("Style the hook rope"), &g_Config.m_TcHookRope, &Column, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHookRings, TCLocalize("Ring effects"), &g_Config.m_TcHookRings, &Column, LineSize);
 
 	if(g_Config.m_TcHookStyle == 1)
 	{
@@ -1499,7 +1677,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Weather ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"weather", "snow", "rain", "fireflies", "dust"}))
+	if(SettingsSectionVisible(pSettingsSearch, {"weather", "snow", "rain", "fireflies", "dust", "leaves", "sakura", "petals"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1511,7 +1689,9 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	if(g_Config.m_TcAtmosphere)
 	{
 		static std::vector<const char *> s_WeatherNames;
-		s_WeatherNames = {TCLocalize("Snow"), TCLocalize("Rain"), TCLocalize("Fireflies")};
+		s_WeatherNames = {TCLocalize("Snow"), TCLocalize("Rain"), TCLocalize("Fireflies"), TCLocalize("Leaves"), TCLocalize("Sakura")};
+		static const int s_aWeatherValues[] = {FGF_WEATHER_SNOW, FGF_WEATHER_RAIN, FGF_WEATHER_FIREFLIES, FGF_WEATHER_LEAVES, FGF_WEATHER_SAKURA};
+		static constexpr int NumWeatherKinds = (int)(sizeof(s_aWeatherValues) / sizeof(s_aWeatherValues[0]));
 		static CUi::SDropDownState s_WeatherState;
 		static CScrollRegion s_WeatherScroll;
 		s_WeatherState.m_SelectionPopupContext.m_pScrollRegion = &s_WeatherScroll;
@@ -1519,26 +1699,46 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 		Column.HSplitTop(LineSize, &DropDownRect, &Column);
 		DropDownRect.VSplitLeft(110.0f, &Label, &DropDownRect);
 		Ui()->DoLabel(&Label, TCLocalize("Type"), FontSize, TEXTALIGN_ML);
-		g_Config.m_TcWeather = std::clamp(Ui()->DoDropDown(&DropDownRect, g_Config.m_TcWeather, s_WeatherNames.data(), s_WeatherNames.size(), s_WeatherState), 0, 2);
+		int WeatherIndex = 0;
+		for(int i = 0; i < NumWeatherKinds; i++)
+		{
+			if(s_aWeatherValues[i] == g_Config.m_TcWeather)
+			{
+				WeatherIndex = i;
+				break;
+			}
+		}
+		WeatherIndex = std::clamp(Ui()->DoDropDown(&DropDownRect, WeatherIndex, s_WeatherNames.data(), s_WeatherNames.size(), s_WeatherState), 0, NumWeatherKinds - 1);
+		g_Config.m_TcWeather = s_aWeatherValues[WeatherIndex];
 	}
 	Column.HSplitTop(LineSize, &Button, &Column);
 	Ui()->DoScrollbarOption(&g_Config.m_TcWeatherAmount, &g_Config.m_TcWeatherAmount, &Button, TCLocalize("Amount"), 25, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
 
-	if(g_Config.m_TcWeather == 0)
+	if(g_Config.m_TcWeather == FGF_WEATHER_SNOW)
 	{
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcWeatherSnowflakes, TCLocalize("Snowflakes"), &g_Config.m_TcWeatherSnowflakes, &Column, LineSize);
 		static CButtonContainer s_WeatherSnowColorId;
 		DoLine_ColorPicker(&s_WeatherSnowColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Snow color"), &g_Config.m_TcWeatherSnowColor, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f), false);
 	}
-	else if(g_Config.m_TcWeather == 1)
+	else if(g_Config.m_TcWeather == FGF_WEATHER_RAIN)
 	{
 		static CButtonContainer s_WeatherRainColorId;
 		DoLine_ColorPicker(&s_WeatherRainColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Rain color"), &g_Config.m_TcWeatherRainColor, ColorRGBA(0.6f, 0.8f, 1.0f, 1.0f), false);
 	}
-	else if(g_Config.m_TcWeather == 2)
+	else if(g_Config.m_TcWeather == FGF_WEATHER_FIREFLIES)
 	{
 		static CButtonContainer s_WeatherFireflyColorId;
 		DoLine_ColorPicker(&s_WeatherFireflyColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Firefly color"), &g_Config.m_TcWeatherFireflyColor, ColorRGBA(1.0f, 0.9f, 0.4f, 1.0f), false);
+	}
+	else if(g_Config.m_TcWeather == FGF_WEATHER_LEAVES)
+	{
+		static CButtonContainer s_WeatherLeafColorId;
+		DoLine_ColorPicker(&s_WeatherLeafColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Leaf color"), &g_Config.m_TcWeatherLeafColor, ColorRGBA(0.26f, 0.68f, 0.16f, 1.0f), false);
+	}
+	else if(g_Config.m_TcWeather == FGF_WEATHER_SAKURA)
+	{
+		static CButtonContainer s_WeatherSakuraColorId;
+		DoLine_ColorPicker(&s_WeatherSakuraColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Sakura petal color"), &g_Config.m_TcWeatherSakuraColor, ColorRGBA(0.96f, 0.75f, 0.81f, 1.0f), false);
 	}
 
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAmbientDust, TCLocalize("Ambient dust"), &g_Config.m_TcAmbientDust, &Column, LineSize);
@@ -1548,6 +1748,35 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 		Ui()->DoScrollbarOption(&g_Config.m_TcAmbientDustAmount, &g_Config.m_TcAmbientDustAmount, &Button, TCLocalize("Amount"), 25, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
 		static CButtonContainer s_AmbientDustColorId;
 		DoLine_ColorPicker(&s_AmbientDustColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Dust color"), &g_Config.m_TcAmbientDustColor, ColorRGBA(0.8f, 0.75f, 0.6f, 1.0f), false);
+	}
+
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+
+	}
+	// ***** 3D Sound ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"sound", "3d", "raycast", "echo", "occlusion", "audio"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("3D Sound"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcRaycastSounds, TCLocalize("Raycast 3D sounds"), &g_Config.m_TcRaycastSounds, &Column, LineSize);
+	if(g_Config.m_TcRaycastSounds)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcRaycastSoundsTeammates, TCLocalize("Mute teammates behind walls"), &g_Config.m_TcRaycastSoundsTeammates, &Column, LineSize);
+
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcRaycastSoundsOcclusion, &g_Config.m_TcRaycastSoundsOcclusion, &Button, TCLocalize("Volume through one wall"), 5, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcRaycastSoundsEcho, TCLocalize("Echo in enclosed spaces"), &g_Config.m_TcRaycastSoundsEcho, &Column, LineSize);
+		if(g_Config.m_TcRaycastSoundsEcho)
+		{
+			Column.HSplitTop(LineSize, &Button, &Column);
+			Ui()->DoScrollbarOption(&g_Config.m_TcRaycastSoundsEchoVolume, &g_Config.m_TcRaycastSoundsEchoVolume, &Button, TCLocalize("Echo volume"), 5, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		}
 	}
 
 	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
@@ -1867,7 +2096,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Finish Name ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"finish", "name"}))
+	if(SettingsSectionVisible(pSettingsSearch, {"finish", "name", "message"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1876,13 +2105,25 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	Column.HSplitTop(MarginSmall, nullptr, &Column);
 
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcChangeNameNearFinish, TCLocalize("Attempt to change your name when near finish"), &g_Config.m_TcChangeNameNearFinish, &Column, LineSize);
-	// Column.HSplitTop(LineSize, &Button, &Column); // TODO finish scan radius
-	// Ui()->DoScrollbarOption(&g_Config.m_TcPetSize, &g_Config.m_TcPetSize, &Button, TCLocalize("Pet size"), 10, 500, &CUi::ms_LinearScrollbarScale, 0, "%");
-	Column.HSplitTop(LineSize + MarginExtraSmall, &Button, &Column);
-	Button.VSplitMid(&Label, &Button);
-	Ui()->DoLabel(&Label, TCLocalize("Finish Name:"), FontSize, TEXTALIGN_ML);
-	static CLineInput s_FinishName(g_Config.m_TcFinishName, sizeof(g_Config.m_TcFinishName));
-	Ui()->DoEditBox(&s_FinishName, &Button, EditBoxFontSize);
+	if(g_Config.m_TcChangeNameNearFinish)
+	{
+		Column.HSplitTop(LineSize + MarginExtraSmall, &Button, &Column);
+		Button.VSplitMid(&Label, &Button);
+		Ui()->DoLabel(&Label, TCLocalize("Finish Name:"), FontSize, TEXTALIGN_ML);
+		static CLineInput s_FinishName(g_Config.m_TcFinishName, sizeof(g_Config.m_TcFinishName));
+		Ui()->DoEditBox(&s_FinishName, &Button, EditBoxFontSize);
+	}
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcUnlockTeamNearFinish, TCLocalize("Send /unlock when near finish"), &g_Config.m_TcUnlockTeamNearFinish, &Column, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcSendFinishMessage, TCLocalize("Send a message when you finish"), &g_Config.m_TcSendFinishMessage, &Column, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcScreenshotOnFinish, TCLocalize("Take a screenshot when you finish"), &g_Config.m_TcScreenshotOnFinish, &Column, LineSize);
+	if(g_Config.m_TcSendFinishMessage)
+	{
+		Column.HSplitTop(LineSize + MarginExtraSmall, &Button, &Column);
+		Button.VSplitMid(&Label, &Button);
+		Ui()->DoLabel(&Label, TCLocalize("Finish message:"), FontSize, TEXTALIGN_ML);
+		static CLineInput s_FinishMessage(g_Config.m_TcFinishMessage, sizeof(g_Config.m_TcFinishMessage));
+		Ui()->DoEditBox(&s_FinishMessage, &Button, EditBoxFontSize);
+	}
 	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
 
 	}
@@ -2039,13 +2280,129 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 
-	// ***** Nameplate Gradient ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"gradient", "nameplate", "clan", "skin"}))
+	// ***** Better chat ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"better chat", "smooth chat", "typing", "caret", "chat animation", "chat input"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
 	Column.HSplitTop(HeadlineHeight, &Label, &Column);
-	Ui()->DoLabel(&Label, TCLocalize("Nameplate Gradient"), HeadlineFontSize, TEXTALIGN_ML);
+	Ui()->DoLabel(&Label, TCLocalize("Better Chat"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcSmoothChatTyping, TCLocalize("Smooth typing"), &g_Config.m_TcSmoothChatTyping, &Column, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcSmoothChatSend, TCLocalize("Smooth send"), &g_Config.m_TcSmoothChatSend, &Column, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcSmoothChatCaret, TCLocalize("Smooth caret"), &g_Config.m_TcSmoothChatCaret, &Column, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcBetterChatNoInputGap, TCLocalize("Hide the empty chat input space"), &g_Config.m_TcBetterChatNoInputGap, &Column, LineSize);
+
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+	}
+
+	// ***** Lyrics ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"lyrics", "song", "music", "karaoke", "lrc", "3d text", "sing"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Lyrics"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcLyrics, TCLocalize("Lyrics on the map"), &g_Config.m_TcLyrics, &Column, LineSize);
+	if(g_Config.m_TcLyrics)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcLyricsTest, TCLocalize("Test pattern"), &g_Config.m_TcLyricsTest, &Column, LineSize);
+
+		const char *pStatus = GameClient()->m_Lyrics.Status();
+		if(pStatus[0] != '\0')
+		{
+			Column.HSplitTop(LineSize * 0.9f, &Label, &Column);
+			Ui()->DoLabel(&Label, pStatus, FontSize * 0.85f, TEXTALIGN_ML);
+		}
+		if(GameClient()->m_Lyrics.HasLyrics())
+		{
+			char aInfo[128];
+			str_format(aInfo, sizeof(aInfo), "%d lines | %d visible | %.1f s", GameClient()->m_Lyrics.NumLines(), GameClient()->m_Lyrics.NumVisible(), GameClient()->m_Lyrics.Position());
+			Column.HSplitTop(LineSize * 0.9f, &Label, &Column);
+			Ui()->DoLabel(&Label, aInfo, FontSize * 0.8f, TEXTALIGN_ML);
+		}
+
+		Column.HSplitTop(LineSize, &Button, &Column);
+		static CLineInput s_LyricsFileInput;
+		DoEditBoxWithLabel(&s_LyricsFileInput, &Button, TCLocalize("LRC file"), "auto", g_Config.m_TcLyricsFile, sizeof(g_Config.m_TcLyricsFile));
+
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcLyricsSize, &g_Config.m_TcLyricsSize, &Button, TCLocalize("Text size"), 12, 120, &CUi::ms_LinearScrollbarScale, 0, "u");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcLyricsLines, &g_Config.m_TcLyricsLines, &Button, TCLocalize("Lines on screen"), 1, 6, &CUi::ms_LinearScrollbarScale, 0, nullptr);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcLyricsExtrusion, &g_Config.m_TcLyricsExtrusion, &Button, TCLocalize("3D depth"), 0, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcLyricsTilt, &g_Config.m_TcLyricsTilt, &Button, TCLocalize("Random tilt"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcLyricsDrift, &g_Config.m_TcLyricsDrift, &Button, TCLocalize("Drift speed"), 0, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcLyricsClean, TCLocalize("Plain text (no effects)"), &g_Config.m_TcLyricsClean, &Column, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcLyricsGlitter, TCLocalize("Gold glitter"), &g_Config.m_TcLyricsGlitter, &Column, LineSize);
+		static CButtonContainer s_LyricsColorId;
+		DoLine_ColorPicker(&s_LyricsColorId, 25.0f, 13.0f, 5.0f, &Column, TCLocalize("Gold color"), &g_Config.m_TcLyricsColor, ColorRGBA(1.0f, 0.78f, 0.25f, 1.0f), false);
+
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcLyricsBeat, TCLocalize("Beat pulse"), &g_Config.m_TcLyricsBeat, &Column, LineSize);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcLyricsOffset, &g_Config.m_TcLyricsOffset, &Button, TCLocalize("Timing offset"), -5000, 5000, &CUi::ms_LinearScrollbarScale, 0, "ms");
+	}
+
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+	}
+
+	// ***** Vignette ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"vignette", "blur", "edge", "screen", "color"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Vignette"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcVignette, TCLocalize("Enable custom vignette"), &g_Config.m_TcVignette, &Column, LineSize);
+	if(g_Config.m_TcVignette)
+	{
+		{
+			static std::vector<CButtonContainer> s_vButtonContainers = {{}, {}, {}};
+			int Value = g_Config.m_TcVignetteMode;
+			if(DoLine_RadioMenu(Column, TCLocalize("Position"),
+				   s_vButtonContainers,
+				   {TCLocalize("All edges"), TCLocalize("Horizontal"), TCLocalize("Vertical")},
+				   {0, 1, 2},
+				   Value))
+			{
+				g_Config.m_TcVignetteMode = Value;
+			}
+		}
+
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcVignetteRadius, &g_Config.m_TcVignetteRadius, &Button, TCLocalize("Radius"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcVignetteStrength, &g_Config.m_TcVignetteStrength, &Button, TCLocalize("Strength"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcVignetteSmoothness, &g_Config.m_TcVignetteSmoothness, &Button, TCLocalize("Smoothness"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcVignetteDarken, &g_Config.m_TcVignetteDarken, &Button, TCLocalize("Darken zones"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+
+		static CButtonContainer s_VignetteColorId;
+		DoLine_ColorPicker(&s_VignetteColorId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &Column, TCLocalize("Zone color"), &g_Config.m_TcVignetteColor, ColorRGBA(0.0f, 0.0f, 0.0f), false);
+	}
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+
+	}
+
+	// ***** Gradient ***** //
+	if(SettingsSectionVisible(pSettingsSearch, {"gradient", "nameplate", "clan", "skin", "chat", "message"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Gradient"), HeadlineFontSize, TEXTALIGN_ML);
 	Column.HSplitTop(MarginSmall, nullptr, &Column);
 
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcNameplateGradient, TCLocalize("Gradient player nicknames"), &g_Config.m_TcNameplateGradient, &Column, LineSize);
@@ -2053,6 +2410,13 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcNameplateGradientEverything, TCLocalize("Apply gradient to all rendered text"), &g_Config.m_TcNameplateGradientEverything, &Column, LineSize);
 	Column.HSplitTop(LineSize, &Button, &Column);
 	Ui()->DoScrollbarOption(&g_Config.m_TcNameplateGradientAnimateSpeed, &g_Config.m_TcNameplateGradientAnimateSpeed, &Button, TCLocalize("Gradient animate speed"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcGradientChat, TCLocalize("Gradient chat"), &g_Config.m_TcGradientChat, &Column, LineSize);
+	if(g_Config.m_TcGradientChat)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcGradientChatNicknames, TCLocalize("Gradient nicknames"), &g_Config.m_TcGradientChatNicknames, &Column, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcGradientChatMessages, TCLocalize("Gradient messages"), &g_Config.m_TcGradientChatMessages, &Column, LineSize);
+	}
 
 	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
 	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
@@ -2088,12 +2452,9 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	Column.HSplitTop(MarginSmall, nullptr, &Column);
 
 	const bool CameraAllowed = GameClient()->IsCameraAllowedServer();
-	if(!CameraAllowed)
-		g_Config.m_TcDynamicCamera = 0;
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcDynamicCamera, TCLocalize("Zoom based on your speed"), &g_Config.m_TcDynamicCamera, &Column, LineSize);
 	if(!CameraAllowed)
 	{
-		g_Config.m_TcDynamicCamera = 0;
 		Column.HSplitTop(LineSize, &Button, &Column);
 		Ui()->DoLabel(&Button, TCLocalize("Only allowed on listed server types"), FontSize, TEXTALIGN_ML);
 	}
@@ -2154,11 +2515,12 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	Column.HSplitTop(MarginSmall, nullptr, &Column);
 
 	const bool CameraAllowed = GameClient()->IsCameraAllowedServer();
-	if(!CameraAllowed)
-		g_Config.m_TcDriftCamera = 0;
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcDriftCamera, TCLocalize("Camera drifts with your speed"), &g_Config.m_TcDriftCamera, &Column, LineSize);
 	if(!CameraAllowed)
-		g_Config.m_TcDriftCamera = 0;
+	{
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoLabel(&Button, TCLocalize("Only allowed on listed server types"), FontSize, TEXTALIGN_ML);
+	}
 	if(g_Config.m_TcDriftCamera)
 	{
 		{

@@ -101,6 +101,24 @@ struct STextBoundingBox
 	}
 };
 
+struct SGlyphMetrics
+{
+	float m_Width;
+	float m_Height;
+	float m_CharWidth;
+	float m_CharHeight;
+	float m_OffsetX;
+	float m_OffsetY;
+	float m_AdvanceX;
+	float m_aUVs[4];
+};
+
+enum ETextTexture
+{
+	TEXT_TEXTURE_FILL = 0,
+	TEXT_TEXTURE_OUTLINE,
+};
+
 // Allow to render multi colored text in one go without having to call TextEx() multiple times.
 // Needed to allow multi colored multi line texts
 struct STextColorSplit
@@ -231,6 +249,14 @@ public:
 	virtual int AdjustFontSize(const char *pText, int TextLength, int MaxSize, int MaxWidth) const = 0;
 	virtual float GetGlyphOffsetX(int FontSize, char TextCharacter) const = 0;
 	virtual int CalculateTextWidth(const char *pText, int TextLength, int FontWidth, int FontSize) const = 0;
+
+	virtual bool GetGlyphMetrics(int FontSize, int Chr, SGlyphMetrics *pMetrics) = 0;
+	virtual int GetFontTextureSize() = 0;
+	virtual IGraphics::CTextureHandle GetFontTexture(int Index) = 0;
+	// Raw single channel coverage of the glyph atlas, used by custom 3D text rendering
+	virtual const uint8_t *GetFontTextureData(int Index, int *pDimension) = 0;
+	// Incremented whenever a glyph is added to the atlas
+	virtual unsigned GetFontTextureGeneration() = 0;
 
 	// old foolish interface
 	virtual void TextColor(float r, float g, float b, float a) = 0;

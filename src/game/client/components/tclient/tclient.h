@@ -20,6 +20,7 @@ class CTClient : public CComponent
 	static void ConCalc(IConsole::IResult *pResult, void *pUserData);
 	static void ConRandomTee(IConsole::IResult *pResult, void *pUserData);
 	static void ConchainRandomColor(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
+	static void ConchainAspectRatio(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void RandomBodyColor();
 	static void RandomFeetColor();
 	static void RandomSkin(void *pUserData);
@@ -38,6 +39,14 @@ class CTClient : public CComponent
 	bool SendNonDuplicateMessage(int Team, const char *pLine);
 
 	float m_FinishTextTimeout = 0.0f;
+	float m_FinishMessageDelayLeft = -1.0f;
+	float m_ScreenshotDelayLeft = -1.0f;
+	int m_LastFinishMessageTime = -1;
+	int m_LastFinishMessageClientId = -1;
+	float m_UnlockTeamTimeout = 0.0f;
+	bool m_UnlockTeamSent = false;
+	bool m_WasNearFinish = false;
+	void UpdateFinishMessage();
 	void DoFinishCheck();
 
 	bool ServerCommandExists(const char *pCommand);

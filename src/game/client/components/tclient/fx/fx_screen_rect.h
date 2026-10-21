@@ -51,7 +51,7 @@ inline CFxScreenRect FxMapScreenToWorld(IGraphics *pGraphics, float CenterX, flo
 	float ParallaxZoom, float OffsetX, float OffsetY, float Zoom)
 {
 	float aPoints[4];
-	pGraphics->MapScreenToWorld(CenterX, CenterY, ParallaxX, ParallaxY, ParallaxZoom, OffsetX, OffsetY, pGraphics->ScreenAspect(), Zoom, aPoints);
+	pGraphics->MapScreenToWorld(CenterX, CenterY, ParallaxX, ParallaxY, ParallaxZoom, OffsetX, OffsetY, pGraphics->WorldAspect(), Zoom, aPoints);
 	return CFxScreenRect(vec2(aPoints[0], aPoints[1]), vec2(aPoints[2], aPoints[3]));
 }
 

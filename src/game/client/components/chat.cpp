@@ -2,7 +2,6 @@
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
 
 #include "chat.h"
-
 #include <base/io.h>
 #include <base/time.h>
 
@@ -26,6 +25,9 @@
 #include <game/client/components/tclient/gradient.h>
 #include <game/client/gameclient.h>
 #include <game/localization.h>
+
+static constexpr float CHAT_SLIDE_MS = 220.0f;
+static constexpr float CHAT_REVEAL_MS = 700.0f;
 
 namespace
 {
@@ -186,6 +188,16 @@ void CChat::Reset()
 	DisableMode();
 	m_vServerCommands.clear();
 
+	m_SmoothText.clear();
+	m_vSmoothGhosts.clear();
+	m_vSmoothCharSpawnTime.clear();
+	m_SmoothDeleteTimer = 0.0f;
+	m_SmoothCaretX = -1.0f;
+	m_SmoothSendTime = -1.0f;
+	m_SmoothWasDeleting = false;
+	m_ChatSlide = 0.0f;
+	m_WasRevealing = false;
+
 	for(int64_t &LastSoundPlayed : m_aLastSoundPlayed)
 		LastSoundPlayed = 0;
 }
@@ -267,7 +279,7 @@ void CChat::Echo(const char *pString)
 	AddLine(CLIENT_MSG, 0, pString);
 }
 
-// TClient: карта раскладки ЙЦУКЕН -> QWERTY (позиции клавиш)
+// commands layout fix
 static const char *ChatLayoutFixChar(int Code)
 {
 	switch(Code)
@@ -462,7 +474,10 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		else if(GameClient()->m_HeartList.OnChatInput(m_Input.GetString()))
 			; // Do nothing as friendlist was executed
 		else
+		{
+			StartSmoothSend(m_Input.GetString());
 			SendChatQueued(m_Input.GetString());
+		}
 		m_pHistoryEntry = nullptr;
 		DisableMode();
 		GameClient()->OnRelease();
@@ -759,7 +774,7 @@ void CChat::TagPlayerUnderCursor()
 {
 	const vec2 Center = GameClient()->m_Camera.m_Center;
 	float aPoints[4];
-	Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0.0f, 0.0f, Graphics()->ScreenAspect(), GameClient()->m_Camera.m_RenderZoom, aPoints);
+	Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0.0f, 0.0f, Graphics()->WorldAspect(), GameClient()->m_Camera.m_RenderZoom, aPoints);
 
 	const vec2 UiSize = vec2(600.0f * Graphics()->ScreenAspect(), 600.0f);
 	const vec2 WorldPos = vec2(
@@ -931,7 +946,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 		}
 	}
 
-	if(ClientId == SERVER_MSG && (g_Config.m_TcHoverMessage || g_Config.m_TcHoverOnly))
+	if(ClientId == SERVER_MSG && g_Config.m_TcHoverMessage)
 	{
 		GameClient()->m_HoverNotification.Start(pLine);
 		if(g_Config.m_TcHoverOnly || !g_Config.m_ClShowChatSystem)
@@ -1230,6 +1245,159 @@ int CChat::GetInitializedLineCount() const
 	return Count;
 }
 
+struct SChatGradientRange
+{
+	int m_Start;
+	int m_Length;
+	int m_CharCount;
+	int m_ClientId;
+};
+
+static bool ChatGradientWordChar(char c)
+{
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || (unsigned char)c >= 0x80;
+}
+
+static void ChatCollectGradientRanges(CGameClient *pGameClient, const char *pText, std::vector<SChatGradientRange> &vRanges)
+{
+	const int TextLen = str_length(pText);
+	if(TextLen <= 0)
+		return;
+
+	for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+	{
+		const auto &ClientData = pGameClient->m_aClients[ClientId];
+		if(!ClientData.m_Active || ClientData.m_aName[0] == '\0' || pGameClient->m_HeartList.IsFriend(ClientId))
+			continue;
+
+		const int NameLen = str_length(ClientData.m_aName);
+		if(NameLen < 2 || NameLen > TextLen)
+			continue;
+
+		const char *pFound = pText;
+		while((pFound = str_find(pFound, ClientData.m_aName)) != nullptr)
+		{
+			const int Start = (int)(pFound - pText);
+			const char CharBefore = Start > 0 ? pText[Start - 1] : '\0';
+			const char CharAfter = pText[Start + NameLen];
+			if(!ChatGradientWordChar(CharBefore) && !ChatGradientWordChar(CharAfter))
+			{
+				size_t Size = 0, CharCount = 0;
+				str_utf8_stats(ClientData.m_aName, NameLen + 1, SIZE_MAX, &Size, &CharCount);
+				vRanges.push_back({Start, NameLen, (int)CharCount, ClientId});
+			}
+			pFound += NameLen;
+		}
+	}
+
+	std::sort(vRanges.begin(), vRanges.end(), [](const SChatGradientRange &Left, const SChatGradientRange &Right) { return Left.m_Start < Right.m_Start; });
+
+	std::vector<SChatGradientRange> vFiltered;
+	int LastEnd = 0;
+	for(const SChatGradientRange &Range : vRanges)
+	{
+		if(Range.m_Start < LastEnd)
+			continue;
+		vFiltered.push_back(Range);
+		LastEnd = Range.m_Start + Range.m_Length;
+	}
+	vRanges = std::move(vFiltered);
+}
+
+static void ChatGradientMessageColors(const ColorRGBA &Base, ColorRGBA &Color1, ColorRGBA &Color2)
+{
+	Color1 = ColorRGBA(Base.r * 0.55f, Base.g * 0.55f, Base.b * 0.55f, Base.a);
+	Color2 = ColorRGBA(
+		Base.r + (1.0f - Base.r) * 0.65f,
+		Base.g + (1.0f - Base.g) * 0.65f,
+		Base.b + (1.0f - Base.b) * 0.65f,
+		Base.a);
+}
+
+static std::vector<STextColorSplit> ChatBuildGradientSplits(const char *pText, const std::vector<SChatGradientRange> &vRanges, const ColorRGBA &Color1, const ColorRGBA &Color2, CGameClient *pGameClient, float Phase, bool RangesOnly)
+{
+	std::vector<STextColorSplit> vSplits;
+	const int TextLen = str_length(pText);
+	if(TextLen <= 0)
+		return vSplits;
+
+	size_t Size = 0, CharCount = 0;
+	str_utf8_stats(pText, TextLen + 1, SIZE_MAX, &Size, &CharCount);
+	if(CharCount <= 0)
+		return vSplits;
+
+	vSplits.reserve(CharCount);
+	const char *pCursor = pText;
+	int RangeIndex = 0;
+	int RangeChar = 0;
+	for(int CharIndex = 0; CharIndex < (int)CharCount; CharIndex++)
+	{
+		const int ByteOffset = (int)(pCursor - pText);
+		const char *pPrev = pCursor;
+		str_utf8_decode(&pCursor);
+		const int ByteLen = (int)(pCursor - pPrev);
+
+		while(RangeIndex < (int)vRanges.size() && ByteOffset >= vRanges[RangeIndex].m_Start + vRanges[RangeIndex].m_Length)
+		{
+			RangeIndex++;
+			RangeChar = 0;
+		}
+
+		ColorRGBA Color;
+		if(RangeIndex < (int)vRanges.size() && ByteOffset >= vRanges[RangeIndex].m_Start)
+		{
+			const SChatGradientRange &Range = vRanges[RangeIndex];
+			const float t = Range.m_CharCount <= 1 ? 0.5f : (float)RangeChar / (float)(Range.m_CharCount - 1);
+			ColorRGBA Body, Feet;
+			CBcGradient::GetSkinToneColors(Range.m_ClientId, pGameClient, Body, Feet);
+			Color = CBcGradient::SampleTwoColorGradient(Body, Feet, t, Phase);
+			RangeChar++;
+		}
+		else
+		{
+			if(RangesOnly)
+				continue;
+			const float t = CharCount <= 1 ? 0.5f : (float)CharIndex / (float)(CharCount - 1);
+			Color = CBcGradient::SampleTwoColorGradient(Color1, Color2, t, Phase);
+		}
+
+		vSplits.emplace_back(ByteOffset, ByteLen, Color);
+	}
+	return vSplits;
+}
+
+static int ChatTextLength(const char *pText)
+{
+	return (int)str_utf8_offset_bytes_to_chars(pText, str_length(pText));
+}
+
+static void SmoothRevealSplits(CTextCursor *pCursor, const char *pText, const ColorRGBA &Color, float Progress, int &CharIndex, int TotalChars)
+{
+	const int CharOffset = pCursor->m_CharCount;
+	const std::vector<STextColorSplit> vBaseSplits = pCursor->m_vColorSplits;
+	std::vector<STextColorSplit> vSplits;
+	size_t BaseIndex = 0;
+	for(const char *p = pText; *p != '\0';)
+	{
+		const char *pCharStart = p;
+		str_utf8_decode(&p);
+		const int CharLen = (int)(p - pCharStart);
+		if(CharLen <= 0)
+			break;
+		const int Offset = (int)(pCharStart - pText) + CharOffset;
+		const float CharT = TotalChars > 1 ? minimum(1.0f, (float)CharIndex / (float)TotalChars) : 0.0f;
+		const float Alpha = std::clamp((Progress - CharT * 0.70f) / 0.30f, 0.0f, 1.0f);
+		ColorRGBA CharColor = Color;
+		while(BaseIndex < vBaseSplits.size() && Offset >= vBaseSplits[BaseIndex].m_CharIndex + vBaseSplits[BaseIndex].m_Length)
+			BaseIndex++;
+		if(BaseIndex < vBaseSplits.size() && Offset >= vBaseSplits[BaseIndex].m_CharIndex)
+			CharColor = vBaseSplits[BaseIndex].m_Color;
+		vSplits.emplace_back(Offset, CharLen, CharColor.WithMultipliedAlpha(Alpha));
+		CharIndex++;
+	}
+	pCursor->m_vColorSplits = std::move(vSplits);
+}
+
 void CChat::OnPrepareLines(float y)
 {
 	float x = 5.0f;
@@ -1237,7 +1405,19 @@ void CChat::OnPrepareLines(float y)
 
 	const bool IsScoreBoardOpen = GameClient()->m_Scoreboard.IsActive() && (Graphics()->ScreenAspect() > 1.7f); // only assume scoreboard when screen ratio is widescreen(something around 16:9)
 	const bool ShowLargeArea = m_Show || (m_Mode != MODE_NONE && g_Config.m_ClShowChat == 1) || g_Config.m_ClShowChat == 2;
-	const bool ForceRecreate = IsScoreBoardOpen != m_PrevScoreBoardShowed || ShowLargeArea != m_PrevShowChat || g_Config.m_TcNameplateGradientEverything;
+	const bool GradientNicknames = g_Config.m_TcGradientChat && g_Config.m_TcGradientChatNicknames;
+	const bool GradientMessages = g_Config.m_TcGradientChat && g_Config.m_TcGradientChatMessages;
+	bool ForceRecreate = IsScoreBoardOpen != m_PrevScoreBoardShowed || ShowLargeArea != m_PrevShowChat || g_Config.m_TcNameplateGradientEverything;
+	float GradientPhase = 0.0f;
+	if(GradientNicknames || GradientMessages)
+	{
+		GradientPhase = CBcGradient::AnimatePhase(Client()->GlobalTime());
+		if(std::fabs(GradientPhase - m_LastGradientPhase) > 0.008f)
+		{
+			m_LastGradientPhase = GradientPhase;
+			ForceRecreate = true;
+		}
+	}
 	m_PrevScoreBoardShowed = IsScoreBoardOpen;
 	m_PrevShowChat = ShowLargeArea;
 
@@ -1331,6 +1511,10 @@ void CChat::OnPrepareLines(float y)
 			}
 		}
 
+		std::vector<SChatGradientRange> vGradientRanges;
+		if(GradientNicknames && Line.m_ClientId < 0 && pText[0] != '\0')
+			ChatCollectGradientRanges(GameClient(), pText, vGradientRanges);
+
 		// get the y offset (calculate it if we haven't done that yet)
 		if(Line.m_aYOffset[OffsetType] < 0.0f)
 		{
@@ -1401,7 +1585,7 @@ void CChat::OnPrepareLines(float y)
 			Line.m_aYOffset[OffsetType] = AppendCursor.Height() + RealMsgPaddingY;
 		}
 
-		y -= Line.m_aYOffset[OffsetType];
+		y -= Line.m_aYOffset[OffsetType] * (i == m_HistoryScrollOffset ? m_SmoothSlotScale : 1.0f);
 
 		// cut off if msgs waste too much space
 		if(y < HeightLimit)
@@ -1413,17 +1597,56 @@ void CChat::OnPrepareLines(float y)
 		int CurRenderFlags = TextRender()->GetRenderFlags();
 		TextRender()->SetRenderFlags(CurRenderFlags | ETextRenderFlags::TEXT_RENDER_FLAG_NO_AUTOMATIC_QUAD_UPLOAD);
 
+		bool RevealBuild = false;
+		float RevealProgress = 1.0f;
+		int RevealTotalChars = 1;
+		int RevealCharIndex = 0;
+		if(g_Config.m_TcSmoothChatSend && m_HistoryScrollOffset == 0 && i == 0)
+		{
+			const int64_t RevealAgeMs = (time() - Line.m_Time) * 1000 / time_freq();
+			if(RevealAgeMs >= 0 && RevealAgeMs < CHAT_REVEAL_MS)
+			{
+				RevealBuild = true;
+				RevealProgress = (float)RevealAgeMs / CHAT_REVEAL_MS;
+				RevealTotalChars = ChatTextLength(aClientId) + ChatTextLength(Line.m_aName) +
+						   (Line.m_TimesRepeated > 0 ? ChatTextLength(aCount) : 0) +
+						   (Line.m_ClientId >= 0 && Line.m_aName[0] != '\0' ? 2 : 0) + ChatTextLength(pText);
+				if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
+				{
+					const auto &PrefixAuthor = GameClient()->m_aClients[Line.m_ClientId];
+					if(g_Config.m_TcSpectatePrefix && PrefixAuthor.m_Team == TEAM_SPECTATORS)
+						RevealTotalChars += ChatTextLength(g_Config.m_TcSpecPrefix);
+					if(g_Config.m_TcWarlistPrefixes && GameClient()->m_WarList.GetAnyWar(Line.m_ClientId))
+						RevealTotalChars += ChatTextLength(g_Config.m_TcWarlistPrefix);
+					else if(Line.m_Friend && g_Config.m_ClMessageFriend)
+						RevealTotalChars += ChatTextLength(g_Config.m_TcFriendPrefix);
+				}
+				RevealTotalChars = std::max(1, RevealTotalChars);
+			}
+		}
+
 		// reset the cursor
 		CTextCursor LineCursor;
 		LineCursor.SetPosition(vec2(TextBegin, Line.m_TextYOffset));
 		LineCursor.m_FontSize = FontSize;
 		LineCursor.m_LineWidth = LineWidth;
 
-		auto AppendChatPiece = [&](CTextCursor *pCursor, const char *pPiece) {
+		auto AppendChatPiece = [&](CTextCursor *pCursor, const char *pPiece, bool Fade = true) {
+			if(RevealBuild && Fade)
+				SmoothRevealSplits(pCursor, pPiece, TextRender()->GetTextColor(), RevealProgress, RevealCharIndex, RevealTotalChars);
 			if(BCGradient_ApplyEverythingHook)
 				BCGradient_ApplyEverythingHook(pCursor, pPiece, -1);
 			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, pCursor, pPiece);
 			pCursor->m_vColorSplits.clear();
+		};
+
+		auto SetGradientSplits = [](CTextCursor *pCursor, std::vector<STextColorSplit> vSplits) {
+			if(vSplits.empty())
+				return;
+			const int Offset = pCursor->m_CharCount;
+			for(STextColorSplit &Split : vSplits)
+				Split.m_CharIndex += Offset;
+			pCursor->m_vColorSplits = std::move(vSplits);
 		};
 
 		// Message is from valid player
@@ -1476,6 +1699,8 @@ void CChat::OnPrepareLines(float y)
 
 		TextRender()->TextColor(NameColor);
 		AppendChatPiece(&LineCursor, aClientId);
+		if(!RevealBuild && GradientNicknames && Line.m_ClientId >= 0 && Line.m_aName[0] != '\0' && !Line.m_CustomColor && !GameClient()->m_HeartList.IsFriend(Line.m_ClientId))
+			SetGradientSplits(&LineCursor, CBcGradient::BuildAnimatedTextSplits(Line.m_aName, Line.m_ClientId, GameClient(), GradientPhase));
 		AppendChatPiece(&LineCursor, Line.m_aName);
 
 		if(Line.m_TimesRepeated > 0)
@@ -1554,8 +1779,22 @@ void CChat::OnPrepareLines(float y)
 		}
 		else
 		{
-			ColoredParts.AddSplitsToCursor(AppendCursor);
-			AppendChatPiece(&AppendCursor, pText);
+			const bool CustomColored = !ColoredParts.Colors().empty();
+			std::vector<STextColorSplit> vGradientSplits;
+			if(!CustomColored && (GradientMessages || (GradientNicknames && !vGradientRanges.empty())))
+			{
+				ColorRGBA GradientColor1, GradientColor2;
+				ChatGradientMessageColors(Color, GradientColor1, GradientColor2);
+				vGradientSplits = ChatBuildGradientSplits(pText, vGradientRanges, GradientColor1, GradientColor2, GameClient(), GradientPhase, !GradientMessages);
+				SetGradientSplits(&AppendCursor, vGradientSplits);
+			}
+			else
+			{
+				ColoredParts.AddSplitsToCursor(AppendCursor);
+			}
+			if(i == m_CurrentLine)
+				m_vSmoothSentGradientSplits = vGradientSplits;
+			AppendChatPiece(&AppendCursor, pText, !CustomColored);
 			AppendCursor.m_vColorSplits.clear();
 		}
 
@@ -1580,6 +1819,199 @@ void CChat::OnPrepareLines(float y)
 	}
 
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
+}
+
+static float SmoothChatEaseOutBack(float T)
+{
+	const float C1 = 1.70158f;
+	const float C3 = C1 + 1.0f;
+	const float P = T - 1.0f;
+	return 1.0f + C3 * P * P * P + C1 * P * P;
+}
+
+void CChat::StartSmoothSend(const char *pText)
+{
+	if(!g_Config.m_TcSmoothChatSend)
+		return;
+	str_copy(m_aSmoothSentText, pText, sizeof(m_aSmoothSentText));
+	m_SmoothSendTime = 0.0f;
+	m_SmoothSendX = m_SmoothLastInputX;
+	m_SmoothSendY = m_SmoothLastInputY;
+	m_SmoothText.clear();
+	m_vSmoothCharSpawnTime.clear();
+	m_vSmoothGhosts.clear();
+	m_vSmoothSentGradientSplits.clear();
+	m_SmoothDeleteTimer = 0.0f;
+	m_SmoothWasDeleting = false;
+	m_SmoothCaretX = -1.0f;
+
+	if(g_Config.m_TcGradientChat && g_Config.m_TcGradientChatMessages)
+	{
+		ColorRGBA Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
+		ColorRGBA GradientColor1, GradientColor2;
+		ChatGradientMessageColors(Color, GradientColor1, GradientColor2);
+		std::vector<SChatGradientRange> vGradientRanges;
+		ChatCollectGradientRanges(GameClient(), pText, vGradientRanges);
+		const float GradientPhase = m_LastGradientPhase >= 0.0f ? m_LastGradientPhase : 0.0f;
+		m_vSmoothSentGradientSplits = ChatBuildGradientSplits(pText, vGradientRanges, GradientColor1, GradientColor2, GameClient(), GradientPhase, false);
+	}
+}
+
+void CChat::AddSmoothGhost(int CharIndex, float FontSize, float LineWidth, float Now)
+{
+	const int Offset = (int)str_utf8_offset_chars_to_bytes(m_SmoothText.c_str(), CharIndex);
+	if(Offset < 0 || Offset >= (int)m_SmoothText.size())
+		return;
+
+	const char *pChar = m_SmoothText.c_str() + Offset;
+	const char *pNext = pChar;
+	str_utf8_decode(&pNext);
+	const int Length = minimum((int)(pNext - pChar), (int)sizeof(SSmoothGhost::m_aText) - 1);
+
+	SSmoothGhost Ghost;
+	mem_copy(Ghost.m_aText, pChar, Length);
+	Ghost.m_aText[Length] = '\0';
+	Ghost.m_X = m_SmoothLastInputX + TextRender()->TextWidth(FontSize, m_SmoothText.c_str(), Offset, LineWidth);
+	Ghost.m_Time = Now;
+	m_vSmoothGhosts.push_back(Ghost);
+}
+
+STextBoundingBox CChat::RenderSmoothInput(const CUIRect *pRect, float FontSize, float LineWidth, float ScrollOffset)
+{
+	const float Now = (float)(time_get() / (double)time_freq());
+	const float FrameTime = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.1f);
+
+	const char *pActual = m_Input.GetString();
+	m_Input.MarkRendered();
+	const STextBoundingBox BBox = TextRender()->TextBoundingBox(FontSize, pActual, -1, LineWidth, 0.0f);
+
+	const int ActualChars = (int)str_utf8_offset_bytes_to_chars(pActual, str_length(pActual));
+
+	if(!g_Config.m_TcSmoothChatTyping)
+		m_SmoothText = pActual;
+
+	const float BaseX = pRect->x;
+	const float BaseY = pRect->y - ScrollOffset;
+	m_SmoothLastInputX = BaseX;
+	m_SmoothLastInputY = BaseY;
+
+	int ShownChars = (int)str_utf8_offset_bytes_to_chars(m_SmoothText.c_str(), m_SmoothText.size());
+	if(g_Config.m_TcSmoothChatTyping)
+	{
+		if(ActualChars > ShownChars && strncmp(pActual, m_SmoothText.c_str(), m_SmoothText.size()) == 0)
+		{
+			m_SmoothText = pActual;
+			m_SmoothDeleteTimer = 0.0f;
+		}
+		else if(ActualChars < ShownChars)
+		{
+			if(ShownChars - ActualChars == 1)
+			{
+				AddSmoothGhost(ActualChars, FontSize, LineWidth, Now);
+				m_SmoothText = pActual;
+			}
+			else
+			{
+				const float Step = m_SmoothWasDeleting ? 0.015f : 0.020f;
+				m_SmoothDeleteTimer = minimum(m_SmoothDeleteTimer + FrameTime, Step);
+				if(m_SmoothDeleteTimer >= Step)
+				{
+					m_SmoothDeleteTimer = 0.0f;
+					AddSmoothGhost(ShownChars - 1, FontSize, LineWidth, Now);
+					m_SmoothText.erase(str_utf8_offset_chars_to_bytes(m_SmoothText.c_str(), ShownChars - 1));
+					ShownChars--;
+				}
+				m_SmoothWasDeleting = ShownChars > ActualChars;
+			}
+		}
+		else
+		{
+			m_SmoothText = pActual;
+			m_SmoothDeleteTimer = 0.0f;
+		}
+	}
+
+	if((int)m_vSmoothCharSpawnTime.size() > ShownChars)
+		m_vSmoothCharSpawnTime.resize(ShownChars);
+	const int OldSpawnCount = (int)m_vSmoothCharSpawnTime.size();
+	for(int i = OldSpawnCount; i < ShownChars; i++)
+		m_vSmoothCharSpawnTime.push_back(Now + 0.03f * (i - OldSpawnCount));
+
+	const float TypingDuration = m_SmoothWasDeleting ? 0.16f : 0.32f;
+	float X = BaseX;
+	int CharIndex = 0;
+	for(const char *pCur = m_SmoothText.c_str(); *pCur != '\0'; CharIndex++)
+	{
+		const char *pCharStart = pCur;
+		str_utf8_decode(&pCur);
+		const int CharLen = (int)(pCur - pCharStart);
+		if(CharLen <= 0)
+			break;
+		const float CharWidth = TextRender()->TextWidth(FontSize, pCharStart, CharLen, LineWidth);
+
+		float Alpha = 1.0f;
+		float YOffset = 0.0f;
+		if(g_Config.m_TcSmoothChatTyping)
+		{
+			float Spawn = Now;
+			if(CharIndex < (int)m_vSmoothCharSpawnTime.size())
+				Spawn = m_vSmoothCharSpawnTime[CharIndex];
+			const float T = std::clamp((Now - Spawn) / TypingDuration, 0.0f, 1.0f);
+			YOffset = -12.0f * (1.0f - SmoothChatEaseOutBack(T));
+			Alpha = std::clamp(T * 1.6f, 0.0f, 1.0f);
+		}
+
+		TextRender()->TextColor(1.0f, 1.0f, 1.0f, Alpha);
+		CTextCursor CharCursor;
+		CharCursor.SetPosition(vec2(X, BaseY + YOffset));
+		CharCursor.m_FontSize = FontSize;
+		CharCursor.m_LineWidth = LineWidth;
+		TextRender()->TextEx(&CharCursor, pCharStart, CharLen);
+
+		X += CharWidth;
+	}
+
+	for(size_t i = 0; i < m_vSmoothGhosts.size();)
+	{
+		SSmoothGhost &Ghost = m_vSmoothGhosts[i];
+		const float T = std::clamp((Now - Ghost.m_Time) / 0.45f, 0.0f, 1.0f);
+		if(T >= 1.0f)
+		{
+			m_vSmoothGhosts.erase(m_vSmoothGhosts.begin() + i);
+			continue;
+		}
+		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f - T);
+		CTextCursor GhostCursor;
+		GhostCursor.SetPosition(vec2(Ghost.m_X, BaseY - 4.0f * T));
+		GhostCursor.m_FontSize = FontSize;
+		GhostCursor.m_LineWidth = LineWidth;
+		TextRender()->TextEx(&GhostCursor, Ghost.m_aText);
+		i++;
+	}
+	TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+
+	if(g_Config.m_TcSmoothChatCaret && m_Input.IsActive())
+	{
+		const float TargetX = BaseX + TextRender()->TextWidth(FontSize, pActual, (int)m_Input.GetCursorOffset(), LineWidth);
+		if(m_SmoothCaretX < 0.0f)
+			m_SmoothCaretX = TargetX;
+		else
+			m_SmoothCaretX += (TargetX - m_SmoothCaretX) * std::clamp(FrameTime / 0.14f, 0.0f, 1.0f);
+
+		const float CaretWidth = maximum(0.22f, FontSize * 0.055f);
+		const float Radius = CaretWidth * 0.5f;
+		Graphics()->TextureClear();
+		Graphics()->QuadsBegin();
+		Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+		IGraphics::CQuadItem CaretBody(m_SmoothCaretX, BaseY + Radius, CaretWidth, maximum(0.1f, FontSize - CaretWidth));
+		Graphics()->QuadsDrawTL(&CaretBody, 1);
+		Graphics()->DrawCircle(m_SmoothCaretX + Radius, BaseY + Radius, Radius, 12);
+		Graphics()->DrawCircle(m_SmoothCaretX + Radius, BaseY + FontSize - Radius, Radius, 12);
+		Graphics()->QuadsEnd();
+		Graphics()->TextureClear();
+	}
+
+	return BBox;
 }
 
 void CChat::OnRender()
@@ -1647,7 +2079,8 @@ void CChat::OnRender()
 		const bool WasChanged = m_Input.WasChanged();
 		const bool WasCursorChanged = m_Input.WasCursorChanged();
 		const bool Changed = WasChanged || WasCursorChanged;
-		const STextBoundingBox BoundingBox = m_Input.Render(&InputCursorRect, InputCursor.m_FontSize, TEXTALIGN_TL, Changed, MessageMaxWidth, 0.0f);
+		const bool SmoothChat = g_Config.m_TcSmoothChatTyping || g_Config.m_TcSmoothChatCaret || g_Config.m_TcSmoothChatSend;
+		const STextBoundingBox BoundingBox = SmoothChat ? RenderSmoothInput(&InputCursorRect, InputCursor.m_FontSize, MessageMaxWidth, ScrollOffset) : m_Input.Render(&InputCursorRect, InputCursor.m_FontSize, TEXTALIGN_TL, Changed, MessageMaxWidth, 0.0f);
 
 		Graphics()->ClipDisable();
 
@@ -1693,13 +2126,34 @@ void CChat::OnRender()
 
 			if(pGhost != nullptr)
 			{
-				InputCursor.m_X = InputCursor.m_X + TextRender()->TextWidth(InputCursor.m_FontSize, m_Input.GetString(), -1, InputCursor.m_LineWidth);
+				InputCursor.m_X += TextRender()->TextWidth(InputCursor.m_FontSize, m_Input.GetString(), -1, InputCursor.m_LineWidth);
 				InputCursor.m_Y = m_Input.GetCaretPosition().y;
 				TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.5f);
 				TextRender()->TextEx(&InputCursor, pGhost + GhostSkip);
 				TextRender()->TextColor(TextRender()->DefaultTextColor());
 			}
 		}
+	}
+
+	if(g_Config.m_TcSmoothChatSend && m_SmoothSendTime >= 0.0f)
+	{
+		m_SmoothSendTime += Client()->RenderFrameTime();
+		const float T = std::clamp(m_SmoothSendTime / 0.60f, 0.0f, 1.0f);
+		if(m_aSmoothSentText[0] != '\0')
+		{
+			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f - T);
+			CTextCursor GhostCursor;
+			GhostCursor.SetPosition(vec2(m_SmoothSendX, m_SmoothSendY + 20.0f * T));
+			GhostCursor.m_FontSize = ScaledFontSize;
+			GhostCursor.m_LineWidth = Width - 190.0f;
+			GhostCursor.m_vColorSplits = m_vSmoothSentGradientSplits;
+			for(STextColorSplit &Split : GhostCursor.m_vColorSplits)
+				Split.m_Color.a *= 1.0f - T;
+			TextRender()->TextEx(&GhostCursor, m_aSmoothSentText);
+			TextRender()->TextColor(TextRender()->DefaultTextColor());
+		}
+		if(T >= 1.0f)
+			m_SmoothSendTime = -1.0f;
 	}
 
 #if defined(CONF_VIDEORECORDER)
@@ -1710,6 +2164,39 @@ void CChat::OnRender()
 		return;
 
 	y -= ScaledFontSize;
+
+	if(g_Config.m_TcBetterChatNoInputGap)
+	{
+		const float InputLineHeight = 20.0f * FontSize() / 6.0f;
+		const bool InputOpen = m_Mode != MODE_NONE;
+		const float Target = InputOpen ? 0.0f : 1.0f;
+		const float Speed = InputOpen ? 22.0f : 14.0f;
+		const float FrameTime = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.1f);
+		m_ChatSlide += (Target - m_ChatSlide) * (1.0f - std::exp(-FrameTime * Speed));
+		if(std::fabs(Target - m_ChatSlide) < 0.002f)
+			m_ChatSlide = Target;
+		y += m_ChatSlide * InputLineHeight;
+	}
+	else
+	{
+		m_ChatSlide = 0.0f;
+	}
+
+	m_SmoothSlotScale = 1.0f;
+	CLine &NewestLine = m_aLines[m_CurrentLine];
+	bool Revealing = false;
+	if(g_Config.m_TcSmoothChatSend && NewestLine.m_Initialized)
+	{
+		const int64_t AgeMs = (time() - NewestLine.m_Time) * 1000 / time_freq();
+		if(AgeMs >= 0 && AgeMs < 1500)
+		{
+			m_SmoothSlotScale = std::clamp((float)AgeMs / CHAT_SLIDE_MS, 0.0f, 1.0f);
+			Revealing = AgeMs < CHAT_REVEAL_MS && m_HistoryScrollOffset == 0;
+		}
+	}
+	if((Revealing || m_WasRevealing) && NewestLine.m_TextContainerIndex.Valid())
+		TextRender()->DeleteTextContainer(NewestLine.m_TextContainerIndex);
+	m_WasRevealing = Revealing;
 
 	OnPrepareLines(y);
 
@@ -1736,7 +2223,7 @@ void CChat::OnRender()
 		if(Now > Line.m_Time + 16 * time_freq() && !m_PrevShowChat)
 			break;
 
-		y -= Line.m_aYOffset[OffsetType];
+		y -= Line.m_aYOffset[OffsetType] * (i == m_HistoryScrollOffset ? m_SmoothSlotScale : 1.0f);
 
 		// cut off if msgs waste too much space
 		if(y < HeightLimit)
@@ -1776,6 +2263,7 @@ void CChat::OnRender()
 
 			const ColorRGBA TextColor = TextRender()->DefaultTextColor().WithMultipliedAlpha(Blend);
 			const ColorRGBA TextOutlineColor = TextRender()->DefaultTextOutlineColor().WithMultipliedAlpha(Blend);
+
 			TextRender()->RenderTextContainer(Line.m_TextContainerIndex, TextColor, TextOutlineColor, 0, (y + RealMsgPaddingY / 2.0f) - Line.m_TextYOffset);
 		}
 	}

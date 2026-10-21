@@ -364,7 +364,8 @@ void CVoting::Render()
 	Graphics()->MapScreen(OffsetX, OffsetY, OffsetX + Screen.w / VoteScale, OffsetY + Screen.h / VoteScale);
 
 	CUIRect View = {0.0f, 60.0f, 120.0f, 38.0f};
-	View.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.4f), IGraphics::CORNER_R, 3.0f);
+	const int VoteCorners = HudLayout::BackgroundCorners(IGraphics::CORNER_ALL, VoteLayout.m_X, VoteLayout.m_Y, View.w * VoteScale, View.h * VoteScale, HudWidth, HudLayout::CANVAS_HEIGHT);
+	View.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.4f), VoteCorners, 3.0f);
 	View.Margin(3.0f, &View);
 
 	SLabelProperties Props;

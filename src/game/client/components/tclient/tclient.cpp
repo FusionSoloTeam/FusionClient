@@ -117,6 +117,13 @@ void CTClient::ConchainRandomColor(IConsole::IResult *pResult, void *pUserData, 
 	pThis->GameClient()->SendInfo(false);
 }
 
+void CTClient::ConchainAspectRatio(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
+{
+	CTClient *pThis = static_cast<CTClient *>(pUserData);
+	pfnCallback(pResult, pCallbackUserData);
+	pThis->SetForcedAspect();
+}
+
 void CTClient::OnInit()
 {
 	TextRender()->SetCustomFace(g_Config.m_TcCustomFont);
@@ -284,6 +291,28 @@ void CTClient::OnMessage(int MsgType, void *pRawMsg)
 {
 	if(Client()->State() == IClient::STATE_DEMOPLAYBACK)
 		return;
+
+	if(MsgType == NETMSGTYPE_SV_RACEFINISH && (g_Config.m_TcSendFinishMessage || g_Config.m_TcScreenshotOnFinish))
+	{
+		const CNetMsg_Sv_RaceFinish *pMsg = (CNetMsg_Sv_RaceFinish *)pRawMsg;
+		const bool IsLocal = pMsg->m_ClientId == GameClient()->m_aLocalIds[0] || (Client()->DummyConnected() && pMsg->m_ClientId == GameClient()->m_aLocalIds[1]);
+		if(IsLocal && (pMsg->m_Time != m_LastFinishMessageTime || pMsg->m_ClientId != m_LastFinishMessageClientId))
+		{
+			m_LastFinishMessageTime = pMsg->m_Time;
+			m_LastFinishMessageClientId = pMsg->m_ClientId;
+			if(g_Config.m_TcScreenshotOnFinish)
+				m_ScreenshotDelayLeft = 0.30f;
+			if(g_Config.m_TcSendFinishMessage && g_Config.m_TcFinishMessage[0] != '\0')
+			{
+				m_FinishMessageDelayLeft = g_Config.m_TcFinishMessageDelay / 1000.0f;
+				if(m_FinishMessageDelayLeft <= 0.0f)
+				{
+					GameClient()->m_Chat.SendChat(0, g_Config.m_TcFinishMessage);
+					m_FinishMessageDelayLeft = -1.0f;
+				}
+			}
+		}
+	}
 
 	if(MsgType == NETMSGTYPE_SV_CHAT)
 	{
@@ -634,8 +663,35 @@ void CTClient::RequestReloadTextures()
 	m_ReloadTexturesRequested = true;
 }
 
+void CTClient::UpdateFinishMessage()
+{
+	const float FrameTime = Client()->RenderFrameTime();
+
+	if(m_ScreenshotDelayLeft >= 0.0f)
+	{
+		m_ScreenshotDelayLeft -= FrameTime;
+		if(m_ScreenshotDelayLeft <= 0.0f)
+		{
+			m_ScreenshotDelayLeft = -1.0f;
+			if(g_Config.m_TcScreenshotOnFinish && Client()->State() == IClient::STATE_ONLINE)
+				Console()->ExecuteLine("screenshot", IConsole::CLIENT_ID_UNSPECIFIED);
+		}
+	}
+
+	if(m_FinishMessageDelayLeft < 0.0f)
+		return;
+	m_FinishMessageDelayLeft -= FrameTime;
+	if(m_FinishMessageDelayLeft > 0.0f)
+		return;
+	m_FinishMessageDelayLeft = -1.0f;
+	if(g_Config.m_TcSendFinishMessage && g_Config.m_TcFinishMessage[0] != '\0' && Client()->State() == IClient::STATE_ONLINE)
+		GameClient()->m_Chat.SendChat(0, g_Config.m_TcFinishMessage);
+}
+
 void CTClient::OnUpdate()
 {
+	UpdateFinishMessage();
+
 	if(!m_ReloadTexturesRequested)
 		return;
 	m_ReloadTexturesRequested = false;
@@ -712,6 +768,12 @@ void CTClient::OnConsoleInit()
 		},
 		this);
 
+	Console()->Chain("tc_custom_aspect_ratio_mode", ConchainAspectRatio, this);
+	Console()->Chain("tc_custom_aspect_ratio_apply_mode", ConchainAspectRatio, this);
+	Console()->Chain("tc_custom_aspect_ratio", ConchainAspectRatio, this);
+	Console()->Chain("tc_custom_aspect_ratio_num", ConchainAspectRatio, this);
+	Console()->Chain("tc_custom_aspect_ratio_den", ConchainAspectRatio, this);
+
 	Console()->Chain(
 		"tc_regex_chat_ignore", [](IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData) {
 			if(pResult->NumArguments() == 1)
@@ -766,20 +828,27 @@ void CTClient::DoFinishCheck()
 {
 	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
 		return;
-	if(g_Config.m_TcChangeNameNearFinish <= 0)
+	const bool DoRename = g_Config.m_TcChangeNameNearFinish > 0;
+	const bool DoUnlock = g_Config.m_TcUnlockTeamNearFinish > 0;
+	if(!DoRename && !DoUnlock)
 		return;
-	m_FinishTextTimeout -= Client()->RenderFrameTime();
-	if(m_FinishTextTimeout > 0.0f)
+
+	const float Passed = Client()->RenderFrameTime();
+	m_FinishTextTimeout -= Passed;
+	m_UnlockTeamTimeout -= Passed;
+
+	const bool CheckRename = DoRename && m_FinishTextTimeout <= 0.0f;
+	if(!CheckRename && !(DoUnlock && !m_UnlockTeamSent))
 		return;
-	m_FinishTextTimeout = 1.0f;
 	// Check for finish tile
-	const auto &NearTile = [this](vec2 Pos, int RadiusInTiles, int Tile) -> bool {
+	const auto NearTile = [this](vec2 Pos, int RadiusInTiles, int Tile) -> bool {
 		const CCollision *pCollision = GameClient()->Collision();
-		for(int i = 0; i <= RadiusInTiles * 2; ++i)
+		for(int i = 0; i <= RadiusInTiles * 2; i++)
 		{
-			const float h = std::ceil(std::pow(std::sin((float)i * pi / 2.0f / (float)RadiusInTiles), 0.5f) * pi / 2.0f * (float)RadiusInTiles);
-			const vec2 Pos1 = vec2(Pos.x + (float)(i - RadiusInTiles) * 32.0f, Pos.y - h);
-			const vec2 Pos2 = vec2(Pos.x + (float)(i - RadiusInTiles) * 32.0f, Pos.y + h);
+			const float Angle = (float)i * pi / 2.0f / (float)RadiusInTiles;
+			const float Height = std::ceil(std::pow(std::sin(Angle), 0.5f) * pi / 2.0f * (float)RadiusInTiles);
+			const vec2 Pos1 = vec2(Pos.x + (float)(i - RadiusInTiles) * 32.0f, Pos.y - Height);
+			const vec2 Pos2 = vec2(Pos.x + (float)(i - RadiusInTiles) * 32.0f, Pos.y + Height);
 			std::vector<int> vIndices = pCollision->GetMapIndices(Pos1, Pos2);
 			if(vIndices.empty())
 				vIndices.push_back(pCollision->GetPureMapIndex(Pos1));
@@ -793,7 +862,7 @@ void CTClient::DoFinishCheck()
 		}
 		return false;
 	};
-	const auto &SendUrgentRename = [this](int Conn, const char *pNewName) {
+	const auto SendUrgentRename = [this](int Conn, const char *pNewName) {
 		CNetMsg_Cl_ChangeInfo Msg;
 		Msg.m_pName = pNewName;
 		Msg.m_pClan = Conn == 0 ? g_Config.m_PlayerClan : g_Config.m_ClDummyClan;
@@ -807,19 +876,46 @@ void CTClient::DoFinishCheck()
 		Client()->SendMsg(Conn, &Packer, MSGFLAG_VITAL);
 		GameClient()->m_aCheckInfo[Conn] = Client()->GameTickSpeed(); // 1 second
 	};
-	int Dummy = g_Config.m_ClDummy;
-	const auto &Player = GameClient()->m_aClients[GameClient()->m_aLocalIds[Dummy]];
+	const int Dummy = g_Config.m_ClDummy;
+	const int LocalId = GameClient()->m_aLocalIds[Dummy];
+	if(LocalId < 0 || LocalId >= MAX_CLIENTS)
+		return;
+	const auto &Player = GameClient()->m_aClients[LocalId];
 	if(!Player.m_Active)
 		return;
-	const char *NewName = g_Config.m_TcFinishName;
-	if(str_comp(Player.m_aName, NewName) == 0)
-		return;
 	if(!NearTile(Player.m_RenderPos, 10, TILE_FINISH))
+	{
+		if(CheckRename)
+			m_FinishTextTimeout = 1.0f;
+		m_WasNearFinish = false;
+		m_UnlockTeamSent = false;
 		return;
-	char aBuf[64];
-	str_format(aBuf, sizeof(aBuf), TCLocalize("Changing name to %s near finish"), NewName);
-	GameClient()->Echo(aBuf);
-	SendUrgentRename(Dummy, NewName);
+	}
+
+	if(CheckRename)
+	{
+		m_FinishTextTimeout = 1.0f;
+		const char *NewName = g_Config.m_TcFinishName;
+		if(str_comp(Player.m_aName, NewName) != 0)
+		{
+			char aBuf[64];
+			str_format(aBuf, sizeof(aBuf), TCLocalize("Changing name to %s near finish"), NewName);
+			GameClient()->Echo(aBuf);
+			SendUrgentRename(Dummy, NewName);
+		}
+	}
+
+	if(DoUnlock && !m_WasNearFinish)
+	{
+		m_WasNearFinish = true;
+		m_UnlockTeamTimeout = g_Config.m_TcUnlockTeamNearFinishDelay / 1000.0f;
+	}
+	if(DoUnlock && m_WasNearFinish && !m_UnlockTeamSent && m_UnlockTeamTimeout <= 0.0f)
+	{
+		m_UnlockTeamSent = true;
+		GameClient()->m_Chat.SendChat(0, "/unlock");
+		GameClient()->Echo("Unlocking team near finish");
+	}
 }
 
 bool CTClient::ServerCommandExists(const char *pCommand)
@@ -1034,12 +1130,27 @@ void CTClient::SetForcedAspect()
 		Force = false;
 	else if(State == CClient::EClientState::STATE_ONLINE && GameClient()->m_GameInfo.m_AllowZoom && !GameClient()->m_Menus.IsActive())
 		Force = false;
-	Graphics()->SetForcedAspect(Force);
+
+	const int AspectRatioMode = g_Config.m_TcCustomAspectRatioMode;
+	if(AspectRatioMode == 0)
+		Force = false;
+	else if(AspectRatioMode > 0)
+	{
+		Force = true;
+		if(g_Config.m_TcCustomAspectRatioApplyMode != 1 && State != CClient::EClientState::STATE_ONLINE && State != CClient::EClientState::STATE_DEMOPLAYBACK)
+			Force = false;
+	}
+
+	if(IGraphics *pGraphics = Graphics())
+		pGraphics->SetForcedAspect(Force);
 }
 
 void CTClient::OnStateChange(int OldState, int NewState)
 {
 	SetForcedAspect();
+	m_FinishMessageDelayLeft = -1.0f;
+	m_LastFinishMessageTime = -1;
+	m_LastFinishMessageClientId = -1;
 	for(auto &AirRescuePositions : m_aAirRescuePositions)
 		AirRescuePositions = {};
 }
@@ -1147,7 +1258,8 @@ void CTClient::RenderMiniVoteHud()
 	Graphics()->MapScreen(OffsetX, OffsetY, OffsetX + Screen.w / VoteScale, OffsetY + Screen.h / VoteScale);
 
 	CUIRect View = {0.0f, 60.0f, 70.0f, 35.0f};
-	View.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.4f), IGraphics::CORNER_R, 3.0f);
+	const int VoteCorners = HudLayout::BackgroundCorners(IGraphics::CORNER_ALL, VoteLayout.m_X, VoteLayout.m_Y, View.w * VoteScale, View.h * VoteScale, HudWidth, HudLayout::CANVAS_HEIGHT);
+	View.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.4f), VoteCorners, 3.0f);
 	View.Margin(3.0f, &View);
 
 	SLabelProperties Props;

@@ -50,6 +50,6 @@ void IGraphics::MapScreenToInterface(float CenterX, float CenterY, float Zoom)
 {
 	float aPoints[4];
 	MapScreenToWorld(CenterX, CenterY, 100.0f, 100.0f, 100.0f,
-		0, 0, ScreenAspect(), Zoom, aPoints);
+		0, 0, WorldAspect(), Zoom, aPoints);
 	MapScreen(aPoints[0], aPoints[1], aPoints[2], aPoints[3]);
 }

@@ -5118,6 +5118,10 @@ int main(int argc, const char **argv)
 	pClient->ShellRegister();
 #endif
 
+#if defined(CONF_FAMILY_WINDOWS)
+	SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
+#endif
+
 	// Do not automatically translate touch events to mouse events and vice versa.
 	SDL_SetHint("SDL_TOUCH_MOUSE_EVENTS", "0");
 	SDL_SetHint("SDL_MOUSE_TOUCH_EVENTS", "0");

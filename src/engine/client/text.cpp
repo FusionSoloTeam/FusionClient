@@ -331,6 +331,7 @@ private:
 	size_t m_TextureDimension = INITIAL_ATLAS_DIMENSION;
 	// Keep the full texture data, because OpenGL doesn't provide texture copying
 	uint8_t *m_apTextureData[NUM_FONT_TEXTURES];
+	unsigned m_GlyphGeneration = 0;
 	CAtlas m_TextureAtlas;
 	std::unordered_map<std::tuple<FT_Face, int, int>, SGlyph, SGlyphKeyHash, SGlyphKeyEquals> m_Glyphs;
 
@@ -515,6 +516,7 @@ private:
 		{
 			mem_copy(&m_apTextureData[TextureIndex][PosX + ((y + PosY) * m_TextureDimension)], &pData[y * Width], Width);
 		}
+		++m_GlyphGeneration;
 		Graphics()->UpdateTextTexture(m_aTextures[TextureIndex], PosX, PosY, Width, Height, pData, true);
 	}
 
@@ -859,6 +861,19 @@ public:
 	{
 		return m_aTextures[TextureIndex];
 	}
+
+	const uint8_t *TextureData(int Index, int *pDimension) const
+	{
+		if(Index < 0 || Index >= (int)NUM_FONT_TEXTURES)
+		{
+			*pDimension = 0;
+			return nullptr;
+		}
+		*pDimension = (int)m_TextureDimension;
+		return m_apTextureData[Index];
+	}
+
+	unsigned GlyphGeneration() const { return m_GlyphGeneration; }
 };
 
 typedef vector4_base<unsigned char> STextCharQuadVertexColor;
@@ -2389,6 +2404,59 @@ public:
 			return (float)(m_pGlyphMap->DefaultFace()->glyph->metrics.horiBearingX >> 6);
 		}
 		return 0.0f;
+	}
+
+	bool GetGlyphMetrics(int FontSize, int Chr, SGlyphMetrics *pMetrics) override
+	{
+		if(m_pGlyphMap == nullptr)
+			return false;
+
+		const SGlyph *pGlyph = m_pGlyphMap->GetGlyph(Chr, FontSize);
+		if(pGlyph == nullptr)
+			return false;
+
+		pMetrics->m_Width = pGlyph->m_Width;
+		pMetrics->m_Height = pGlyph->m_Height;
+		pMetrics->m_CharWidth = pGlyph->m_CharWidth;
+		pMetrics->m_CharHeight = pGlyph->m_CharHeight;
+		pMetrics->m_OffsetX = pGlyph->m_OffsetX;
+		pMetrics->m_OffsetY = pGlyph->m_OffsetY;
+		pMetrics->m_AdvanceX = pGlyph->m_AdvanceX;
+		// atlas pixels
+		mem_copy(pMetrics->m_aUVs, pGlyph->m_aUVs, sizeof(pMetrics->m_aUVs));
+		return true;
+	}
+
+	int GetFontTextureSize() override
+	{
+		if(m_pGlyphMap == nullptr)
+			return 1;
+		const size_t Dimension = m_pGlyphMap->TextureDimension();
+		return Dimension > 0 ? (int)Dimension : 1;
+	}
+
+	IGraphics::CTextureHandle GetFontTexture(int Index) override
+	{
+		if(m_pGlyphMap == nullptr)
+			return IGraphics::CTextureHandle();
+		return m_pGlyphMap->Texture(std::clamp(Index, 0, (int)CGlyphMap::NUM_FONT_TEXTURES - 1));
+	}
+
+	const uint8_t *GetFontTextureData(int Index, int *pDimension) override
+	{
+		if(m_pGlyphMap == nullptr)
+		{
+			*pDimension = 0;
+			return nullptr;
+		}
+		return m_pGlyphMap->TextureData(Index, pDimension);
+	}
+
+	unsigned GetFontTextureGeneration() override
+	{
+		if(m_pGlyphMap == nullptr)
+			return 0;
+		return m_pGlyphMap->GlyphGeneration();
 	}
 
 	int CalculateTextWidth(const char *pText, int TextLength, int FontWidth, int FontHeight) const override

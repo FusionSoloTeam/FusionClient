@@ -17,6 +17,8 @@ enum
 	FGF_WEATHER_RAIN,
 	FGF_WEATHER_FIREFLIES,
 	FGF_WEATHER_DUST,
+	FGF_WEATHER_LEAVES,
+	FGF_WEATHER_SAKURA,
 };
 
 class CFgfWeather : public CComponent
@@ -52,6 +54,8 @@ private:
 	};
 
 	IGraphics::CTextureHandle m_GlowTexture;
+	IGraphics::CTextureHandle m_LeafTexture;
+	IGraphics::CTextureHandle m_PetalTexture;
 
 	int m_Kind = FGF_WEATHER_SNOW;
 	CDrop m_aDrops[MAX_DROPS];

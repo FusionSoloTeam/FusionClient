@@ -27,4 +27,10 @@ extern const char *GIT_SHORTREV_HASH;
 #define CLIENT_NAME "TClient"
 #define CLIENT_RELEASE_VERSION TCLIENT_VERSION
 
+// build ver for discord rpc
+#define VCLIENT_NAME "VClient"
+#ifndef VCLIENT_VERSION
+#define VCLIENT_VERSION "1.0.0"
+#endif
+
 #endif

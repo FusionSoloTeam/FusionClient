@@ -740,6 +740,39 @@ public:
 	virtual void SetFrameBlendingAllowed(bool Allowed) {}
 };
 
+struct SAspectRatioSettings
+{
+	bool m_Force = true;
+	int m_Mode = -1;
+	int m_Value = 0;
+	int m_Num = 0;
+	int m_Den = 0;
+	int m_ApplyMode = 1;
+	std::string m_aNumStr;
+	std::string m_aDenStr;
+
+	bool operator==(const SAspectRatioSettings &Other) const
+	{
+		return m_Force == Other.m_Force && m_Mode == Other.m_Mode && m_Value == Other.m_Value &&
+			m_Num == Other.m_Num && m_Den == Other.m_Den && m_ApplyMode == Other.m_ApplyMode &&
+			m_aNumStr == Other.m_aNumStr && m_aDenStr == Other.m_aDenStr;
+	}
+	bool operator!=(const SAspectRatioSettings &Other) const { return !(*this == Other); }
+};
+
+struct SForcedAspectRatio
+{
+	bool m_Forced = false;
+	int m_Width = 0;
+	int m_Height = 0;
+	float m_Aspect = 0.0f;
+	bool m_Stretch = false;
+};
+
+SAspectRatioSettings GetAspectRatioSettings();
+
+SForcedAspectRatio CalculateForcedAspectRatio(const SAspectRatioSettings &Settings, int Width, int Height);
+
 class CGraphics_Threaded : public IEngineGraphics
 {
 	enum class EDrawing
@@ -798,6 +831,15 @@ class CGraphics_Threaded : public IEngineGraphics
 	// is a non full windowed (in a sense that the viewport won't include the whole window),
 	// forced viewport, so that it justifies our UI ratio needs
 	bool m_IsForcedViewport = false;
+
+	SAspectRatioSettings m_LastAspectRatioSettings;
+
+	int m_ForcedViewportOffsetX = 0;
+	int m_ForcedViewportOffsetY = 0;
+
+	float m_WorldAspectRatio = 0.0f;
+
+	float WorldAspect() const { return m_WorldAspectRatio > 0.0f ? m_WorldAspectRatio : ScreenAspect(); }
 
 	struct SVertexArrayInfo
 	{
@@ -1279,7 +1321,7 @@ public:
 	void SetFrameBlendingAllowed(bool Allowed) override;
 };
 
-extern bool g_GraphicsForcedAspect;
+extern std::atomic<bool> g_GraphicsForcedAspect;
 
 typedef std::function<const char *(const char *, const char *)> TTranslateFunc;
 extern IGraphicsBackend *CreateGraphicsBackend(TTranslateFunc &&TranslateFunc);

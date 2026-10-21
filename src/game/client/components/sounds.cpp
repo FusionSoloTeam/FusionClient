@@ -18,6 +18,8 @@
 #include <game/client/gameclient.h>
 #include <game/localization.h>
 
+#include <cmath>
+
 CSoundLoading::CSoundLoading(CGameClient *pGameClient, bool Render) :
 	m_pGameClient(pGameClient),
 	m_Render(Render)
@@ -159,6 +161,9 @@ void CSounds::ReloadSounds()
 
 void CSounds::OnReset()
 {
+	m_NumEchoes = 0;
+	m_OcclusionTraces = 0;
+	m_EnclosureTime = -1.0f;
 	if(Client()->State() >= IClient::STATE_ONLINE)
 	{
 		Sound()->StopAll();
@@ -174,6 +179,8 @@ void CSounds::OnStateChange(int NewState, int OldState)
 
 void CSounds::OnRender()
 {
+	m_OcclusionTraces = 0;
+
 	// check for sound initialisation
 	if(m_WaitForSoundJob)
 	{
@@ -185,6 +192,7 @@ void CSounds::OnRender()
 
 	Sound()->SetListenerPosition(GameClient()->m_Camera.m_Center);
 	UpdateChannels();
+	UpdateEchoes();
 
 	// play sound from queue
 	if(m_QueuePos > 0)
@@ -284,5 +292,162 @@ ISound::CVoiceHandle CSounds::PlaySampleAt(int Channel, int SampleId, int Flags,
 	if(Channel == CHN_MUSIC)
 		Flags |= ISound::FLAG_LOOP;
 
-	return Sound()->PlayAt(Channel, SampleId, Flags, Volume, Position);
+	float PlayVolume = Volume;
+	if(g_Config.m_TcRaycastSounds && Channel == CHN_WORLD)
+	{
+		PlayVolume = ApplyOcclusion(SampleId, Volume, Position);
+		if(PlayVolume <= 0.0f)
+			return ISound::CVoiceHandle();
+	}
+
+	return Sound()->PlayAt(Channel, SampleId, Flags, PlayVolume, Position);
+}
+
+float CSounds::ApplyOcclusion(int SampleId, float Volume, vec2 Position)
+{
+	const vec2 ListenerPos = GameClient()->m_Camera.m_Center;
+	const float Distance = distance(ListenerPos, Position);
+	if(Distance > MAX_SOUND_DISTANCE)
+		return 0.0f;
+
+	const bool OcclusionEnabled = g_Config.m_TcRaycastSoundsOcclusion < 100;
+	const bool TeammatesEnabled = g_Config.m_TcRaycastSoundsTeammates;
+	int Walls = 0;
+	if(Distance <= OCCLUSION_MAX_DISTANCE && m_OcclusionTraces < MAX_OCCLUSION_TRACES_PER_FRAME && (OcclusionEnabled || TeammatesEnabled))
+	{
+		m_OcclusionTraces++;
+		Walls = CountWalls(ListenerPos, Position);
+	}
+
+	if(Walls > 0)
+	{
+		if(TeammatesEnabled && IsBlockedTeammateSound(Position))
+			return 0.0f;
+
+		Volume *= std::pow(g_Config.m_TcRaycastSoundsOcclusion / 100.0f, (float)Walls);
+		if(Volume < 0.01f)
+			return 0.0f;
+	}
+
+	if(Volume > 0.1f)
+		ScheduleEchoes(SampleId, Volume, Position, Distance);
+	return Volume;
+}
+
+int CSounds::CountWalls(vec2 From, vec2 To) const
+{
+	const float Total = distance(From, To);
+	if(Total < 1.0f || Collision()->CheckPoint(From))
+		return 0;
+
+	const vec2 Dir = (To - From) / Total;
+	int Walls = 0;
+	vec2 Start = From;
+	for(int i = 0; i < MAX_OCCLUSION_WALLS; i++)
+	{
+		vec2 Hit;
+		if(Collision()->IntersectLine(Start, To, &Hit, nullptr) == 0)
+			break;
+
+		Walls++;
+
+		vec2 P = Hit;
+		int Step = 0;
+		while(Collision()->CheckPoint(P) && Step++ < 128 && distance(P, To) > 1.0f)
+			P += Dir * 8.0f;
+
+		if(distance(P, To) < 2.0f)
+			break;
+
+		Start = P;
+	}
+	return Walls;
+}
+
+float CSounds::GetEnclosure(vec2 Pos)
+{
+	const float Now = Client()->LocalTime();
+	if(m_EnclosureTime >= 0.0f && Now - m_EnclosureTime < 1.0f)
+		return m_Enclosure;
+
+	int Hits = 0;
+	for(int i = 0; i < 8; i++)
+	{
+		const vec2 Dir = direction(i * (2.0f * pi / 8.0f));
+		if(Collision()->IntersectLine(Pos, Pos + Dir * ENCLOSURE_RADIUS, nullptr, nullptr) != 0)
+			Hits++;
+	}
+
+	m_Enclosure = Hits / 8.0f;
+	m_EnclosureTime = Now;
+	return m_Enclosure;
+}
+
+int CSounds::FindSoundSource(vec2 Pos) const
+{
+	int Best = -1;
+	float BestDist = SOUND_SOURCE_RADIUS;
+	for(int i = 0; i < MAX_CLIENTS; i++)
+	{
+		if(!GameClient()->m_Snap.m_aCharacters[i].m_Active)
+			continue;
+		const float Dist = distance(Pos, GameClient()->m_aClients[i].m_RenderPos);
+		if(Dist < BestDist)
+		{
+			BestDist = Dist;
+			Best = i;
+		}
+	}
+	return Best;
+}
+
+bool CSounds::IsBlockedTeammateSound(vec2 Pos) const
+{
+	const int ClientId = FindSoundSource(Pos);
+	if(ClientId < 0 || ClientId == GameClient()->m_aLocalIds[0] || ClientId == GameClient()->m_aLocalIds[1])
+		return false;
+	return !GameClient()->IsOtherTeam(ClientId);
+}
+
+void CSounds::ScheduleEchoes(int SampleId, float Volume, vec2 Position, float Distance)
+{
+	if(!g_Config.m_TcRaycastSoundsEcho || SampleId == -1 || Volume < 0.05f)
+		return;
+	if(Distance > ECHO_MAX_DISTANCE || m_NumEchoes + MAX_ECHOES_PER_SOUND > MAX_ECHOES)
+		return;
+
+	const float Enclosure = GetEnclosure(GameClient()->m_Camera.m_Center);
+	if(Enclosure < 0.30f)
+		return;
+
+	const int Count = Enclosure > 0.7f ? MAX_ECHOES_PER_SOUND : 2;
+	if(m_NumEchoes + Count > MAX_ECHOES)
+		return;
+
+	const float Now = Client()->LocalTime();
+	const float BaseVolume = Volume * (g_Config.m_TcRaycastSoundsEchoVolume / 100.0f);
+	for(int i = 0; i < Count; i++)
+	{
+		CEcho &Echo = m_aEchoes[m_NumEchoes++];
+		Echo.m_Time = Now + 0.085f + 0.105f * i;
+		Echo.m_SampleId = SampleId;
+		Echo.m_Volume = BaseVolume * std::pow(0.55f, (float)i);
+		Echo.m_Position = Position;
+	}
+}
+
+void CSounds::UpdateEchoes()
+{
+	const float Now = Client()->LocalTime();
+	for(int i = 0; i < m_NumEchoes;)
+	{
+		CEcho &Echo = m_aEchoes[i];
+		if(Echo.m_Time <= Now)
+		{
+			Sound()->PlayAt(CHN_WORLD, Echo.m_SampleId, ISound::FLAG_POS, Echo.m_Volume, Echo.m_Position);
+			Echo = m_aEchoes[--m_NumEchoes];
+			continue;
+		}
+		i++;
+	}
 }

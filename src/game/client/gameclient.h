@@ -76,6 +76,7 @@
 #include "components/tclient/cursor_trail.h"
 #include "components/tclient/moving_tiles.h"
 #include "components/tclient/mumble.h"
+#include "components/tclient/lyrics.h"
 #include "components/tclient/outlines.h"
 #include "components/tclient/above_below_player.h"
 #include "components/tclient/pet.h"
@@ -88,6 +89,7 @@
 #include "components/tclient/tclient.h"
 #include "components/tclient/trails.h"
 #include "components/tclient/translate.h"
+#include "components/tclient/vignette.h"
 #include "components/tclient/react_bypass.h"
 #include "components/tclient/warlist.h"
 #include "components/tclient/heartlist.h"
@@ -194,6 +196,7 @@ public:
 	CCountryFlags m_CountryFlags;
 	CFlow m_Flow;
 	CHud m_Hud;
+	CVignette m_Vignette;
 	CHudEditor m_HudEditor;
 	CImportantAlert m_ImportantAlert;
 	CDebugHud m_DebugHud;
@@ -247,6 +250,7 @@ public:
 	CBcGradient m_BcGradient;
 	CPlayerIndicator m_PlayerIndicator;
 	COutlines m_Outlines;
+	CLyrics m_Lyrics;
 	CMumble m_Mumble;
 	CRainbow m_Rainbow;
 	CWarList m_WarList;
@@ -765,6 +769,7 @@ public:
 	// DDRace
 
 	int m_aLocalIds[NUM_DUMMIES];
+	float m_LocalDeathTime = -100.0f;
 	CNetObj_PlayerInput m_DummyInput;
 	CNetObj_PlayerInput m_HammerInput;
 	unsigned int m_DummyFire;
@@ -781,7 +786,13 @@ public:
 
 	bool IsTeamPlay() const { return m_Snap.m_pGameInfoObj && m_Snap.m_pGameInfoObj->m_GameFlags & GAMEFLAG_TEAMS; }
 
-	bool AntiPingPlayers() const { return g_Config.m_ClAntiPing && g_Config.m_ClAntiPingPlayers && !m_Snap.m_SpecInfo.m_Active && Client()->State() != IClient::STATE_DEMOPLAYBACK; }
+	int AntiPingPlayers() const
+	{
+		if(!g_Config.m_ClAntiPing || !g_Config.m_ClAntiPingPlayers || m_Snap.m_SpecInfo.m_Active || Client()->State() == IClient::STATE_DEMOPLAYBACK)
+			return 0;
+		return g_Config.m_ClAntiPingPlayers;
+	}
+	bool AntiPingPlayer(int ClientId, bool IsDummy, const class CCharacter *pChar) const;
 	bool AntiPingGrenade() const { return g_Config.m_ClAntiPing && g_Config.m_ClAntiPingGrenade && !m_Snap.m_SpecInfo.m_Active && Client()->State() != IClient::STATE_DEMOPLAYBACK; }
 	bool AntiPingWeapons() const { return g_Config.m_ClAntiPing && g_Config.m_ClAntiPingWeapons && !m_Snap.m_SpecInfo.m_Active && Client()->State() != IClient::STATE_DEMOPLAYBACK; }
 	bool AntiPingGunfire() const { return AntiPingGrenade() && AntiPingWeapons() && g_Config.m_ClAntiPingGunfire; }

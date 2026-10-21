@@ -24,6 +24,7 @@ SAN.*
 _CPack_Packages/
 build.ninja
 checksummed_*
+!cmake/checksummed_extra.txt
 cmake_install.cmake
 debug
 gmock.pc

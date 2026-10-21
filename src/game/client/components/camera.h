@@ -27,6 +27,11 @@ private:
 	vec2 m_aLastPos[NUM_DUMMIES];
 	vec2 m_PrevCenter;
 
+	bool m_SmoothCamActive = false;
+	float m_SmoothCamTime = 0.0f;
+	float m_SmoothCamSpeed = 6.0f;
+	bool m_UserZoomActive = false;
+
 	int m_PrevSpecId;
 	bool m_WasSpectating;
 
@@ -40,6 +45,7 @@ private:
 	vec2 m_CenterBeforeSmoothing;
 
 	float CameraSmoothingProgress(float CurrentTime) const;
+	void UpdateSmoothCamera();
 
 	CCubicBezier m_ZoomSmoothing;
 	float m_ZoomSmoothingStart;
@@ -104,6 +110,7 @@ public:
 
 	void SetZoom(float Target, int Smoothness, bool IsUser);
 	bool ZoomAllowed() const;
+	bool UserZoomActive() const { return m_UserZoomActive; }
 
 	int Deadzone() const;
 	int FollowFactor() const;

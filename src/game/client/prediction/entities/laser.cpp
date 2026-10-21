@@ -81,7 +81,11 @@ bool CLaser::HitCharacter(vec2 From, vec2 To)
 			pHit->ApplyMoveRestrictions();
 		}
 	}
-	else if(m_Type == WEAPON_LASER)
+
+	if(pOwnerChar)
+		pOwnerChar->AntiPingInterference(pHit->GetCid());
+
+	if(m_Type == WEAPON_LASER)
 	{
 		pHit->Unfreeze();
 	}

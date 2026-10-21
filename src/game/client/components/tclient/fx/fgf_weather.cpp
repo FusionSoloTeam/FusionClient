@@ -23,6 +23,8 @@ static constexpr float VIEW_MARGIN = 120.0f;
 void CFgfWeather::OnInit()
 {
 	m_GlowTexture = FgfGlow::CreateGlowTexture(Graphics());
+	m_LeafTexture = FgfGlow::CreateLeafTexture(Graphics());
+	m_PetalTexture = FgfGlow::CreatePetalTexture(Graphics());
 }
 
 void CFgfWeather::OnReset()
@@ -82,8 +84,21 @@ void CFgfWeather::Spawn(const CFxScreenRect &View, float Passed, float Time)
 	}
 
 	const bool Snow = m_Kind == FGF_WEATHER_SNOW;
-	const float AverageLife = Snow ? 5.0f : 0.45f;
-	const float Wanted = (Snow ? 110.0f : 170.0f) * Amount * Area * Height / 800.0f;
+	const bool Sakura = m_Kind == FGF_WEATHER_SAKURA;
+	const bool Leafy = m_Kind == FGF_WEATHER_LEAVES || Sakura;
+	float AverageLife = 0.45f;
+	float WantedPerArea = 170.0f;
+	if(Snow)
+	{
+		AverageLife = 5.0f;
+		WantedPerArea = 110.0f;
+	}
+	else if(Leafy)
+	{
+		AverageLife = 6.5f;
+		WantedPerArea = 85.0f;
+	}
+	const float Wanted = WantedPerArea * Amount * Area * Height / 800.0f;
 	m_SpawnAccumulator += Passed * Wanted / AverageLife;
 	int Tries = 0;
 	while(m_SpawnAccumulator >= 1.0f && Tries < 400)
@@ -102,7 +117,13 @@ void CFgfWeather::Spawn(const CFxScreenRect &View, float Passed, float Time)
 		}
 		pDrop->m_Pos = Pos;
 		pDrop->m_Phase = random_float(0.0f, 2.0f * pi);
-		if(Snow)
+		if(Leafy)
+		{
+			pDrop->m_Vel = vec2(random_float(-40.0f, 40.0f), random_float(28.0f, 62.0f));
+			pDrop->m_LifeSpan = random_float(4.5f, 8.5f);
+			pDrop->m_Size = Sakura ? random_float(1.1f, 1.9f) : random_float(1.5f, 2.6f);
+		}
+		else if(Snow)
 		{
 			pDrop->m_Vel = vec2(random_float(-15.0f, 15.0f), random_float(35.0f, 70.0f));
 			pDrop->m_LifeSpan = random_float(3.0f, 7.0f);
@@ -139,6 +160,11 @@ void CFgfWeather::Update(const CFxScreenRect &View, float Passed, float Time)
 			{
 				Vel.x += std::sin(Time * 1.3f + Drop.m_Phase) * 25.0f;
 			}
+			else if(m_Kind == FGF_WEATHER_LEAVES || m_Kind == FGF_WEATHER_SAKURA)
+			{
+				Vel.x += std::sin(Time * 1.7f + Drop.m_Phase) * 45.0f + std::sin(Time * 3.9f + Drop.m_Phase * 2.3f) * 18.0f;
+				Vel.y += std::sin(Time * 2.3f + Drop.m_Phase * 1.7f) * 10.0f;
+			}
 			else if(m_Kind == FGF_WEATHER_FIREFLIES)
 			{
 				const float Turn = std::sin(Time * 0.7f + Drop.m_Phase * 3.0f) * 1.6f;
@@ -161,6 +187,11 @@ void CFgfWeather::Update(const CFxScreenRect &View, float Passed, float Time)
 				{
 					Drop.m_Settled = true;
 					Drop.m_LifeSpan = Drop.m_Life + random_float(1.5f, 3.0f);
+				}
+				else if(m_Kind == FGF_WEATHER_LEAVES || m_Kind == FGF_WEATHER_SAKURA)
+				{
+					Drop.m_Settled = true;
+					Drop.m_LifeSpan = Drop.m_Life + random_float(0.9f, 1.9f);
 				}
 				else
 				{
@@ -201,6 +232,10 @@ static ColorRGBA WeatherColor(int Kind)
 		Packed = g_Config.m_TcWeatherRainColor;
 	else if(Kind == FGF_WEATHER_FIREFLIES)
 		Packed = g_Config.m_TcWeatherFireflyColor;
+	else if(Kind == FGF_WEATHER_LEAVES)
+		Packed = g_Config.m_TcWeatherLeafColor;
+	else if(Kind == FGF_WEATHER_SAKURA)
+		Packed = g_Config.m_TcWeatherSakuraColor;
 	return color_cast<ColorRGBA>(ColorHSLA(Packed));
 }
 
@@ -230,6 +265,32 @@ void CFgfWeather::Draw(float Time)
 		}
 		Graphics()->QuadsEnd();
 		Graphics()->BlendNormal();
+		return;
+	}
+
+	if(m_Kind == FGF_WEATHER_LEAVES || m_Kind == FGF_WEATHER_SAKURA)
+	{
+		const bool Sakura = m_Kind == FGF_WEATHER_SAKURA;
+		const IGraphics::CTextureHandle ShapeTexture = Sakura ? m_PetalTexture : m_LeafTexture;
+		Graphics()->TextureSet(ShapeTexture.IsValid() ? ShapeTexture : m_GlowTexture);
+		Graphics()->BlendNormal();
+		Graphics()->QuadsBegin();
+		Graphics()->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
+		for(int i = 0; i < m_NumDrops; i++)
+		{
+			const CDrop &Drop = m_aDrops[i];
+			const float Fade = std::clamp(std::min(Drop.m_Life / 0.7f, (Drop.m_LifeSpan - Drop.m_Life) / 0.9f), 0.0f, 1.0f);
+			const float Facing = Drop.m_Phase < pi ? 1.0f : -1.0f;
+			const float Spin = Drop.m_Settled ? Drop.m_Phase : Drop.m_Phase + Time * (Sakura ? 1.8f : 1.2f) * Facing;
+			const float Flutter = Drop.m_Settled ? 1.0f : (0.28f + 0.72f * std::abs(std::sin(Time * 2.6f + Drop.m_Phase * 1.7f)));
+			const float Size = Drop.m_Size * (Sakura ? 8.0f : 9.5f);
+			Graphics()->QuadsSetRotation(Spin);
+			Graphics()->SetColor(Color.r, Color.g, Color.b, 0.95f * Fade);
+			IGraphics::CQuadItem Shape(Drop.m_Pos.x, Drop.m_Pos.y, Size * Flutter, Size);
+			Graphics()->QuadsDraw(&Shape, 1);
+		}
+		Graphics()->QuadsSetRotation(0.0f);
+		Graphics()->QuadsEnd();
 		return;
 	}
 
@@ -344,7 +405,7 @@ void CFgfWeather::OnRender()
 		return;
 	}
 
-	const int Kind = std::clamp(g_Config.m_TcWeather, 0, (int)FGF_WEATHER_DUST);
+	const int Kind = std::clamp(g_Config.m_TcWeather, 0, (int)FGF_WEATHER_SAKURA);
 	if(Kind != m_Kind)
 	{
 		m_Kind = Kind;

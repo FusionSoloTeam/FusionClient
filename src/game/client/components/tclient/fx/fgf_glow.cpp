@@ -46,7 +46,7 @@ static IGraphics::CTextureHandle CreateTexture(IGraphics *pGraphics, int Width, 
 	Image.m_Width = Width;
 	Image.m_Height = Height;
 	Image.m_Format = CImageInfo::FORMAT_RGBA;
-Image.m_pData = (uint8_t *)malloc((size_t)Image.m_Width * Image.m_Height * 4);
+	Image.m_pData = (uint8_t *)malloc((size_t)Image.m_Width * Image.m_Height * 4);
 	for(int y = 0; y < Height; y++)
 	{
 		for(int x = 0; x < Width; x++)
@@ -90,7 +90,7 @@ IGraphics::CTextureHandle FgfGlow::CreateLeafTexture(IGraphics *pGraphics)
 	Image.m_Width = Size;
 	Image.m_Height = Size;
 	Image.m_Format = CImageInfo::FORMAT_RGBA;
-Image.m_pData = (uint8_t *)malloc((size_t)Image.m_Width * Image.m_Height * 4);
+	Image.m_pData = (uint8_t *)malloc((size_t)Image.m_Width * Image.m_Height * 4);
 	for(int y = 0; y < Size; y++)
 	{
 		for(int x = 0; x < Size; x++)
@@ -119,6 +119,39 @@ Image.m_pData = (uint8_t *)malloc((size_t)Image.m_Width * Image.m_Height * 4);
 		}
 	}
 	return pGraphics->LoadTextureRawMove(Image, 0, "fgf_leaf");
+}
+
+IGraphics::CTextureHandle FgfGlow::CreatePetalTexture(IGraphics *pGraphics)
+{
+	const int Size = 64;
+	CImageInfo Image;
+	Image.m_Width = Size;
+	Image.m_Height = Size;
+	Image.m_Format = CImageInfo::FORMAT_RGBA;
+	Image.m_pData = (uint8_t *)malloc((size_t)Image.m_Width * Image.m_Height * 4);
+	for(int y = 0; y < Size; y++)
+	{
+		for(int x = 0; x < Size; x++)
+		{
+			const float U = (x + 0.5f) / Size * 2.0f - 1.0f;
+			const float V = (y + 0.5f) / Size * 2.0f - 1.0f;
+			const float Ax = U / 0.62f;
+			const float Ay = (V - 0.05f) / 0.93f;
+			float Alpha = std::clamp((1.0f - std::sqrt(Ax * Ax + Ay * Ay)) / 0.09f, 0.0f, 1.0f);
+			const float Notch = std::sqrt(U * U * 1.6f + (V + 0.92f) * (V + 0.92f));
+			Alpha *= std::clamp((Notch - 0.10f) / 0.10f, 0.0f, 1.0f);
+
+			const float Crease = 1.0f - 0.22f * std::exp(-(U * U) / 0.03f);
+			const float Shade = mix(0.84f, 1.0f, (1.0f - V) * 0.5f) * Crease;
+			if(Alpha < 0.02f)
+				Alpha = 0.0f;
+
+			uint8_t *pPixel = &Image.m_pData[(y * Size + x) * 4];
+			pPixel[0] = pPixel[1] = pPixel[2] = (uint8_t)round_to_int(Shade * 255.0f);
+			pPixel[3] = (uint8_t)round_to_int(Alpha * 255.0f);
+		}
+	}
+	return pGraphics->LoadTextureRawMove(Image, 0, "fgf_petal");
 }
 
 void FgfGlow::BeginStrips(IGraphics *pGraphics, IGraphics::CTextureHandle BeamTexture)
