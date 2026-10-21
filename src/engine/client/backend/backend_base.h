@@ -4,7 +4,11 @@
 #include <engine/client/graphics_threaded.h>
 #include <engine/graphics.h>
 
+#ifndef BACKEND_NO_SDL
 #include <SDL_video.h>
+#else
+struct SDL_Window;
+#endif
 
 #include <atomic>
 #include <cstddef>
@@ -85,7 +89,7 @@ protected:
 	SGfxWarningContainer m_Warning;
 	std::atomic<bool> m_FrameBlendingAllowed{true};
 
-	static bool Texture2DTo3D(uint8_t *pImageBuffer, int ImageWidth, int ImageHeight, size_t PixelSize, int SplitCountWidth, int SplitCountHeight, uint8_t *pTarget3DImageData, int &Target3DImageWidth, int &Target3DImageHeight);
+	static void Texture2DTo3D(uint8_t *pImageBuffer, int ImageWidth, int ImageHeight, size_t PixelSize, int SplitCountWidth, int SplitCountHeight, uint8_t *pTarget3DImageData, int &Target3DImageWidth, int &Target3DImageHeight);
 
 	virtual bool GetPresentedImageData(uint32_t &Width, uint32_t &Height, CImageInfo::EImageFormat &Format, std::vector<uint8_t> &vDstData) = 0;
 

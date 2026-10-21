@@ -18,6 +18,14 @@
 #endif
 #endif
 
+#if defined(CONF_PLATFORM_MACOS) || defined(CONF_PLATFORM_IOS)
+#include <mach/task_policy.h>
+#include <mach/thread_act.h>
+#include <mach/thread_policy.h>
+#elif defined(CONF_PLATFORM_LINUX) || defined(CONF_PLATFORM_ANDROID)
+#include <sys/prctl.h>
+#endif
+
 #if defined(CONF_PLATFORM_EMSCRIPTEN)
 #include <emscripten/emscripten.h>
 #endif
@@ -37,7 +45,7 @@ struct THREAD_RUN
 #if defined(CONF_FAMILY_UNIX)
 static void *thread_run(void *user)
 #elif defined(CONF_FAMILY_WINDOWS)
-static unsigned long __stdcall thread_run(void *user)
+static DWORD __stdcall thread_run(void *user)
 #else
 #error not implemented
 #endif
@@ -50,7 +58,13 @@ static unsigned long __stdcall thread_run(void *user)
 	void *u = data->u;
 	free(data);
 	threadfunc(u);
+#if defined(CONF_FAMILY_UNIX)
+	return nullptr;
+#elif defined(CONF_FAMILY_WINDOWS)
 	return 0;
+#else
+#error not implemented
+#endif
 }
 
 void *thread_init(void (*threadfunc)(void *), void *u, const char *name)
@@ -100,7 +114,21 @@ void *thread_init(void (*threadfunc)(void *), void *u, const char *name)
 
 void thread_wait(void *thread)
 {
-#if defined(CONF_FAMILY_UNIX)
+#if defined(CONF_PLATFORM_EMSCRIPTEN)
+	// TODO: Remove this workaround when https://github.com/emscripten-core/emscripten/issues/9910 is fixed.
+	while(true)
+	{
+		const int join_result = pthread_tryjoin_np((pthread_t)thread, nullptr);
+		if(join_result == 0)
+		{
+			break;
+		}
+		dbg_assert(join_result == EBUSY, "pthread_tryjoin_np failure");
+		// Busy waiting so we can periodically yield control to browser's
+		// main thread because blocking on the main thread is very bad.
+		emscripten_sleep(10);
+	}
+#elif defined(CONF_FAMILY_UNIX)
 	dbg_assert(pthread_join((pthread_t)thread, nullptr) == 0, "pthread_join failure");
 #elif defined(CONF_FAMILY_WINDOWS)
 	dbg_assert(WaitForSingleObject((HANDLE)thread, INFINITE) == WAIT_OBJECT_0, "WaitForSingleObject failure");
@@ -118,6 +146,17 @@ void thread_yield()
 	Sleep(0);
 #else
 #error not implemented
+#endif
+}
+
+void thread_request_precise_wakeups()
+{
+#if defined(CONF_PLATFORM_MACOS) || defined(CONF_PLATFORM_IOS)
+	// Not asserted, the system is free to decline the policy.
+	thread_latency_qos_policy_data_t policy = {LATENCY_QOS_TIER_0};
+	thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_LATENCY_QOS_POLICY, (thread_policy_t)&policy, THREAD_LATENCY_QOS_POLICY_COUNT);
+#elif defined(CONF_PLATFORM_LINUX) || defined(CONF_PLATFORM_ANDROID)
+	dbg_assert(prctl(PR_SET_TIMERSLACK, 1) == 0, "prctl(PR_SET_TIMERSLACK) failure");
 #endif
 }
 

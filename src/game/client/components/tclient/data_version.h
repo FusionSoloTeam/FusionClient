@@ -1,8 +1,7 @@
 #ifndef GAME_CLIENT_COMPONENTS_TCLIENT_DATA_VERSION_H
 #define GAME_CLIENT_COMPONENTS_TCLIENT_DATA_VERSION_H
-#else
-#error data_version.h included multiple times
-#endif
+
+#include <base/io.h>
 
 // Check validity of data/data_version.txt
 // This is extracted to this file for ease of editing
@@ -10,8 +9,6 @@
 
 // #include <format>
 // #include <string>
-
-#include <base/system.h>
 
 #include <engine/shared/linereader.h>
 
@@ -50,3 +47,5 @@ inline void CheckDataVersion(char *pError, int Length, IOHANDLE File)
 
 	io_close(File);
 }
+
+#endif

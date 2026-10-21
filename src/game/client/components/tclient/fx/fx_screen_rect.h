@@ -42,17 +42,15 @@ public:
 
 inline CFxScreenRect FxGetScreen(IGraphics *pGraphics)
 {
-	float x0, y0, x1, y1;
-	pGraphics->GetScreen(&x0, &y0, &x1, &y1);
-	return CFxScreenRect(vec2(x0, y0), vec2(x1, y1));
+	const CScreenRect Rect = pGraphics->GetScreen();
+	return CFxScreenRect(Rect.m_TopLeft, Rect.m_BottomRight);
 }
 
 inline CFxScreenRect FxMapScreenToWorld(IGraphics *pGraphics, float CenterX, float CenterY, float ParallaxX, float ParallaxY,
 	float ParallaxZoom, float OffsetX, float OffsetY, float Zoom)
 {
-	float aPoints[4];
-	pGraphics->MapScreenToWorld(CenterX, CenterY, ParallaxX, ParallaxY, ParallaxZoom, OffsetX, OffsetY, pGraphics->WorldAspect(), Zoom, aPoints);
-	return CFxScreenRect(vec2(aPoints[0], aPoints[1]), vec2(aPoints[2], aPoints[3]));
+	const CScreenRect Rect = pGraphics->MapScreenToWorld(CenterX, CenterY, ParallaxX, ParallaxY, ParallaxZoom, OffsetX, OffsetY, pGraphics->WorldAspect(), Zoom);
+	return CFxScreenRect(Rect.m_TopLeft, Rect.m_BottomRight);
 }
 
 #endif

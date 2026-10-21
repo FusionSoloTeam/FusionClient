@@ -218,15 +218,13 @@ class CRenderTools
 	static void GetRenderTeeBodyScale(float BaseSize, float &BodyScale);
 	static void GetRenderTeeFeetScale(float BaseSize, float &FeetScaleWidth, float &FeetScaleHeight);
 
-	void RenderTee6(const CAnimState *pAnim, const CTeeRenderInfo *pInfo, int Emote, vec2 Dir, vec2 Pos, float Alpha = 1.0f, vec2 BodyScale = vec2(1.0f, 1.0f), vec2 FeetScale = vec2(1.0f, 1.0f), float BodyAngle = 0.0f, float FeetAngle = 0.0f) const;
-	void RenderTee7(const CAnimState *pAnim, const CTeeRenderInfo *pInfo, int Emote, vec2 Dir, vec2 Pos, float Alpha = 1.0f, vec2 BodyScale = vec2(1.0f, 1.0f), vec2 FeetScale = vec2(1.0f, 1.0f), float BodyAngle = 0.0f, float FeetAngle = 0.0f) const;
+	void RenderTee6(const CAnimState *pAnim, const CTeeRenderInfo *pInfo, int Emote, vec2 Dir, vec2 Pos, float Alpha, vec2 BodyScale, vec2 FeetScale, float BodyAngle, float FeetAngle, bool IsLocal) const;
+	void RenderTee7(const CAnimState *pAnim, const CTeeRenderInfo *pInfo, int Emote, vec2 Dir, vec2 Pos, float Alpha, vec2 BodyScale, vec2 FeetScale, float BodyAngle, float FeetAngle, bool IsLocal) const;
 
 public:
 	class IGraphics *Graphics() const { return m_pGraphics; }
 	class ITextRender *TextRender() const { return m_pTextRender; }
 	class CGameClient *GameClient() const { return m_pGameClient; }
-
-	bool m_LocalTeeRender = false; // TClient
 
 	void Init(class IGraphics *pGraphics, class ITextRender *pTextRender, class CGameClient *pGameClient);
 
@@ -241,8 +239,9 @@ public:
 	// returns the offset to use, to render the tee with @see RenderTee exactly in the mid
 	static void GetRenderTeeOffsetToRenderedTee(const CAnimState *pAnim, const CTeeRenderInfo *pInfo, vec2 &TeeOffsetToMid);
 	// object render methods
-	void RenderTee(const CAnimState *pAnim, const CTeeRenderInfo *pInfo, int Emote, vec2 Dir, vec2 Pos, float Alpha = 1.0f) const;
+	void RenderTee(const CAnimState *pAnim, const CTeeRenderInfo *pInfo, int Emote, vec2 Dir, vec2 Pos, float Alpha = 1.0f, bool IsLocal = false) const;
 	void RenderTee(const CAnimState *pAnim, const CTeeRenderInfo *pInfo, int Emote, vec2 Dir, vec2 Pos, float Alpha, vec2 BodyScale, vec2 FeetScale, float BodyAngle, float FeetAngle) const;
+	void RenderTee(const CAnimState *pAnim, const CTeeRenderInfo *pInfo, int Emote, vec2 Dir, vec2 Pos, float Alpha, vec2 BodyScale, vec2 FeetScale, float BodyAngle, float FeetAngle, bool IsLocal) const;
 };
 
 #endif

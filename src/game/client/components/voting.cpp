@@ -2,7 +2,8 @@
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
 #include "voting.h"
 
-#include <base/system.h>
+#include <base/str.h>
+#include <base/time.h>
 
 #include <engine/shared/config.h>
 #include <engine/textrender.h>
@@ -155,7 +156,7 @@ int CVoting::SecondsLeft() const
 CVoting::CVoting()
 {
 	ClearOptions();
-	OnReset();
+	CVoting::OnReset();
 }
 
 void CVoting::AddOption(const char *pDescription)
@@ -212,7 +213,7 @@ void CVoting::RemoveOption(const char *pDescription)
 				pOption->m_pPrev->m_pNext = pOption;
 			m_pRecycleLast = pOption;
 			if(!m_pRecycleFirst)
-				m_pRecycleLast = pOption;
+				m_pRecycleFirst = pOption;
 
 			break;
 		}
@@ -354,8 +355,7 @@ void CVoting::Render()
 	}
 
 	const CUIRect Screen = *Ui()->Screen();
-	float SaveX0, SaveY0, SaveX1, SaveY1;
-	Graphics()->GetScreen(&SaveX0, &SaveY0, &SaveX1, &SaveY1);
+	const CScreenRect SaveScreen = Graphics()->GetScreen();
 	const float HudWidth = HudLayout::CANVAS_HEIGHT * Graphics()->ScreenAspect();
 	const auto VoteLayout = HudLayout::Get(HudLayout::MODULE_VOTE, HudWidth, HudLayout::CANVAS_HEIGHT);
 	const float VoteScale = std::clamp(VoteLayout.m_Scale / 100.0f, 0.25f, 3.0f);
@@ -416,7 +416,7 @@ void CVoting::Render()
 	Ui()->DoLabel(&RightColumn, aBuf, 6.0f, TEXTALIGN_MR);
 
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
-	Graphics()->MapScreen(SaveX0, SaveY0, SaveX1, SaveY1);
+	Graphics()->MapScreen(SaveScreen);
 }
 
 void CVoting::RenderBars(CUIRect Bars) const

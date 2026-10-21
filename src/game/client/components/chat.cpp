@@ -2,7 +2,12 @@
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
 
 #include "chat.h"
+
+#include <base/color.h>
 #include <base/io.h>
+#include <base/log.h>
+#include <base/log_color.h>
+#include <base/mem.h>
 #include <base/time.h>
 
 #include <engine/editor.h>
@@ -64,7 +69,7 @@ void NotifyReplaceNick(const char *pTemplate, const char *pName, char *pOut, int
 }
 }
 
-char CChat::ms_aDisplayText[MAX_LINE_LENGTH] = "";
+char CChat::ms_aDisplayText[MAX_CHAT_LENGTH] = "";
 
 CChat::CLine::CLine()
 {
@@ -103,7 +108,7 @@ CChat::CChat()
 				str_startswith(pStr, "/load ")))
 		{
 			bool Censor = false;
-			const size_t NumLetters = minimum(NumChars, sizeof(ms_aDisplayText) - 1);
+			const size_t NumLetters = std::min(NumChars, sizeof(ms_aDisplayText) - 1);
 			for(size_t i = 0; i < NumLetters; ++i)
 			{
 				if(Censor)
@@ -231,7 +236,7 @@ void CChat::ConChat(IConsole::IResult *pResult, void *pUserData)
 	else if(str_comp(pMode, "team") == 0)
 		((CChat *)pUserData)->EnableMode(1);
 	else
-		((CChat *)pUserData)->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "console", "expected all or team as mode");
+		log_error("chat", "expected all or team as mode");
 
 	if(pResult->GetString(1)[0] || g_Config.m_ClChatReset)
 		((CChat *)pUserData)->m_Input.Set(pResult->GetString(1));
@@ -462,7 +467,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			while(*pRest != '\0' && *pRest != ' ')
 				pRest++;
 
-			char aFixedLine[MAX_LINE_LENGTH];
+			char aFixedLine[MAX_CHAT_LENGTH];
 			str_format(aFixedLine, sizeof(aFixedLine), "%s%s", aLayoutFix, pRest);
 			m_Input.Set(aFixedLine);
 		}
@@ -473,6 +478,8 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			; // Do nothing as specid was executed
 		else if(GameClient()->m_HeartList.OnChatInput(m_Input.GetString()))
 			; // Do nothing as friendlist was executed
+		else if(GameClient()->m_Translate.ChatDoTranslateOutgoing(m_Mode == MODE_TEAM ? 1 : 0, m_Input.GetString()))
+			; // Do nothing as outgoing translate was queued
 		else
 		{
 			StartSmoothSend(m_Input.GetString());
@@ -512,7 +519,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 
 			if(g_Config.m_TcChatFixLayout)
 			{
-				char aFixedToken[MAX_LINE_LENGTH];
+				char aFixedToken[MAX_CHAT_LENGTH];
 				if(ChatTranslateLayoutToken(m_aCompletionBuffer, aFixedToken, sizeof(aFixedToken)))
 					str_copy(m_aCompletionBuffer, aFixedToken, sizeof(m_aCompletionBuffer));
 			}
@@ -591,7 +598,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			// insert the command
 			if(pCompletionCommand)
 			{
-				char aBuf[MAX_LINE_LENGTH];
+				char aBuf[MAX_CHAT_LENGTH];
 				// add part before the name
 				str_truncate(aBuf, sizeof(aBuf), m_Input.GetString(), m_PlaceholderOffset);
 
@@ -650,7 +657,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			// insert the name
 			if(pCompletionString)
 			{
-				char aBuf[MAX_LINE_LENGTH];
+				char aBuf[MAX_CHAT_LENGTH];
 				// add part before the name
 				str_truncate(aBuf, sizeof(aBuf), m_Input.GetString(), m_PlaceholderOffset);
 
@@ -716,7 +723,9 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 				m_pHistoryEntry = pTest;
 		}
 		else
+		{
 			m_pHistoryEntry = m_History.Last();
+		}
 
 		if(m_pHistoryEntry)
 			m_Input.Set(m_pHistoryEntry->m_aText);
@@ -752,7 +761,6 @@ void CChat::EnableMode(int Team)
 		else
 			m_Mode = MODE_ALL;
 
-		Input()->Clear();
 		m_CompletionChosen = -1;
 		m_CompletionUsed = false;
 		m_Input.Activate(EInputPriority::CHAT);
@@ -773,13 +781,12 @@ void CChat::DisableMode()
 void CChat::TagPlayerUnderCursor()
 {
 	const vec2 Center = GameClient()->m_Camera.m_Center;
-	float aPoints[4];
-	Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0.0f, 0.0f, Graphics()->WorldAspect(), GameClient()->m_Camera.m_RenderZoom, aPoints);
+	const CScreenRect WorldRect = Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0.0f, 0.0f, Graphics()->WorldAspect(), GameClient()->m_Camera.m_RenderZoom);
 
 	const vec2 UiSize = vec2(600.0f * Graphics()->ScreenAspect(), 600.0f);
 	const vec2 WorldPos = vec2(
-		aPoints[0] + (m_ChatCursorPos.x / UiSize.x) * (aPoints[2] - aPoints[0]),
-		aPoints[1] + (m_ChatCursorPos.y / UiSize.y) * (aPoints[3] - aPoints[1]));
+		WorldRect.m_TopLeft.x + (m_ChatCursorPos.x / UiSize.x) * WorldRect.Size().x,
+		WorldRect.m_TopLeft.y + (m_ChatCursorPos.y / UiSize.y) * WorldRect.Size().y);
 
 	int BestId = -1;
 	float BestDist = CCharacterCore::PhysicalSize() * (float)std::clamp(g_Config.m_TcChatTagCursorHitbox, 50, 500) / 100.0f;
@@ -814,14 +821,10 @@ void CChat::OnMessage(int MsgType, void *pRawMsg)
 	{
 		CNetMsg_Sv_Chat *pMsg = (CNetMsg_Sv_Chat *)pRawMsg;
 
-		auto &Re = GameClient()->m_TClient.m_RegexChatIgnore;
-		if(Re.error().empty() && Re.test(pMsg->m_pMessage))
-			return;
-
 		/*
 		if(g_Config.m_ClCensorChat)
 		{
-			char aMessage[MAX_LINE_LENGTH];
+			char aMessage[MAX_CHAT_LENGTH];
 			str_copy(aMessage, pMsg->m_pMessage);
 			GameClient()->m_Censor.CensorMessage(aMessage);
 			AddLine(pMsg->m_ClientId, pMsg->m_Team, aMessage);
@@ -976,6 +979,18 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	if(ClientId == CLIENT_MSG && !g_Config.m_TcShowChatClient)
 		return;
 
+	// TClient
+	if(([&]() {
+		   if(ClientId == CLIENT_MSG || ClientId == SERVER_MSG)
+			   return false;
+		   for(const auto LocalClientId : GameClient()->m_aLocalIds)
+			   if(LocalClientId == ClientId)
+				   return false;
+		   auto &Re = GameClient()->m_TClient.m_RegexChatIgnore;
+		   return Re.error().empty() && Re.test(pLine);
+	   })())
+		return;
+
 	// trim right and set maximum length to 256 utf8-characters
 	int Length = 0;
 	const char *pStr = pLine;
@@ -991,9 +1006,11 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 			pEnd = nullptr;
 		}
 		else if(pEnd == nullptr)
+		{
 			pEnd = pStrOld;
+		}
 
-		if(++Length >= MAX_LINE_LENGTH)
+		if(++Length >= MAX_CHAT_LENGTH)
 		{
 			*(const_cast<char *>(pStr)) = '\0';
 			break;
@@ -1007,10 +1024,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 
 	bool Highlighted = false;
 
-	auto &&FChatMsgCheckAndPrint = [this](const CLine &Line) {
-		char aBuf[1024];
-		str_format(aBuf, sizeof(aBuf), "%s%s%s", Line.m_aName, Line.m_ClientId >= 0 ? ": " : "", Line.m_aText);
-
+	auto &&FChatMsgCheckAndPrint = [&](const CLine &Line) {
 		ColorRGBA ChatLogColor = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
 		if(Line.m_Highlighted)
 		{
@@ -1042,7 +1056,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 		else
 			pFrom = "chat/all";
 
-		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, pFrom, aBuf, ChatLogColor);
+		log_info_color(color_cast<LOG_COLOR>(ChatLogColor), pFrom, "%s%s%s", Line.m_aName, Line.m_ClientId >= 0 ? ": " : "", Line.m_aText);
 	};
 
 	// Custom color for new line
@@ -1434,7 +1448,7 @@ void CChat::OnPrepareLines(float y)
 	}
 
 	int64_t Now = time();
-	float LineWidth = (IsScoreBoardOpen ? maximum(85.0f, (FontSize * 85.0f / 6.0f)) : g_Config.m_ClChatWidth) - (RealMsgPaddingX * 1.5f) - RealMsgPaddingTee;
+	float LineWidth = (IsScoreBoardOpen ? std::max(85.0f, FontSize * 85.0f / 6.0f) : g_Config.m_ClChatWidth) - (RealMsgPaddingX * 1.5f) - RealMsgPaddingTee;
 
 	float HeightLimit = IsScoreBoardOpen ? 180.0f : (m_PrevShowChat ? 50.0f : 200.0f);
 	float Begin = x;
@@ -1512,7 +1526,7 @@ void CChat::OnPrepareLines(float y)
 		}
 
 		std::vector<SChatGradientRange> vGradientRanges;
-		if(GradientNicknames && Line.m_ClientId < 0 && pText[0] != '\0')
+		if(GradientNicknames && pText[0] != '\0')
 			ChatCollectGradientRanges(GameClient(), pText, vGradientRanges);
 
 		// get the y offset (calculate it if we haven't done that yet)
@@ -1807,7 +1821,7 @@ void CChat::OnPrepareLines(float y)
 			}
 			else
 			{
-				FullWidth += maximum(LineCursor.m_LongestLineWidth, AppendCursor.m_LongestLineWidth);
+				FullWidth += std::max(LineCursor.m_LongestLineWidth, AppendCursor.m_LongestLineWidth);
 			}
 			Graphics()->SetColor(1, 1, 1, 1);
 			Line.m_QuadContainerIndex = Graphics()->CreateRectQuadContainer(Begin, y, FullWidth, Line.m_aYOffset[OffsetType], MessageRounding(), IGraphics::CORNER_ALL);
@@ -2036,7 +2050,7 @@ void CChat::OnRender()
 
 	const float Height = 300.0f;
 	const float Width = Height * Graphics()->ScreenAspect();
-	Graphics()->MapScreen(0.0f, 0.0f, Width, Height);
+	Graphics()->MapScreenToSize(Width, Height);
 
 	float x = 5.0f;
 
@@ -2270,11 +2284,10 @@ void CChat::OnRender()
 
 	if(IsActive() && ChatCursorEnabled())
 	{
-		float ScreenTopLeftX = 0.0f, ScreenTopLeftY = 0.0f, ScreenBottomRightX = 0.0f, ScreenBottomRightY = 0.0f;
-		Graphics()->GetScreen(&ScreenTopLeftX, &ScreenTopLeftY, &ScreenBottomRightX, &ScreenBottomRightY);
+		const CScreenRect PrevScreen = Graphics()->GetScreen();
 		Ui()->MapScreen();
 		RenderTools()->RenderCursor(m_ChatCursorPos, 24.0f);
-		Graphics()->MapScreen(ScreenTopLeftX, ScreenTopLeftY, ScreenBottomRightX, ScreenBottomRightY);
+		Graphics()->MapScreen(PrevScreen);
 	}
 }
 

@@ -1,7 +1,14 @@
 /* Copyright © 2026 BestProject Team */
 #include <base/color.h>
 #include <base/math.h>
-#include <base/system.h>
+#include <base/dbg.h>
+#include <base/io.h>
+#include <base/log.h>
+#include <base/math.h>
+#include <base/mem.h>
+#include <base/str.h>
+#include <base/time.h>
+#include <base/types.h>
 #include <base/types.h>
 
 #include <engine/graphics.h>

@@ -1,6 +1,12 @@
 #include "smtc.h"
 
-#include <base/system.h>
+#include <base/dbg.h>
+#include <base/log.h>
+#include <base/math.h>
+#include <base/mem.h>
+#include <base/str.h>
+#include <base/time.h>
+#include <base/types.h>
 #include <base/thread.h>
 
 #include <cstring>

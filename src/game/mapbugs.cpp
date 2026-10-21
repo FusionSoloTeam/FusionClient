@@ -1,6 +1,7 @@
 #include "mapbugs.h"
 
-#include <base/system.h>
+#include <base/dbg.h>
+#include <base/str.h>
 
 struct CMapDescription
 {
@@ -11,7 +12,8 @@ struct CMapDescription
 	bool operator==(const CMapDescription &Other) const
 	{
 		return str_comp(m_pName, Other.m_pName) == 0 &&
-		       m_Size == Other.m_Size;
+		       m_Size == Other.m_Size &&
+		       m_Sha256 == Other.m_Sha256;
 	}
 };
 

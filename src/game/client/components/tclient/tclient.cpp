@@ -1,5 +1,7 @@
 ﻿#include "tclient.h"
 
+#include <base/mem.h>
+
 #include "data_version.h"
 
 #include <base/log.h>
@@ -41,7 +43,7 @@
 #include <tlhelp32.h>
 #endif
 
-static constexpr const char *TCLIENT_INFO_URL = "https://update.tclient.app/info.json";
+static constexpr const char *TCLIENT_INFO_URL = "https://api.github.com/repos/Kyouki-Arx/VClient/releases/latest";
 
 CTClient::CTClient()
 {
@@ -380,8 +382,8 @@ void CTClient::OnMessage(int MsgType, void *pRawMsg)
 			char aReason[VOTE_REASON_LENGTH];
 			str_copy(aDescription, pMsg->m_pDescription);
 			str_copy(aReason, pMsg->m_pReason);
-			bool KickVote = str_startswith(aDescription, "Kick ") != 0 ? true : false;
-			bool SpecVote = str_startswith(aDescription, "Pause ") != 0 ? true : false;
+			bool KickVote = str_startswith(aDescription, "Kick ") != nullptr ? true : false;
+			bool SpecVote = str_startswith(aDescription, "Pause ") != nullptr ? true : false;
 			bool SettingVote = !KickVote && !SpecVote;
 			bool RandomMapVote = SettingVote && str_find_nocase(aDescription, "random");
 			bool MapCoolDown = SettingVote && (str_find_nocase(aDescription, "change map") || str_find_nocase(aDescription, "no not change map"));
@@ -762,7 +764,7 @@ void CTClient::OnConsoleInit()
 	Console()->Register("tc_reload_textures", "", CFGFLAG_CLIENT, ConReloadTextures, this, "Reload all textures to apply the current memory settings");
 
 	Console()->Chain(
-		"tc_allow_any_resolution", [](IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData) {
+		"tc_allow_any_res", [](IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData) {
 			pfnCallback(pResult, pCallbackUserData);
 			((CTClient *)pUserData)->SetForcedAspect();
 		},
@@ -962,8 +964,7 @@ void CTClient::RenderInfoOverlay()
 	const auto Layout = HudLayout::Get(HudLayout::MODULE_VRAM_INFO, HudWidth, HudHeight);
 	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
 
-	float ScreenTopLeftX = 0.0f, ScreenTopLeftY = 0.0f, ScreenBottomRightX = 0.0f, ScreenBottomRightY = 0.0f;
-	Graphics()->GetScreen(&ScreenTopLeftX, &ScreenTopLeftY, &ScreenBottomRightX, &ScreenBottomRightY);
+	const CScreenRect PrevScreen = Graphics()->GetScreen();
 
 	Graphics()->MapScreen(-Layout.m_X / Scale, -Layout.m_Y / Scale, -Layout.m_X / Scale + HudWidth / Scale, -Layout.m_Y / Scale + HudHeight / Scale);
 	Graphics()->ClipDisable();
@@ -1020,7 +1021,7 @@ void CTClient::RenderInfoOverlay()
 	}
 
 	Graphics()->ClipDisable();
-	Graphics()->MapScreen(ScreenTopLeftX, ScreenTopLeftY, ScreenBottomRightX, ScreenBottomRightY);
+	Graphics()->MapScreen(PrevScreen);
 
 	if(MaxWidth > 0.0f)
 		m_InfoOverlayRect = CUIRect{Layout.m_X, Layout.m_Y, (MaxWidth + TCLIENT_INFO_PADDING) * Scale, (OffsetY - TCLIENT_INFO_LINE_HEIGHT + TCLIENT_INFO_FONT_SIZE) * Scale};
@@ -1050,7 +1051,7 @@ void CTClient::ResetTClientInfoTask()
 	if(m_pTClientInfoTask)
 	{
 		m_pTClientInfoTask->Abort();
-		m_pTClientInfoTask = NULL;
+		m_pTClientInfoTask = nullptr;
 	}
 }
 
@@ -1064,6 +1065,8 @@ void CTClient::FetchTClientInfo()
 	m_pTClientInfoTask = HttpGet(aUrl);
 	m_pTClientInfoTask->Timeout(CTimeout{10000, 0, 500, 10});
 	m_pTClientInfoTask->IpResolve(IPRESOLVE::V4);
+	m_pTClientInfoTask->HeaderString("User-Agent", VCLIENT_NAME "/" VCLIENT_VERSION);
+	m_pTClientInfoTask->HeaderString("Accept", "application/vnd.github+json");
 	Http()->Run(m_pTClientInfoTask);
 }
 
@@ -1081,7 +1084,7 @@ static TVersion ToTCVersion(char *pStr)
 			return gs_InvalidTCVersion;
 
 		aVersion[i] = str_toint(p);
-		p = strtok(NULL, ".");
+		p = strtok(nullptr, ".");
 	}
 
 	if(p)
@@ -1096,17 +1099,25 @@ void CTClient::FinishTClientInfo()
 	if(!pJson)
 		return;
 	const json_value &Json = *pJson;
-	const json_value &CurrentVersion = Json["version"];
+	const json_value &TagName = Json["tag_name"];
+	const json_value &LegacyVersion = Json["version"];
+	const json_value &CurrentVersion = TagName.type == json_string ? TagName : LegacyVersion;
 
 	if(CurrentVersion.type == json_string)
 	{
 		char aNewVersionStr[64];
 		str_copy(aNewVersionStr, CurrentVersion);
+		// strip a leading "v" from tags such as "v1.1"
+		const char *pNewVersion = aNewVersionStr;
+		while(*pNewVersion == 'v' || *pNewVersion == 'V' || *pNewVersion == ' ')
+			pNewVersion++;
+		char aNewVersion[64];
+		str_copy(aNewVersion, pNewVersion, sizeof(aNewVersion));
 		char aCurVersionStr[64];
-		str_copy(aCurVersionStr, TCLIENT_VERSION);
-		if(ToTCVersion(aNewVersionStr) > ToTCVersion(aCurVersionStr))
+		str_copy(aCurVersionStr, VCLIENT_VERSION);
+		if(ToTCVersion(aNewVersion) > ToTCVersion(aCurVersionStr))
 		{
-			str_copy(m_aVersionStr, CurrentVersion);
+			str_copy(m_aVersionStr, aNewVersion, sizeof(m_aVersionStr));
 		}
 		else
 		{
@@ -1248,8 +1259,7 @@ static void StripStr(const char *pIn, char *pOut, const char *pEnd)
 void CTClient::RenderMiniVoteHud()
 {
 	const CUIRect Screen = *Ui()->Screen();
-	float SaveX0, SaveY0, SaveX1, SaveY1;
-	Graphics()->GetScreen(&SaveX0, &SaveY0, &SaveX1, &SaveY1);
+	const CScreenRect SaveScreen = Graphics()->GetScreen();
 	const float HudWidth = HudLayout::CANVAS_HEIGHT * Graphics()->ScreenAspect();
 	const auto VoteLayout = HudLayout::Get(HudLayout::MODULE_VOTE, HudWidth, HudLayout::CANVAS_HEIGHT);
 	const float VoteScale = std::clamp(VoteLayout.m_Scale / 100.0f, 0.25f, 3.0f);
@@ -1313,7 +1323,7 @@ void CTClient::RenderMiniVoteHud()
 	Ui()->DoLabel(&RightColumn, aKey[0] == '\0' ? "no" : aKey, 0.5f, TEXTALIGN_MR);
 
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
-	Graphics()->MapScreen(SaveX0, SaveY0, SaveX1, SaveY1);
+	Graphics()->MapScreen(SaveScreen);
 }
 
 void CTClient::RenderCenterLines()
@@ -1326,17 +1336,15 @@ void CTClient::RenderCenterLines()
 
 	Graphics()->TextureClear();
 
-	float X0, Y0, X1, Y1;
-	Graphics()->GetScreen(&X0, &Y0, &X1, &Y1);
-	const float XMid = (X0 + X1) / 2.0f;
-	const float YMid = (Y0 + Y1) / 2.0f;
+	const CScreenRect ScreenRect = Graphics()->GetScreen();
+	const auto ScreenMid = (ScreenRect.m_BottomRight + ScreenRect.m_TopLeft) / 2.0f;
 
 	if(g_Config.m_TcShowCenterWidth == 0)
 	{
 		Graphics()->LinesBegin();
 		IGraphics::CLineItem aLines[2] = {
-			{XMid, Y0, XMid, Y1},
-			{X0, YMid, X1, YMid}};
+			{ScreenMid.x, ScreenRect.m_TopLeft.y, ScreenMid.x, ScreenRect.m_BottomRight.y},
+			{ScreenRect.m_TopLeft.x, ScreenMid.y, ScreenRect.m_BottomRight.x, ScreenMid.y}};
 		Graphics()->SetColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_TcShowCenterColor, true)));
 		Graphics()->LinesDraw(aLines, std::size(aLines));
 		Graphics()->LinesEnd();
@@ -1344,11 +1352,15 @@ void CTClient::RenderCenterLines()
 	else
 	{
 		const float W = g_Config.m_TcShowCenterWidth;
+		const float X0 = ScreenRect.m_TopLeft.x;
+		const float Y0 = ScreenRect.m_TopLeft.y;
+		const float X1 = ScreenRect.m_BottomRight.x;
+		const float Y1 = ScreenRect.m_BottomRight.y;
 		Graphics()->QuadsBegin();
 		IGraphics::CQuadItem aQuads[3] = {
-			{XMid, mix(Y0, Y1, 0.25f) - W / 4.0f, W, (Y1 - Y0 - W) / 2.0f},
-			{XMid, mix(Y0, Y1, 0.75f) + W / 4.0f, W, (Y1 - Y0 - W) / 2.0f},
-			{XMid, YMid, X1 - X0, W}};
+			{ScreenMid.x, mix(Y0, Y1, 0.25f) - W / 4.0f, W, (Y1 - Y0 - W) / 2.0f},
+			{ScreenMid.x, mix(Y0, Y1, 0.75f) + W / 4.0f, W, (Y1 - Y0 - W) / 2.0f},
+			{ScreenMid.x, ScreenMid.y, X1 - X0, W}};
 		Graphics()->SetColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_TcShowCenterColor, true)));
 		Graphics()->QuadsDraw(aQuads, std::size(aQuads));
 		Graphics()->QuadsEnd();

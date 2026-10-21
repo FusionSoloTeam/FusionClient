@@ -5,7 +5,13 @@
 #include <base/io.h>
 #include <base/math.h>
 #include <base/str.h>
-#include <base/system.h>
+#include <base/dbg.h>
+#include <base/log.h>
+#include <base/math.h>
+#include <base/mem.h>
+#include <base/str.h>
+#include <base/time.h>
+#include <base/types.h>
 
 #include <engine/client.h>
 #include <engine/console.h>
@@ -13,7 +19,7 @@
 #include <engine/graphics.h>
 #include <engine/image.h>
 #include <engine/shared/config.h>
-#include <engine/shared/http.h>
+#include <engine/http.h>
 #include <engine/storage.h>
 #include <engine/textrender.h>
 
@@ -928,7 +934,7 @@ void CLyrics::StartRequest()
 	pRequest->HeaderString("Lrclib-Client", "VClient/1.0 (https://github.com/Kyouki-Arx/VClient)");
 	pRequest->MaxResponseSize(4 * 1024 * 1024);
 	pRequest->Timeout(CTimeout{0, 15000, 1, 5});
-	m_pRequest = std::move(pRequest);
+	m_pRequest = std::shared_ptr<IHttpRequest>(std::move(pRequest));
 	m_RequestRetryAt = 0.0f;
 	Http()->Run(m_pRequest);
 	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "lyrics", "lyrics request sent");
@@ -1516,18 +1522,13 @@ void CLyrics::DrawGlyphPass(const SDrawnLine &Line, vec2 Origin, float Scale, fl
 			TopBoost = Outline ? 1.03f : (Layer > 0 ? 1.10f : 1.06f);
 			BottomShade = Outline ? 0.95f : 0.88f;
 		}
-		const float R = std::clamp(BaseColor.r * Shade, 0.0f, 1.0f);
-		const float G = std::clamp(BaseColor.g * Shade, 0.0f, 1.0f);
-		const float B = std::clamp(BaseColor.b * Shade, 0.0f, 1.0f);
+		// per-vertex colors are no longer supported, so fold the top/bottom shading into one factor
+		const float AverageShade = (TopBoost + BottomShade) * 0.5f;
+		const float R = std::clamp(BaseColor.r * Shade * AverageShade, 0.0f, 1.0f);
+		const float G = std::clamp(BaseColor.g * Shade * AverageShade, 0.0f, 1.0f);
+		const float B = std::clamp(BaseColor.b * Shade * AverageShade, 0.0f, 1.0f);
 
-		IGraphics::CColorVertex aColors[4] = {
-			IGraphics::CColorVertex(0, std::min(1.0f, R * TopBoost), std::min(1.0f, G * TopBoost), std::min(1.0f, B * TopBoost), Alpha),
-			IGraphics::CColorVertex(1, std::min(1.0f, R * (TopBoost - 0.06f)), std::min(1.0f, G * (TopBoost - 0.04f)), std::min(1.0f, B * TopBoost), Alpha),
-			IGraphics::CColorVertex(2, R * BottomShade, G * BottomShade * 0.98f, B * BottomShade * 0.92f, Alpha),
-			IGraphics::CColorVertex(3, R * (BottomShade + 0.05f), G * (BottomShade + 0.04f), B * (BottomShade + 0.02f), Alpha),
-		};
-
-		Graphics()->SetColorVertex(aColors, 4);
+		Graphics()->SetColor(R, G, B, Alpha);
 		const float U0 = Metrics.m_aUVs[0] * InvTextureSize;
 		const float V0 = Metrics.m_aUVs[1] * InvTextureSize;
 		const float U1 = Metrics.m_aUVs[2] * InvTextureSize;

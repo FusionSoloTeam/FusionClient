@@ -13,6 +13,10 @@
 #include <engine/shared/config.h>
 #include <engine/shared/localization.h>
 
+#if defined(CONF_PLATFORM_IOS)
+#include <ios/ios_main.h>
+#endif
+
 #include <SDL.h>
 #include <SDL_messagebox.h>
 #include <SDL_vulkan.h>
@@ -44,183 +48,8 @@
 #include <engine/graphics.h>
 
 #include <algorithm>
-#include <cstdlib>
 
 class IStorage;
-
-// ------------ CGraphicsBackend_Threaded
-
-// Run everything single threaded when compiling for Emscripten, as context binding does not work outside of the main thread with SDL2.
-// TODO SDL3: Check if SDL3 supports threaded graphics and PROXY_TO_PTHREAD, OFFSCREENCANVAS_SUPPORT and OFFSCREEN_FRAMEBUFFER correctly.
-#if !defined(CONF_PLATFORM_EMSCRIPTEN)
-void CGraphicsBackend_Threaded::ThreadFunc(void *pUser)
-{
-	auto *pSelf = (CGraphicsBackend_Threaded *)pUser;
-	std::unique_lock<std::mutex> Lock(pSelf->m_BufferSwapMutex);
-	// notify, that the thread started
-	pSelf->m_Started = true;
-	pSelf->m_BufferSwapCond.notify_all();
-	while(!pSelf->m_Shutdown)
-	{
-		pSelf->m_BufferSwapCond.wait(Lock, [&pSelf] { return pSelf->m_pBuffer != nullptr || pSelf->m_Shutdown; });
-		if(pSelf->m_pBuffer)
-		{
-#ifdef CONF_PLATFORM_MACOS
-			CAutoreleasePool AutoreleasePool;
-#endif
-			pSelf->m_pProcessor->RunBuffer(pSelf->m_pBuffer);
-
-			pSelf->m_pBuffer = nullptr;
-			pSelf->m_BufferInProcess.store(false, std::memory_order_relaxed);
-			pSelf->m_BufferSwapCond.notify_all();
-
-#if defined(CONF_VIDEORECORDER)
-			if(IVideo::Current())
-				IVideo::Current()->NextVideoFrameThread();
-#endif
-		}
-	}
-}
-#endif
-
-CGraphicsBackend_Threaded::CGraphicsBackend_Threaded(TTranslateFunc &&TranslateFunc) :
-	m_TranslateFunc(std::move(TranslateFunc))
-{
-	m_pProcessor = nullptr;
-	m_Shutdown = true;
-#if !defined(CONF_PLATFORM_EMSCRIPTEN)
-	m_pBuffer = nullptr;
-	m_BufferInProcess.store(false, std::memory_order_relaxed);
-#endif
-}
-
-void CGraphicsBackend_Threaded::StartProcessor(ICommandProcessor *pProcessor)
-{
-	dbg_assert(m_Shutdown, "Processor was already not shut down.");
-	m_Shutdown = false;
-	m_pProcessor = pProcessor;
-#if !defined(CONF_PLATFORM_EMSCRIPTEN)
-	std::unique_lock<std::mutex> Lock(m_BufferSwapMutex);
-	m_pThread = thread_init(ThreadFunc, this, "Graphics thread");
-	// wait for the thread to start
-	m_BufferSwapCond.wait(Lock, [this]() -> bool { return m_Started; });
-#endif
-}
-
-void CGraphicsBackend_Threaded::StopProcessor()
-{
-	dbg_assert(!m_Shutdown, "Processor was already shut down.");
-	m_Shutdown = true;
-#if defined(CONF_PLATFORM_EMSCRIPTEN)
-	m_Warning = m_pProcessor->GetWarning();
-#else
-	{
-		std::unique_lock<std::mutex> Lock(m_BufferSwapMutex);
-		m_Warning = m_pProcessor->GetWarning();
-		m_BufferSwapCond.notify_all();
-	}
-	thread_wait(m_pThread);
-#endif
-}
-
-void CGraphicsBackend_Threaded::RunBuffer(CCommandBuffer *pBuffer)
-{
-	SGfxErrorContainer Error;
-#if defined(CONF_PLATFORM_EMSCRIPTEN)
-	Error = m_pProcessor->GetError();
-	if(Error.m_ErrorType == GFX_ERROR_TYPE_NONE)
-	{
-		RunBufferSingleThreadedUnsafe(pBuffer);
-#if defined(CONF_VIDEORECORDER)
-		if(IVideo::Current())
-			IVideo::Current()->NextVideoFrameThread();
-#endif
-	}
-#else
-	WaitForIdle();
-	{
-		std::unique_lock<std::mutex> Lock(m_BufferSwapMutex);
-		Error = m_pProcessor->GetError();
-		if(Error.m_ErrorType == GFX_ERROR_TYPE_NONE)
-		{
-			m_pBuffer = pBuffer;
-			m_BufferInProcess.store(true, std::memory_order_relaxed);
-			m_BufferSwapCond.notify_all();
-		}
-	}
-#endif
-
-	// Process error after lock is released to prevent deadlock
-	if(Error.m_ErrorType != GFX_ERROR_TYPE_NONE)
-	{
-		ProcessError(Error);
-	}
-}
-
-void CGraphicsBackend_Threaded::RunBufferSingleThreadedUnsafe(CCommandBuffer *pBuffer)
-{
-	m_pProcessor->RunBuffer(pBuffer);
-}
-
-bool CGraphicsBackend_Threaded::IsIdle() const
-{
-#if defined(CONF_PLATFORM_EMSCRIPTEN)
-	return true;
-#else
-	return !m_BufferInProcess.load(std::memory_order_relaxed);
-#endif
-}
-
-void CGraphicsBackend_Threaded::WaitForIdle()
-{
-#if !defined(CONF_PLATFORM_EMSCRIPTEN)
-	std::unique_lock<std::mutex> Lock(m_BufferSwapMutex);
-	m_BufferSwapCond.wait(Lock, [this]() { return m_pBuffer == nullptr; });
-#endif
-}
-
-void CGraphicsBackend_Threaded::ProcessError(const SGfxErrorContainer &Error)
-{
-	std::string VerboseStr = "Graphics Assertion:";
-	for(const auto &ErrStr : Error.m_vErrors)
-	{
-		VerboseStr.append("\n");
-		if(ErrStr.m_RequiresTranslation)
-			VerboseStr.append(m_TranslateFunc(ErrStr.m_Err.c_str(), ""));
-		else
-			VerboseStr.append(ErrStr.m_Err);
-	}
-	dbg_assert_failed("%s", VerboseStr.c_str());
-}
-
-bool CGraphicsBackend_Threaded::GetWarning(std::vector<std::string> &WarningStrings)
-{
-	if(m_Warning.m_WarningType != GFX_WARNING_TYPE_NONE)
-	{
-		m_Warning.m_WarningType = GFX_WARNING_TYPE_NONE;
-		WarningStrings = m_Warning.m_vWarnings;
-		return true;
-	}
-	return false;
-}
-
-// ------------ CCommandProcessorFragment_General
-
-void CCommandProcessorFragment_General::Cmd_Signal(const CCommandBuffer::SCommand_Signal *pCommand)
-{
-	pCommand->m_pSemaphore->Signal();
-}
-
-bool CCommandProcessorFragment_General::RunCommand(const CCommandBuffer::SCommand *pBaseCommand)
-{
-	switch(pBaseCommand->m_Cmd)
-	{
-	case CCommandBuffer::CMD_SIGNAL: Cmd_Signal(static_cast<const CCommandBuffer::SCommand_Signal *>(pBaseCommand)); break;
-	default: return false;
-	}
-
-	return true;
-}
 
 // ------------ CCommandProcessorFragment_SDL
 void CCommandProcessorFragment_SDL::Cmd_Init(const SCommand_Init *pCommand)
@@ -274,7 +103,7 @@ void CCommandProcessorFragment_SDL::Cmd_WindowDestroyNtf(const CCommandBuffer::S
 	// Unbind the graphic context from the window, so it does not get destroyed
 #ifdef CONF_PLATFORM_ANDROID
 	if(m_GLContext)
-		SDL_GL_MakeCurrent(NULL, NULL);
+		SDL_GL_MakeCurrent(nullptr, nullptr);
 #endif
 }
 
@@ -745,11 +574,17 @@ EBackendType CGraphicsBackend_SDL_GL::DetectBackend()
 #if defined(CONF_BACKEND_VULKAN)
 	const char *pEnvDriver = SDL_getenv("DDNET_DRIVER");
 	if(pEnvDriver && str_comp_nocase(pEnvDriver, "GLES") == 0)
+	{
 		RetBackendType = BACKEND_TYPE_OPENGL_ES;
+	}
 	else if(pEnvDriver && str_comp_nocase(pEnvDriver, "Vulkan") == 0)
+	{
 		RetBackendType = BACKEND_TYPE_VULKAN;
+	}
 	else if(pEnvDriver && str_comp_nocase(pEnvDriver, "OpenGL") == 0)
+	{
 		RetBackendType = BACKEND_TYPE_OPENGL;
+	}
 	else if(pEnvDriver == nullptr)
 	{
 		// load the config backend
@@ -1005,10 +840,6 @@ static void DisplayToVideoMode(CVideoMode *pVMode, SDL_DisplayMode *pMode, float
 	pVMode->m_WindowWidth = pMode->w;
 	pVMode->m_WindowHeight = pMode->h;
 	pVMode->m_RefreshRate = RefreshRate;
-	pVMode->m_Red = SDL_BITSPERPIXEL(pMode->format);
-	pVMode->m_Green = SDL_BITSPERPIXEL(pMode->format);
-	pVMode->m_Blue = SDL_BITSPERPIXEL(pMode->format);
-	pVMode->m_Format = pMode->format;
 }
 
 void CGraphicsBackend_SDL_GL::GetVideoModes(CVideoMode *pModes, int MaxModes, int *pNumModes, float HiDPIScale, int MaxWindowWidth, int MaxWindowHeight, int ScreenId)
@@ -1377,7 +1208,9 @@ int CGraphicsBackend_SDL_GL::Init(const char *pName, int *pScreen, int *pWidth, 
 			SDL_Vulkan_GetDrawableSize(m_pWindow, pCurrentWidth, pCurrentHeight);
 	}
 	else
+	{
 		SDL_GetWindowSize(m_pWindow, pCurrentWidth, pCurrentHeight);
+	}
 	SDL_GetWindowSize(m_pWindow, pWidth, pHeight);
 
 	if(IsOpenGLFamilyBackend)
@@ -1524,6 +1357,8 @@ int CGraphicsBackend_SDL_GL::Init(const char *pName, int *pScreen, int *pWidth, 
 		CmdSDL2.m_Y = 0;
 		CmdSDL2.m_Width = *pCurrentWidth;
 		CmdSDL2.m_Height = *pCurrentHeight;
+		CmdSDL2.m_DrawableWidth = *pCurrentWidth;
+		CmdSDL2.m_DrawableHeight = *pCurrentHeight;
 		CmdSDL2.m_ByResize = true;
 		CmdBuffer.AddCommandUnsafe(CmdSDL2);
 		RunBuffer(&CmdBuffer);
@@ -1653,7 +1488,7 @@ void CGraphicsBackend_SDL_GL::SetWindowParams(int FullscreenMode, bool IsBorderl
 	}
 }
 
-bool CGraphicsBackend_SDL_GL::SetWindowScreen(int Index, bool MoveToCenter)
+bool CGraphicsBackend_SDL_GL::SetWindowScreen(int Index, bool MoveToCenter, ivec2 *pDesktopSize)
 {
 	if(Index < 0 || Index >= m_NumScreens)
 	{
@@ -1681,10 +1516,10 @@ bool CGraphicsBackend_SDL_GL::SetWindowScreen(int Index, bool MoveToCenter)
 			SDL_WINDOWPOS_UNDEFINED_DISPLAY(Index));
 	}
 
-	return UpdateDisplayMode(Index);
+	return UpdateDisplayMode(Index, pDesktopSize);
 }
 
-bool CGraphicsBackend_SDL_GL::UpdateDisplayMode(int Index)
+bool CGraphicsBackend_SDL_GL::UpdateDisplayMode(int Index, ivec2 *pDesktopSize)
 {
 	SDL_DisplayMode DisplayMode;
 	if(SDL_GetDesktopDisplayMode(Index, &DisplayMode) < 0)
@@ -1694,8 +1529,8 @@ bool CGraphicsBackend_SDL_GL::UpdateDisplayMode(int Index)
 	}
 
 	g_Config.m_GfxScreen = Index;
-	g_Config.m_GfxDesktopWidth = DisplayMode.w;
-	g_Config.m_GfxDesktopHeight = DisplayMode.h;
+	pDesktopSize->x = DisplayMode.w;
+	pDesktopSize->y = DisplayMode.h;
 	return true;
 }
 
@@ -1767,6 +1602,16 @@ void CGraphicsBackend_SDL_GL::GetViewportSize(int &w, int &h)
 		SDL_GL_GetDrawableSize(m_pWindow, &w, &h);
 	else
 		SDL_Vulkan_GetDrawableSize(m_pWindow, &w, &h);
+}
+
+void CGraphicsBackend_SDL_GL::GetDisplayCutoutInsets(int &Left, int &Right)
+{
+#if defined(CONF_PLATFORM_IOS)
+	IosDisplayCutoutInsets(m_pWindow, &Left, &Right);
+#else
+	Left = 0;
+	Right = 0;
+#endif
 }
 
 void CGraphicsBackend_SDL_GL::NotifyWindow()

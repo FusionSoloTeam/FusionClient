@@ -30,6 +30,8 @@ private:
 	bool m_SmoothCamActive = false;
 	float m_SmoothCamTime = 0.0f;
 	float m_SmoothCamSpeed = 6.0f;
+	float m_SmoothCamDuration = 0.0f;
+	vec2 m_SmoothCamStart = vec2(0.0f, 0.0f);
 	bool m_UserZoomActive = false;
 
 	int m_PrevSpecId;

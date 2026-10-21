@@ -1,11 +1,16 @@
 #include "authmanager.h"
 
+#include <base/dbg.h>
 #include <base/hash_ctxt.h>
-#include <base/system.h>
+#include <base/mem.h>
+#include <base/secure.h>
+#include <base/str.h>
 
 #include <engine/shared/config.h>
 
 #include <generated/protocol.h>
+
+#include <optional>
 
 #define ADMIN_IDENT "default_admin"
 #define MOD_IDENT "default_mod"
@@ -26,7 +31,7 @@ const char *CAuthManager::AuthLevelToRoleName(int AuthLevel)
 	dbg_assert_failed("Invalid auth level: %d", AuthLevel);
 }
 
-static int RoleNameToAuthLevel(const char *pRoleName)
+std::optional<int> CAuthManager::RoleNameToAuthLevel(const char *pRoleName)
 {
 	if(!str_comp(pRoleName, RoleName::ADMIN))
 		return AUTHED_ADMIN;
@@ -35,7 +40,7 @@ static int RoleNameToAuthLevel(const char *pRoleName)
 	if(!str_comp(pRoleName, RoleName::HELPER))
 		return AUTHED_HELPER;
 
-	dbg_assert_failed("Invalid role name: %s", pRoleName);
+	return std::nullopt;
 }
 
 static MD5_DIGEST HashPassword(const char *pPassword, const unsigned char aSalt[SALT_BYTES])
@@ -70,7 +75,7 @@ void CAuthManager::Init()
 	if(g_Config.m_SvRconHelperPassword[0])
 		NumDefaultKeys++;
 
-	auto It = std::find_if(m_vKeys.begin(), m_vKeys.end(), [](CKey Key) { return str_comp(Key.m_aIdent, DEFAULT_SAVED_RCON_USER) == 0; });
+	auto It = std::find_if(m_vKeys.begin(), m_vKeys.end(), [](const CKey &Key) { return str_comp(Key.m_aIdent, DEFAULT_SAVED_RCON_USER) == 0; });
 	if(It != m_vKeys.end())
 		NumDefaultKeys++;
 
@@ -204,7 +209,7 @@ void CAuthManager::ListKeys(FListCallback pfnListCallback, void *pUser)
 
 void CAuthManager::AddDefaultKey(const char *pRoleName, const char *pPw)
 {
-	int Level = RoleNameToAuthLevel(pRoleName);
+	int Level = RoleNameToAuthLevel(pRoleName).value_or(-1);
 	dbg_assert(AUTHED_HELPER <= Level && Level <= AUTHED_ADMIN, "default role with name '%s' not found.", pRoleName);
 
 	static const char s_aaIdents[3][sizeof(HELPER_IDENT)] = {ADMIN_IDENT, MOD_IDENT, HELPER_IDENT};

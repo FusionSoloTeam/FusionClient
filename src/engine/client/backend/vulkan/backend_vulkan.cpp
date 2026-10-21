@@ -1,8 +1,10 @@
 #if defined(CONF_BACKEND_VULKAN)
 
+#include <base/dbg.h>
 #include <base/log.h>
-#include <base/math.h>
-#include <base/system.h>
+#include <base/mem.h>
+#include <base/str.h>
+#include <base/time.h>
 
 #include <engine/client/backend/backend_base.h>
 #include <engine/client/backend/vulkan/backend_vulkan.h>
@@ -43,6 +45,11 @@ std::atomic<uint64_t> g_VramFallbackBytesByUsage[4]{};
 #include <utility>
 #include <vector>
 
+// Set on render worker threads so that memory-allocation recovery (which drives
+// the frame loop and issues queue submit/present) is only ever attempted on the
+// main render thread. See AllocateVulkanMemory().
+static thread_local bool s_ThreadIsRenderWorker = false;
+
 #ifndef VK_API_VERSION_MAJOR
 #define VK_API_VERSION_MAJOR VK_VERSION_MAJOR
 #define VK_API_VERSION_MINOR VK_VERSION_MINOR
@@ -57,15 +64,13 @@ using namespace std::chrono_literals;
 
 class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 {
-	enum EMemoryBlockUsage
+	enum class EMemoryBlockUsage
 	{
-		MEMORY_BLOCK_USAGE_TEXTURE = 0,
-		MEMORY_BLOCK_USAGE_BUFFER,
-		MEMORY_BLOCK_USAGE_STREAM,
-		MEMORY_BLOCK_USAGE_STAGING,
-
-		// whenever dummy is used, make sure to deallocate all memory
-		MEMORY_BLOCK_USAGE_DUMMY,
+		TEXTURE,
+		BUFFER,
+		STREAM,
+		STAGING,
+		NONE,
 	};
 
 	[[nodiscard]] bool IsVerbose()
@@ -85,13 +90,15 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 	{
 		switch(MemUsage)
 		{
-		case MEMORY_BLOCK_USAGE_TEXTURE:
+		case EMemoryBlockUsage::TEXTURE:
 			return "texture";
-		case MEMORY_BLOCK_USAGE_BUFFER:
+		case EMemoryBlockUsage::BUFFER:
 			return "buffer";
-		case MEMORY_BLOCK_USAGE_STREAM:
+		case EMemoryBlockUsage::STREAM:
 			return "stream";
-		case MEMORY_BLOCK_USAGE_STAGING:
+		case EMemoryBlockUsage::NONE:
+			return "NONE";
+		case EMemoryBlockUsage::STAGING:
 			return "staging buffer";
 		default:
 			dbg_assert_failed("Invalid MemUsage: %d", (int)MemUsage);
@@ -464,7 +471,9 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 								break;
 						}
 						else
+						{
 							++HeapIterator;
+						}
 					}
 				}
 			}
@@ -1047,6 +1056,14 @@ private:
 	VkDebugUtilsMessengerEXT m_DebugMessenger;
 #endif
 
+#ifdef VK_EXT_device_fault
+	// Optional VK_EXT_device_fault support. When the driver exposes the extension
+	// we enable it so that a VK_ERROR_DEVICE_LOST can be followed up with detailed
+	// fault information (faulting GPU addresses and vendor specific fault codes).
+	bool m_DeviceFaultAvailable = false;
+	PFN_vkGetDeviceFaultInfoEXT m_pfnGetDeviceFaultInfoEXT = nullptr;
+#endif
+
 	VkDescriptorSetLayout m_StandardTexturedDescriptorSetLayout;
 	VkDescriptorSetLayout m_Standard3DTexturedDescriptorSetLayout;
 
@@ -1200,6 +1217,63 @@ protected:
 		m_Warning.m_WarningType = WarningType;
 	}
 
+#ifdef VK_EXT_device_fault
+	static const char *DeviceFaultAddressTypeName(VkDeviceFaultAddressTypeEXT Type)
+	{
+		switch(Type)
+		{
+		case VK_DEVICE_FAULT_ADDRESS_TYPE_NONE_EXT: return "none";
+		case VK_DEVICE_FAULT_ADDRESS_TYPE_READ_INVALID_EXT: return "read_invalid";
+		case VK_DEVICE_FAULT_ADDRESS_TYPE_WRITE_INVALID_EXT: return "write_invalid";
+		case VK_DEVICE_FAULT_ADDRESS_TYPE_EXECUTE_INVALID_EXT: return "execute_invalid";
+		case VK_DEVICE_FAULT_ADDRESS_TYPE_INSTRUCTION_POINTER_UNKNOWN_EXT: return "instruction_pointer_unknown";
+		case VK_DEVICE_FAULT_ADDRESS_TYPE_INSTRUCTION_POINTER_INVALID_EXT: return "instruction_pointer_invalid";
+		case VK_DEVICE_FAULT_ADDRESS_TYPE_INSTRUCTION_POINTER_FAULT_EXT: return "instruction_pointer_fault";
+		default: return "unknown";
+		}
+	}
+
+	// Queries and logs VK_EXT_device_fault information. Safe to call unconditionally:
+	// it is a no-op unless the extension was enabled at device creation.
+	void LogDeviceFaultInfo()
+	{
+		if(!m_DeviceFaultAvailable || m_pfnGetDeviceFaultInfoEXT == nullptr)
+			return;
+
+		VkDeviceFaultCountsEXT FaultCounts = {};
+		FaultCounts.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT;
+		if(m_pfnGetDeviceFaultInfoEXT(m_VKDevice, &FaultCounts, nullptr) != VK_SUCCESS)
+			return;
+
+		std::vector<VkDeviceFaultAddressInfoEXT> vAddressInfos(FaultCounts.addressInfoCount);
+		std::vector<VkDeviceFaultVendorInfoEXT> vVendorInfos(FaultCounts.vendorInfoCount);
+
+		VkDeviceFaultInfoEXT FaultInfo = {};
+		FaultInfo.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
+		FaultInfo.pAddressInfos = vAddressInfos.data();
+		FaultInfo.pVendorInfos = vVendorInfos.data();
+		// We do not request the (potentially large) vendor binary crash dump here.
+		// pVendorBinaryData stays null, so the size passed to the driver must be zero.
+		FaultCounts.vendorBinarySize = 0;
+		if(m_pfnGetDeviceFaultInfoEXT(m_VKDevice, &FaultCounts, &FaultInfo) != VK_SUCCESS)
+			return;
+
+		log_error("gfx/vulkan", "Device fault info (VK_EXT_device_fault): %s", FaultInfo.description);
+		for(uint32_t i = 0; i < FaultCounts.addressInfoCount; ++i)
+		{
+			const VkDeviceFaultAddressInfoEXT &Info = vAddressInfos[i];
+			log_error("gfx/vulkan", "  address fault: type=%s reportedAddress=0x%" PRIx64 " precision=0x%" PRIx64,
+				DeviceFaultAddressTypeName(Info.addressType), (uint64_t)Info.reportedAddress, (uint64_t)Info.addressPrecision);
+		}
+		for(uint32_t i = 0; i < FaultCounts.vendorInfoCount; ++i)
+		{
+			const VkDeviceFaultVendorInfoEXT &Info = vVendorInfos[i];
+			log_error("gfx/vulkan", "  vendor fault: %s code=0x%" PRIx64 " data=0x%" PRIx64,
+				Info.description, (uint64_t)Info.vendorFaultCode, (uint64_t)Info.vendorFaultData);
+		}
+	}
+#endif
+
 	const char *CheckVulkanCriticalError(VkResult CallResult)
 	{
 		const char *pCriticalError = nullptr;
@@ -1216,6 +1290,11 @@ protected:
 		case VK_ERROR_DEVICE_LOST:
 			pCriticalError = "Device lost.";
 			log_error("gfx/vulkan", "%s", pCriticalError);
+#ifdef VK_EXT_device_fault
+			LogDeviceFaultInfo();
+#else
+			log_error("gfx/vulkan", "Detailed fault info unavailable: built without VK_EXT_device_fault support (Vulkan headers too old).");
+#endif
 			break;
 		case VK_ERROR_OUT_OF_DATE_KHR:
 		{
@@ -1530,7 +1609,7 @@ protected:
 			MemRange.size = VK_WHOLE_SIZE;
 			vkInvalidateMappedMemoryRanges(m_VKDevice, 1, &MemRange);
 
-			size_t RealFullImageSize = maximum(ImageTotalSize, (size_t)(Height * m_GetPresentedImgDataHelperMappedLayoutPitch));
+			size_t RealFullImageSize = std::max(ImageTotalSize, (size_t)(Height * m_GetPresentedImgDataHelperMappedLayoutPitch));
 			size_t ExtraRowSize = Width * 4;
 			if(vDstData.size() < RealFullImageSize + ExtraRowSize)
 				vDstData.resize(RealFullImageSize + ExtraRowSize);
@@ -1634,7 +1713,7 @@ protected:
 		return Res;
 	}
 
-	[[nodiscard]] bool AllocateVulkanMemory(const VkMemoryAllocateInfo *pAllocateInfo, VkDeviceMemory *pMemory, uint32_t FallbackTypeBits = 0, EMemoryBlockUsage SpillUsage = MEMORY_BLOCK_USAGE_DUMMY, bool *pIsSpilled = nullptr)
+	[[nodiscard]] bool AllocateVulkanMemory(const VkMemoryAllocateInfo *pAllocateInfo, VkDeviceMemory *pMemory, uint32_t FallbackTypeBits = 0, EMemoryBlockUsage SpillUsage = EMemoryBlockUsage::NONE, bool *pIsSpilled = nullptr)
 	{
 		const uint64_t VramLimitBytes = g_Config.m_TcVramLimit > 0 ? (uint64_t)g_Config.m_TcVramLimit * 1024 * 1024 : 0;
 		const uint64_t RamLimitBytes = g_Config.m_TcRamLimit > 0 ? (uint64_t)g_Config.m_TcRamLimit * 1024 * 1024 : 0;
@@ -1666,7 +1745,16 @@ protected:
 		if(Res != VK_SUCCESS)
 		{
 			log_warn("gfx/vulkan", "Memory allocation failed, trying to recover.");
-			if(Res == VK_ERROR_OUT_OF_HOST_MEMORY || Res == VK_ERROR_OUT_OF_DEVICE_MEMORY)
+			// The recovery below advances the frame loop (vkDeviceWaitIdle +
+			// NextFrame -> WaitFrame -> FinishRenderThreads -> queue submit/present)
+			// to free delayed-cleanup resources and retry. That is only valid on
+			// the main render thread. On a render worker thread it would wait on
+			// the worker executing it (and re-lock that worker's own mutex),
+			// deadlocking the renderer, and issue queue operations concurrently
+			// with the main thread (-> VK_ERROR_DEVICE_LOST). From a worker we
+			// therefore fail cleanly; the failing allocation's caller reports an
+			// out-of-memory error and the main thread handles it.
+			if((Res == VK_ERROR_OUT_OF_HOST_MEMORY || Res == VK_ERROR_OUT_OF_DEVICE_MEMORY) && !s_ThreadIsRenderWorker)
 			{
 				vkDeviceWaitIdle(m_VKDevice);
 				for(size_t i = 0; i < m_SwapChainImageCount + 1; ++i)
@@ -1724,10 +1812,10 @@ protected:
 			}
 			if(!FoundAllocation)
 			{
-				typename SMemoryBlockCache<Id>::SMemoryCacheType::SMemoryCacheHeap *pNewHeap = new typename SMemoryBlockCache<Id>::SMemoryCacheType::SMemoryCacheHeap();
+				typename SMemoryBlockCache<Id>::SMemoryCacheType::SMemoryCacheHeap *pNewHeap = new SMemoryBlockCache<Id>::SMemoryCacheType::SMemoryCacheHeap();
 
 				VkBuffer TmpBuffer;
-				if(!GetBufferImpl(MemoryBlockSize * BlockCount, RequiresMapping ? MEMORY_BLOCK_USAGE_STAGING : MEMORY_BLOCK_USAGE_BUFFER, TmpBuffer, TmpBufferMemory, BufferUsage, BufferProperties))
+				if(!GetBufferImpl(MemoryBlockSize * BlockCount, RequiresMapping ? EMemoryBlockUsage::STAGING : EMemoryBlockUsage::BUFFER, TmpBuffer, TmpBufferMemory, BufferUsage, BufferProperties))
 				{
 					delete pNewHeap;
 					return false;
@@ -1785,7 +1873,7 @@ protected:
 		{
 			VkBuffer TmpBuffer;
 			SDeviceMemoryBlock TmpBufferMemory;
-			if(!GetBufferImpl(RequiredSize, RequiresMapping ? MEMORY_BLOCK_USAGE_STAGING : MEMORY_BLOCK_USAGE_BUFFER, TmpBuffer, TmpBufferMemory, BufferUsage, BufferProperties))
+			if(!GetBufferImpl(RequiredSize, RequiresMapping ? EMemoryBlockUsage::STAGING : EMemoryBlockUsage::BUFFER, TmpBuffer, TmpBufferMemory, BufferUsage, BufferProperties))
 				return false;
 
 			void *pMapData = nullptr;
@@ -1811,12 +1899,12 @@ protected:
 
 	[[nodiscard]] bool GetStagingBuffer(SMemoryBlock<STAGING_BUFFER_CACHE_ID> &ResBlock, const void *pBufferData, VkDeviceSize RequiredSize)
 	{
-		return GetBufferBlockImpl<STAGING_BUFFER_CACHE_ID, 8 * 1024 * 1024, 3, true>(ResBlock, m_StagingBufferCache, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, pBufferData, RequiredSize, maximum<VkDeviceSize>(m_NonCoherentMemAlignment, 16));
+		return GetBufferBlockImpl<STAGING_BUFFER_CACHE_ID, 8 * 1024 * 1024, 3, true>(ResBlock, m_StagingBufferCache, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, pBufferData, RequiredSize, std::max(m_NonCoherentMemAlignment, (VkDeviceSize)16));
 	}
 
 	[[nodiscard]] bool GetStagingBufferImage(SMemoryBlock<STAGING_BUFFER_IMAGE_CACHE_ID> &ResBlock, const void *pBufferData, VkDeviceSize RequiredSize)
 	{
-		return GetBufferBlockImpl<STAGING_BUFFER_IMAGE_CACHE_ID, 8 * 1024 * 1024, 3, true>(ResBlock, m_StagingBufferCacheImage, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, pBufferData, RequiredSize, maximum<VkDeviceSize>(m_OptimalImageCopyMemAlignment, maximum<VkDeviceSize>(m_NonCoherentMemAlignment, 16)));
+		return GetBufferBlockImpl<STAGING_BUFFER_IMAGE_CACHE_ID, 8 * 1024 * 1024, 3, true>(ResBlock, m_StagingBufferCacheImage, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, pBufferData, RequiredSize, std::max({m_OptimalImageCopyMemAlignment, m_NonCoherentMemAlignment, (VkDeviceSize)16}));
 	}
 
 	template<size_t Id>
@@ -1884,7 +1972,7 @@ protected:
 
 	static size_t ImageMipLevelCount(size_t Width, size_t Height, size_t Depth)
 	{
-		return std::floor(std::log2(maximum(Width, maximum(Height, Depth)))) + 1;
+		return std::floor(std::log2(std::max({Width, Height, Depth}))) + 1;
 	}
 
 	static size_t ImageMipLevelCount(const VkExtent3D &ImgExtent)
@@ -1907,16 +1995,16 @@ protected:
 
 		if(IsVerbose())
 		{
-			VerboseAllocatedMemory(RequiredSize, m_CurImageIndex, MEMORY_BLOCK_USAGE_TEXTURE);
+			VerboseAllocatedMemory(RequiredSize, m_CurImageIndex, EMemoryBlockUsage::TEXTURE);
 		}
 
-		if(!AllocateVulkanMemory(&MemAllocInfo, &BufferMemory.m_Mem, RequiredMemoryTypeBits, MEMORY_BLOCK_USAGE_TEXTURE, &BufferMemory.m_IsSpilled))
+		if(!AllocateVulkanMemory(&MemAllocInfo, &BufferMemory.m_Mem, RequiredMemoryTypeBits, EMemoryBlockUsage::TEXTURE, &BufferMemory.m_IsSpilled))
 		{
 			SetError(EGfxErrorType::GFX_ERROR_TYPE_OUT_OF_MEMORY_IMAGE, "Allocation for image memory failed.");
 			return false;
 		}
 
-		BufferMemory.m_UsageType = MEMORY_BLOCK_USAGE_TEXTURE;
+		BufferMemory.m_UsageType = EMemoryBlockUsage::TEXTURE;
 
 		return true;
 	}
@@ -1943,7 +2031,7 @@ protected:
 			}
 			if(!FoundAllocation)
 			{
-				typename SMemoryBlockCache<Id>::SMemoryCacheType::SMemoryCacheHeap *pNewHeap = new typename SMemoryBlockCache<Id>::SMemoryCacheType::SMemoryCacheHeap();
+				typename SMemoryBlockCache<Id>::SMemoryCacheType::SMemoryCacheHeap *pNewHeap = new SMemoryBlockCache<Id>::SMemoryCacheType::SMemoryCacheHeap();
 
 				if(!GetImageMemoryImpl(MemoryBlockSize * BlockCount, RequiredMemoryTypeBits, TmpBufferMemory, BufferProperties))
 				{
@@ -2072,13 +2160,13 @@ protected:
 		{
 			vkFreeMemory(m_VKDevice, BufferMem.m_Mem, nullptr);
 			FreeSpilledMemoryAccounting(BufferMem);
-			if(BufferMem.m_UsageType == MEMORY_BLOCK_USAGE_BUFFER)
+			if(BufferMem.m_UsageType == EMemoryBlockUsage::BUFFER)
 				m_pBufferMemoryUsage->store(m_pBufferMemoryUsage->load(std::memory_order_relaxed) - BufferMem.m_Size, std::memory_order_relaxed);
-			else if(BufferMem.m_UsageType == MEMORY_BLOCK_USAGE_TEXTURE)
+			else if(BufferMem.m_UsageType == EMemoryBlockUsage::TEXTURE)
 				m_pTextureMemoryUsage->store(m_pTextureMemoryUsage->load(std::memory_order_relaxed) - BufferMem.m_Size, std::memory_order_relaxed);
-			else if(BufferMem.m_UsageType == MEMORY_BLOCK_USAGE_STREAM)
+			else if(BufferMem.m_UsageType == EMemoryBlockUsage::STREAM)
 				m_pStreamMemoryUsage->store(m_pStreamMemoryUsage->load(std::memory_order_relaxed) - BufferMem.m_Size, std::memory_order_relaxed);
-			else if(BufferMem.m_UsageType == MEMORY_BLOCK_USAGE_STAGING)
+			else if(BufferMem.m_UsageType == EMemoryBlockUsage::STAGING)
 				m_pStagingMemoryUsage->store(m_pStagingMemoryUsage->load(std::memory_order_relaxed) - BufferMem.m_Size, std::memory_order_relaxed);
 
 			if(IsVerbose())
@@ -2657,6 +2745,8 @@ protected:
 
 		if(Tex.m_RescaleCount > 0)
 		{
+			const size_t OldWidth = Width;
+			const size_t OldHeight = Height;
 			for(uint32_t i = 0; i < Tex.m_RescaleCount; ++i)
 			{
 				Width >>= 1;
@@ -2666,7 +2756,7 @@ protected:
 				YOff /= 2;
 			}
 
-			uint8_t *pTmpData = ResizeImage(pData, Width, Height, Width, Height, VulkanFormatToPixelSize(Format));
+			uint8_t *pTmpData = ResizeImage(pData, OldWidth, OldHeight, Width, Height, VulkanFormatToPixelSize(Format));
 			free(pData);
 			pData = pTmpData;
 		}
@@ -2714,8 +2804,8 @@ protected:
 		const size_t MaxTextureSize = g_Config.m_TcTextureMaxSize > 0 ? std::min<size_t>((size_t)g_Config.m_TcTextureMaxSize, (size_t)m_MaxTextureSize) : (size_t)m_MaxTextureSize;
 		if((size_t)Width > MaxTextureSize || (size_t)Height > MaxTextureSize)
 		{
-			const int SrcWidth = Width;
-			const int SrcHeight = Height;
+			const size_t OldWidth = Width;
+			const size_t OldHeight = Height;
 			do
 			{
 				Width >>= 1;
@@ -2723,7 +2813,7 @@ protected:
 				++RescaleCount;
 			} while((size_t)Width > MaxTextureSize || (size_t)Height > MaxTextureSize);
 
-			uint8_t *pTmpData = ResizeImage(pData, SrcWidth, SrcHeight, Width, Height, PixelSize);
+			uint8_t *pTmpData = ResizeImage(pData, OldWidth, OldHeight, Width, Height, PixelSize);
 			free(pData);
 			pData = pTmpData;
 		}
@@ -2767,16 +2857,13 @@ protected:
 
 		if(Requires2DTextureArray)
 		{
-			int Image3DWidth = Width;
-			int Image3DHeight = Height;
-
 			int ConvertWidth = Width;
 			int ConvertHeight = Height;
 
 			if(ConvertWidth == 0 || (ConvertWidth % 16) != 0 || ConvertHeight == 0 || (ConvertHeight % 16) != 0)
 			{
-				int NewWidth = maximum<int>(HighestBit(ConvertWidth), 16);
-				int NewHeight = maximum<int>(HighestBit(ConvertHeight), 16);
+				int NewWidth = std::max(HighestBit(ConvertWidth), 16);
+				int NewHeight = std::max(HighestBit(ConvertHeight), 16);
 				uint8_t *pNewTexData = ResizeImage(pData, ConvertWidth, ConvertHeight, NewWidth, NewHeight, PixelSize);
 				if(IsVerbose())
 				{
@@ -2790,40 +2877,31 @@ protected:
 				pData = pNewTexData;
 			}
 
-			bool Needs3DTexDel = false;
+			int Image3DWidth, Image3DHeight;
 			uint8_t *pTexData3D = static_cast<uint8_t *>(malloc((size_t)PixelSize * ConvertWidth * ConvertHeight));
-			if(!Texture2DTo3D(pData, ConvertWidth, ConvertHeight, PixelSize, 16, 16, pTexData3D, Image3DWidth, Image3DHeight))
+			Texture2DTo3D(pData, ConvertWidth, ConvertHeight, PixelSize, 16, 16, pTexData3D, Image3DWidth, Image3DHeight);
+
+			const size_t ImageDepth2DArray = (size_t)16 * 16;
+			VkExtent3D ImgSize{(uint32_t)Image3DWidth, (uint32_t)Image3DHeight, 1};
+			if(RequiresMipMaps)
 			{
-				free(pTexData3D);
-				pTexData3D = nullptr;
+				MipMapLevelCount = ImageMipLevelCount(ImgSize);
+				if(!m_OptimalRGBAImageBlitting)
+					MipMapLevelCount = 1;
 			}
-			Needs3DTexDel = true;
 
-			if(pTexData3D != nullptr)
-			{
-				const size_t ImageDepth2DArray = (size_t)16 * 16;
-				VkExtent3D ImgSize{(uint32_t)Image3DWidth, (uint32_t)Image3DHeight, 1};
-				if(RequiresMipMaps)
-				{
-					MipMapLevelCount = ImageMipLevelCount(ImgSize);
-					if(!m_OptimalRGBAImageBlitting)
-						MipMapLevelCount = 1;
-				}
+			if(!CreateTextureImage(ImageIndex, Texture.m_Img3D, Texture.m_Img3DMem, pTexData3D, Format, Image3DWidth, Image3DHeight, ImageDepth2DArray, PixelSize, MipMapLevelCount))
+				return false;
+			VkFormat ImgFormat = Format;
+			VkImageView ImgView = CreateTextureImageView(Texture.m_Img3D, ImgFormat, VK_IMAGE_VIEW_TYPE_2D_ARRAY, ImageDepth2DArray, MipMapLevelCount);
+			Texture.m_Img3DView = ImgView;
+			VkSampler ImgSampler = GetTextureSampler(SUPPORTED_SAMPLER_TYPE_2D_TEXTURE_ARRAY);
+			Texture.m_Sampler3D = ImgSampler;
 
-				if(!CreateTextureImage(ImageIndex, Texture.m_Img3D, Texture.m_Img3DMem, pTexData3D, Format, Image3DWidth, Image3DHeight, ImageDepth2DArray, PixelSize, MipMapLevelCount))
-					return false;
-				VkFormat ImgFormat = Format;
-				VkImageView ImgView = CreateTextureImageView(Texture.m_Img3D, ImgFormat, VK_IMAGE_VIEW_TYPE_2D_ARRAY, ImageDepth2DArray, MipMapLevelCount);
-				Texture.m_Img3DView = ImgView;
-				VkSampler ImgSampler = GetTextureSampler(SUPPORTED_SAMPLER_TYPE_2D_TEXTURE_ARRAY);
-				Texture.m_Sampler3D = ImgSampler;
+			if(!CreateNew3DTexturedStandardDescriptorSets(ImageIndex))
+				return false;
 
-				if(!CreateNew3DTexturedStandardDescriptorSets(ImageIndex))
-					return false;
-
-				if(Needs3DTexDel)
-					free(pTexData3D);
-			}
+			free(pTexData3D);
 		}
 		return true;
 	}
@@ -3687,6 +3765,11 @@ public:
 	{
 		std::set<std::string> OurExt;
 		OurExt.emplace(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+#ifdef VK_EXT_device_fault
+		// Only used when actually supported by the device (see device creation);
+		// enables detailed diagnostics after a VK_ERROR_DEVICE_LOST.
+		OurExt.emplace(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+#endif
 		return OurExt;
 	}
 
@@ -3703,7 +3786,7 @@ public:
 	[[nodiscard]] bool GetVulkanLayers(std::vector<std::string> &vVKLayers)
 	{
 		uint32_t LayerCount = 0;
-		VkResult Res = vkEnumerateInstanceLayerProperties(&LayerCount, NULL);
+		VkResult Res = vkEnumerateInstanceLayerProperties(&LayerCount, nullptr);
 		if(Res != VK_SUCCESS)
 		{
 			SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Could not get Vulkan layers.");
@@ -3769,7 +3852,7 @@ public:
 
 		VkApplicationInfo VKAppInfo = {};
 		VKAppInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-		VKAppInfo.pNext = NULL;
+		VKAppInfo.pNext = nullptr;
 		VKAppInfo.pApplicationName = "DDNet";
 		VKAppInfo.applicationVersion = 1;
 		VKAppInfo.pEngineName = "DDNet-Vulkan";
@@ -3802,7 +3885,7 @@ public:
 
 		bool TryAgain = false;
 
-		VkResult Res = vkCreateInstance(&VKInstanceInfo, NULL, &m_VKInstance);
+		VkResult Res = vkCreateInstance(&VKInstanceInfo, nullptr, &m_VKInstance);
 		const char *pCritErrorMsg = CheckVulkanCriticalError(Res);
 		if(pCritErrorMsg != nullptr)
 		{
@@ -3810,7 +3893,9 @@ public:
 			return false;
 		}
 		else if(Res == VK_ERROR_LAYER_NOT_PRESENT || Res == VK_ERROR_EXTENSION_NOT_PRESENT)
+		{
 			TryAgain = true;
+		}
 
 		if(TryAgain && TryDebugExtensions)
 			return CreateVulkanInstance(vVKLayers, vVKExtensions, false);
@@ -4068,14 +4153,14 @@ public:
 			vLayerCNames.emplace_back(Layer.c_str());
 
 		uint32_t DevPropCount = 0;
-		if(vkEnumerateDeviceExtensionProperties(m_VKGPU, NULL, &DevPropCount, NULL) != VK_SUCCESS)
+		if(vkEnumerateDeviceExtensionProperties(m_VKGPU, nullptr, &DevPropCount, nullptr) != VK_SUCCESS)
 		{
 			SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Querying logical device extension properties failed.");
 			return false;
 		}
 
 		std::vector<VkExtensionProperties> vDevPropList(DevPropCount);
-		if(vkEnumerateDeviceExtensionProperties(m_VKGPU, NULL, &DevPropCount, vDevPropList.data()) != VK_SUCCESS)
+		if(vkEnumerateDeviceExtensionProperties(m_VKGPU, nullptr, &DevPropCount, vDevPropList.data()) != VK_SUCCESS)
 		{
 			SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Querying logical device extension properties failed.");
 			return false;
@@ -4092,13 +4177,40 @@ public:
 			}
 		}
 
+#ifdef VK_EXT_device_fault
+		bool DeviceFaultRequested = false;
+		for(const char *pDevExt : vDevPropCNames)
+		{
+			if(str_comp(pDevExt, VK_EXT_DEVICE_FAULT_EXTENSION_NAME) == 0)
+			{
+				DeviceFaultRequested = true;
+				break;
+			}
+		}
+
+		VkPhysicalDeviceFaultFeaturesEXT FaultFeatures = {};
+		FaultFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
+		if(DeviceFaultRequested)
+		{
+			auto pfnGetPhysicalDeviceFeatures2 = (PFN_vkGetPhysicalDeviceFeatures2)vkGetInstanceProcAddr(m_VKInstance, "vkGetPhysicalDeviceFeatures2");
+			if(pfnGetPhysicalDeviceFeatures2 != nullptr)
+			{
+				// The extension's core deviceFault feature must be enabled explicitly.
+				VkPhysicalDeviceFeatures2 PhysFeatures2 = {};
+				PhysFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+				PhysFeatures2.pNext = &FaultFeatures;
+				pfnGetPhysicalDeviceFeatures2(m_VKGPU, &PhysFeatures2);
+			}
+		}
+#endif
+
 		VkDeviceQueueCreateInfo VKQueueCreateInfo;
 		VKQueueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
 		VKQueueCreateInfo.queueFamilyIndex = m_VKGraphicsQueueIndex;
 		VKQueueCreateInfo.queueCount = 1;
 		float QueuePrio = 1.0f;
 		VKQueueCreateInfo.pQueuePriorities = &QueuePrio;
-		VKQueueCreateInfo.pNext = NULL;
+		VKQueueCreateInfo.pNext = nullptr;
 		VKQueueCreateInfo.flags = 0;
 
 		VkDeviceCreateInfo VKCreateInfo;
@@ -4109,15 +4221,35 @@ public:
 		VKCreateInfo.enabledLayerCount = static_cast<uint32_t>(vLayerCNames.size());
 		VKCreateInfo.ppEnabledExtensionNames = vDevPropCNames.data();
 		VKCreateInfo.enabledExtensionCount = static_cast<uint32_t>(vDevPropCNames.size());
-		VKCreateInfo.pNext = NULL;
-		VKCreateInfo.pEnabledFeatures = NULL;
+		VKCreateInfo.pNext = nullptr;
+		VKCreateInfo.pEnabledFeatures = nullptr;
 		VKCreateInfo.flags = 0;
+
+#ifdef VK_EXT_device_fault
+		if(DeviceFaultRequested && FaultFeatures.deviceFault)
+		{
+			FaultFeatures.pNext = nullptr;
+			// We never read the vendor binary crash dump, so do not opt into generating it.
+			FaultFeatures.deviceFaultVendorBinary = VK_FALSE;
+			VKCreateInfo.pNext = &FaultFeatures;
+		}
+#endif
 
 		if(vkCreateDevice(m_VKGPU, &VKCreateInfo, nullptr, &m_VKDevice) != VK_SUCCESS)
 		{
 			SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Logical device could not be created.");
 			return false;
 		}
+
+#ifdef VK_EXT_device_fault
+		if(DeviceFaultRequested && FaultFeatures.deviceFault)
+		{
+			m_pfnGetDeviceFaultInfoEXT = (PFN_vkGetDeviceFaultInfoEXT)vkGetDeviceProcAddr(m_VKDevice, "vkGetDeviceFaultInfoEXT");
+			m_DeviceFaultAvailable = m_pfnGetDeviceFaultInfoEXT != nullptr;
+			if(m_DeviceFaultAvailable)
+				log_debug("gfx/vulkan", "VK_EXT_device_fault enabled; detailed fault info will be logged on device loss.");
+		}
+#endif
 
 		return true;
 	}
@@ -4150,7 +4282,7 @@ public:
 	[[nodiscard]] bool GetPresentationMode(VkPresentModeKHR &VKIOMode)
 	{
 		uint32_t PresentModeCount = 0;
-		if(vkGetPhysicalDeviceSurfacePresentModesKHR(m_VKGPU, m_VKPresentSurface, &PresentModeCount, NULL) != VK_SUCCESS)
+		if(vkGetPhysicalDeviceSurfacePresentModesKHR(m_VKGPU, m_VKPresentSurface, &PresentModeCount, nullptr) != VK_SUCCESS)
 		{
 			SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "The device surface presentation modes could not be fetched.");
 			return false;
@@ -4389,7 +4521,9 @@ public:
 			return false;
 		}
 		else if(SwapchainCreateRes == VK_ERROR_NATIVE_WINDOW_IN_USE_KHR)
+		{
 			return false;
+		}
 
 		return true;
 	}
@@ -5963,11 +6097,11 @@ public:
 
 		VKBufferMemory.m_Size = MemRequirements.size;
 
-		if(MemUsage == MEMORY_BLOCK_USAGE_BUFFER)
+		if(MemUsage == EMemoryBlockUsage::BUFFER)
 			m_pBufferMemoryUsage->store(m_pBufferMemoryUsage->load(std::memory_order_relaxed) + MemRequirements.size, std::memory_order_relaxed);
-		else if(MemUsage == MEMORY_BLOCK_USAGE_STAGING)
+		else if(MemUsage == EMemoryBlockUsage::STAGING)
 			m_pStagingMemoryUsage->store(m_pStagingMemoryUsage->load(std::memory_order_relaxed) + MemRequirements.size, std::memory_order_relaxed);
-		else if(MemUsage == MEMORY_BLOCK_USAGE_STREAM)
+		else if(MemUsage == EMemoryBlockUsage::STREAM)
 			m_pStreamMemoryUsage->store(m_pStreamMemoryUsage->load(std::memory_order_relaxed) + MemRequirements.size, std::memory_order_relaxed);
 
 		if(IsVerbose())
@@ -6036,15 +6170,14 @@ public:
 			UniformBufferDescrPool.m_DefaultAllocSize = 512;
 		}
 
-		bool Ret = AllocateDescriptorPool(m_StandardTextureDescrPool, CCommandBuffer::MAX_TEXTURES);
-		Ret |= AllocateDescriptorPool(m_TextTextureDescrPool, 8);
-
+		bool Success = true;
+		Success &= AllocateDescriptorPool(m_StandardTextureDescrPool, CCommandBuffer::MAX_TEXTURES);
+		Success &= AllocateDescriptorPool(m_TextTextureDescrPool, 8);
 		for(auto &UniformBufferDescrPool : m_vUniformBufferDescrPools)
 		{
-			Ret |= AllocateDescriptorPool(UniformBufferDescrPool, 64);
+			Success &= AllocateDescriptorPool(UniformBufferDescrPool, 64);
 		}
-
-		return Ret;
+		return Success;
 	}
 
 	void DestroyDescriptorPools()
@@ -6110,7 +6243,7 @@ public:
 				if(!AllocateDescriptorPool(DescriptorPools, DescriptorPools.m_DefaultAllocSize))
 					return false;
 
-				AllocatedInThisRun = minimum((size_t)DescriptorPools.m_DefaultAllocSize, CurAllocNum);
+				AllocatedInThisRun = std::min((size_t)DescriptorPools.m_DefaultAllocSize, CurAllocNum);
 
 				auto &Pool = DescriptorPools.m_vPools.back();
 				Pool.m_CurSize += AllocatedInThisRun;
@@ -6711,7 +6844,7 @@ public:
 			SDeviceMemoryBlock StreamBufferMemory;
 			const VkDeviceSize NewBufferSingleSize = sizeof(TInstanceTypeName) * InstanceTypeCount;
 			const VkDeviceSize NewBufferSize = NewBufferSingleSize * BufferCreateCount;
-			if(!CreateBuffer(NewBufferSize, MEMORY_BLOCK_USAGE_STREAM, Usage, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, StreamBuffer, StreamBufferMemory))
+			if(!CreateBuffer(NewBufferSize, EMemoryBlockUsage::STREAM, Usage, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, StreamBuffer, StreamBufferMemory))
 				return false;
 
 			void *pMappedData = nullptr;
@@ -6802,7 +6935,7 @@ public:
 
 		SDeviceMemoryBlock VertexBufferMemory;
 		VkBuffer VertexBuffer;
-		if(!CreateBuffer(BufferDataSize, MEMORY_BLOCK_USAGE_BUFFER, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VertexBuffer, VertexBufferMemory))
+		if(!CreateBuffer(BufferDataSize, EMemoryBlockUsage::BUFFER, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VertexBuffer, VertexBufferMemory))
 			return false;
 
 		if(!MemoryBarrier(VertexBuffer, 0, BufferDataSize, VK_ACCESS_INDEX_READ_BIT, true))
@@ -7400,19 +7533,22 @@ public:
 		uint32_t Width;
 		uint32_t Height;
 		CImageInfo::EImageFormat Format;
+
 		if(GetPresentedImageDataImpl(Width, Height, Format, m_vScreenshotHelper, true, {}))
 		{
-			const size_t ImgSize = (size_t)Width * (size_t)Height * CImageInfo::PixelSize(Format);
-			pCommand->m_pImage->m_pData = static_cast<uint8_t *>(malloc(ImgSize));
-			mem_copy(pCommand->m_pImage->m_pData, m_vScreenshotHelper.data(), ImgSize);
+			pCommand->m_pImage->m_Width = (int)Width;
+			pCommand->m_pImage->m_Height = (int)Height;
+			pCommand->m_pImage->m_Format = Format;
+			pCommand->m_pImage->Allocate();
+			mem_copy(pCommand->m_pImage->m_pData, m_vScreenshotHelper.data(), pCommand->m_pImage->DataSize());
 		}
 		else
 		{
+			pCommand->m_pImage->m_Width = 0;
+			pCommand->m_pImage->m_Height = 0;
+			pCommand->m_pImage->m_Format = CImageInfo::FORMAT_UNDEFINED;
 			pCommand->m_pImage->m_pData = nullptr;
 		}
-		pCommand->m_pImage->m_Width = (int)Width;
-		pCommand->m_pImage->m_Height = (int)Height;
-		pCommand->m_pImage->m_Format = Format;
 
 		return true;
 	}
@@ -7463,11 +7599,9 @@ public:
 			{
 				m_HasDynamicViewport = true;
 
-				// convert viewport from OGL to vulkan
-				int32_t ViewportY = (int32_t)Viewport.height - ((int32_t)pCommand->m_Y + (int32_t)pCommand->m_Height);
-				uint32_t ViewportH = (int32_t)pCommand->m_Height;
-				m_DynamicViewportOffset = {(int32_t)pCommand->m_X, ViewportY};
-				m_DynamicViewportSize = {(uint32_t)pCommand->m_Width, ViewportH};
+				// The viewport rectangle and Vulkan both use a top left origin.
+				m_DynamicViewportOffset = {(int32_t)pCommand->m_X, (int32_t)pCommand->m_Y};
+				m_DynamicViewportSize = {(uint32_t)pCommand->m_Width, (uint32_t)pCommand->m_Height};
 			}
 			else
 			{
@@ -8125,10 +8259,12 @@ public:
 
 		m_ThreadCount = g_Config.m_GfxRenderThreadCount;
 		if(m_ThreadCount <= 1)
+		{
 			m_ThreadCount = 1;
+		}
 		else
 		{
-			m_ThreadCount = std::clamp<decltype(m_ThreadCount)>(m_ThreadCount, 3, std::max<decltype(m_ThreadCount)>(3, std::thread::hardware_concurrency()));
+			m_ThreadCount = std::clamp(m_ThreadCount, (size_t)3, std::max((size_t)3, (size_t)std::thread::hardware_concurrency()));
 		}
 
 		// start threads
@@ -8201,6 +8337,7 @@ public:
 
 	void RunThread(size_t ThreadIndex)
 	{
+		s_ThreadIsRenderWorker = true;
 		auto *pThread = m_vpRenderThreads[ThreadIndex].get();
 		std::unique_lock<std::mutex> Lock(pThread->m_Mutex);
 		pThread->m_Started = true;

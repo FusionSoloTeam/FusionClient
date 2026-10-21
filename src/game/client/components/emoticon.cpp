@@ -15,7 +15,7 @@
 
 CEmoticon::CEmoticon()
 {
-	OnReset();
+	CEmoticon::OnReset();
 }
 
 void CEmoticon::ConKeyEmoticon(IConsole::IResult *pResult, void *pUserData)
@@ -220,8 +220,6 @@ void CEmoticon::OnRender()
 	const vec2 ScreenCenter = Screen.Center();
 
 	Ui()->MapScreen();
-
-	Graphics()->BlendNormal();
 
 	Graphics()->TextureClear();
 	Graphics()->QuadsBegin();

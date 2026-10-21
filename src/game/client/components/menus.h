@@ -4,6 +4,7 @@
 #define GAME_CLIENT_COMPONENTS_MENUS_H
 
 #include <base/bytes.h>
+#include <base/str.h>
 #include <base/types.h>
 #include <base/vmath.h>
 
@@ -29,7 +30,6 @@
 #include <game/voting.h>
 
 #include <chrono>
-#include <deque>
 #include <optional>
 #include <vector>
 
@@ -70,11 +70,9 @@ private:
 	ColorHSLA DoLine_ColorPicker(CButtonContainer *pResetId, float LineSize, float LabelSize, float BottomMargin, CUIRect *pMainRect, const char *pText, unsigned int *pColorValue, ColorRGBA DefaultColor, bool CheckBoxSpacing = true, int *pCheckBoxValue = nullptr, bool Alpha = false);
 	ColorHSLA DoButton_ColorPicker(const CUIRect *pRect, unsigned int *pHslaColor, bool Alpha);
 
-	void DoLaserPreview(const CUIRect *pRect, ColorHSLA OutlineColor, ColorHSLA InnerColor, int LaserType);
 	int DoButton_GridHeader(const void *pId, const char *pText, int Checked, const CUIRect *pRect, int Align = TEXTALIGN_ML);
 	int DoButton_Favorite(const void *pButtonId, const void *pParentId, bool Checked, const CUIRect *pRect);
 
-	bool m_SkinListScrollToSelected = false;
 	std::optional<std::chrono::nanoseconds> m_SkinList7LastRefreshTime;
 	std::optional<std::chrono::nanoseconds> m_SkinPartsList7LastRefreshTime;
 
@@ -263,15 +261,6 @@ protected:
 	bool m_NeedRestartUpdate;
 	bool m_NeedSendinfo;
 	bool m_NeedSendDummyinfo;
-	int m_SettingPlayerPage;
-
-	// 0.7 skins
-	bool m_CustomSkinMenu = false;
-	int m_TeePartSelected = protocol7::SKINPART_BODY;
-	const CSkins7::CSkin *m_pSelectedSkin = nullptr;
-	CLineInputBuffered<protocol7::MAX_SKIN_ARRAY_SIZE, protocol7::MAX_SKIN_LENGTH> m_SkinNameInput;
-	bool m_SkinPartListNeedsUpdate = false;
-	void PopupConfirmDeleteSkin7();
 
 	// for map download popup
 	int64_t m_DownloadLastCheckTime;
@@ -331,10 +320,10 @@ protected:
 
 		bool operator<(const CDemoItem &Other) const
 		{
-			if(!str_comp(m_aFilename, ".."))
-				return true;
 			if(!str_comp(Other.m_aFilename, ".."))
 				return false;
+			if(!str_comp(m_aFilename, ".."))
+				return true;
 			if(m_IsDir && !Other.m_IsDir)
 				return true;
 			if(!m_IsDir && Other.m_IsDir)
@@ -381,6 +370,7 @@ protected:
 	std::chrono::nanoseconds m_DemoPopulateStartTime{0};
 
 	void DemolistOnUpdate(bool Reset);
+	void DemolistSelectNeighbor();
 	static int DemolistFetchCallback(const CFsFileInfo *pInfo, int IsDir, int StorageType, void *pUser);
 
 	// friends
@@ -594,26 +584,64 @@ protected:
 	void UpdateCommunityCache(bool Force);
 
 	// found in menus_settings.cpp
-	void RenderLanguageSettings(CUIRect MainView);
-	bool RenderLanguageSelection(CUIRect MainView);
-	void RenderThemeSelection(CUIRect MainView);
-	void RenderSettingsGeneral(CUIRect MainView);
-	void RenderSettingsPlayer(CUIRect MainView);
-	void RenderSettingsTee(CUIRect MainView);
-	void RenderSettingsTee7(CUIRect MainView);
-	void RenderSettingsTeeCustom7(CUIRect MainView);
-	void RenderSkinSelection7(CUIRect MainView);
-	void RenderSkinPartSelection7(CUIRect MainView);
-	void RenderSettingsGraphics(CUIRect MainView);
-	void RenderSettingsSound(CUIRect MainView);
 	void RenderSettings(CUIRect MainView);
-	void RenderSettingsCustom(CUIRect MainView);
+	void RenderSettingsVClientSettings(CUIRect MainView);
+	void RenderSettingsVClientInfo(CUIRect MainView);
+	bool RenderHslaScrollbars(CUIRect *pRect, unsigned int *pColor, bool Alpha, float DarkestLight);
+
+	// found in menus_settings_assets.cpp
+	void RenderSettingsAssets(CUIRect MainView);
+
+	// found in menus_settings_appearance.cpp
+	void RenderSettingsAppearance(CUIRect MainView);
+	void DoLaserPreview(const CUIRect *pRect, ColorHSLA OutlineColor, ColorHSLA InnerColor, int LaserType);
 
 
 	// found in menus_settings_controls.cpp
 	// TODO: Change PopupConfirm to avoid using a function pointer to a CMenus
 	//       member function, to move this function to CMenusSettingsControls
 	void ResetSettingsControls();
+
+	// found in menus_settings_credits.cpp
+	void RenderSettingsCredits(CUIRect MainView);
+
+	// found in menus_settings_ddnet.cpp
+	void RenderSettingsDDNet(CUIRect MainView);
+
+	// found in menus_settings_general.cpp
+	void RenderSettingsGeneral(CUIRect MainView);
+	void RenderThemeSelection(CUIRect MainView);
+
+	// found in menus_settings_graphics.cpp
+	void RenderSettingsGraphics(CUIRect MainView);
+
+	// found in menus_settings_language.cpp
+	void RenderLanguageSettings(CUIRect MainView);
+	bool RenderLanguageSelection(CUIRect MainView);
+
+	// found in menus_settings_player.cpp
+	void RenderSettingsPlayer(CUIRect MainView);
+
+	// found in menus_settings_sound.cpp
+	void RenderSettingsSound(CUIRect MainView);
+
+	// found in menus_settings_tee.cpp
+	void RenderSettingsTee(CUIRect MainView);
+	bool m_SkinListScrollToSelected = false;
+
+	// found in menus_settings_tee7.cpp
+	void RenderSettingsTee7(CUIRect MainView);
+	void PopupConfirmDeleteSkin7();
+	void RenderSettingsTeeCustom7(CUIRect MainView);
+	void RenderSkinSelection7(CUIRect MainView);
+	void RenderSkinPartSelection7(CUIRect MainView);
+	bool m_CustomSkinMenu = false;
+	int m_TeePartSelected = protocol7::SKINPART_BODY;
+	const CSkins7::CSkin *m_pSelectedSkin = nullptr;
+	int m_SelectedSkinIndex7 = -1;
+	int m_DeletedSkinIndex7 = -1;
+	CLineInputBuffered<protocol7::MAX_SKIN_ARRAY_SIZE, protocol7::MAX_SKIN_LENGTH> m_SkinNameInput;
+	bool m_SkinPartListNeedsUpdate = false;
 
 	std::vector<CButtonContainer> m_vButtonContainersNamePlateShow = {{}, {}, {}, {}};
 	std::vector<CButtonContainer> m_vButtonContainersNamePlateKeyPresses = {{}, {}, {}, {}};
@@ -638,10 +666,10 @@ protected:
 
 	static bool CompareFilenameAscending(const CMapListItem Lhs, const CMapListItem Rhs)
 	{
-		if(str_comp(Lhs.m_aFilename, "..") == 0)
-			return true;
 		if(str_comp(Rhs.m_aFilename, "..") == 0)
 			return false;
+		if(str_comp(Lhs.m_aFilename, "..") == 0)
+			return true;
 		if(Lhs.m_IsDirectory != Rhs.m_IsDirectory)
 			return Lhs.m_IsDirectory;
 		return str_comp_filenames(Lhs.m_aFilename, Rhs.m_aFilename) < 0;
@@ -660,6 +688,7 @@ public:
 	CMenus();
 	int Sizeof() const override { return sizeof(*this); }
 
+	void RenderLoadingDirect(const char *pCaption, const char *pContent, std::optional<float> Progress);
 	void RenderLoading(const char *pCaption, const char *pContent, int IncreaseCounter);
 	void FinishLoading();
 
@@ -673,7 +702,6 @@ public:
 
 	void OnStateChange(int NewState, int OldState) override;
 	void OnWindowResize() override;
-	void OnReset() override;
 	void OnRender() override;
 	bool OnInput(const IInput::CEvent &Event) override;
 	bool OnCursorMove(float x, float y, IInput::ECursorType CursorType) override;
@@ -714,12 +742,35 @@ public:
 		SETTINGS_SOUND,
 		SETTINGS_DDNET,
 		SETTINGS_ASSETS,
-		SETTINGS_TCLIENT,
-		SETTINGS_PROFILES,
-		SETTINGS_CONFIGS,
-
+		SETTINGS_TCLIENT, // TClient
+		SETTINGS_TCLIENT_BINDWHEEL,
+		SETTINGS_TCLIENT_WARLIST,
+		SETTINGS_TCLIENT_FRIENDLIST,
+		SETTINGS_TCLIENT_CHATBINDS,
+		SETTINGS_TCLIENT_STATUSBAR,
+		SETTINGS_TCLIENT_INFO,
+		SETTINGS_VCLIENT, // VClient
+		SETTINGS_VCLIENT_INFO,
+		SETTINGS_PROFILES, // TClient
+		SETTINGS_CONFIGS, // TClient
+		SETTINGS_CREDITS,
 		SETTINGS_LENGTH,
 	};
+
+	enum
+	{
+		SETTINGS_GROUP_DDNET = 0,
+		SETTINGS_GROUP_TCLIENT,
+		SETTINGS_GROUP_VCLIENT,
+		SETTINGS_GROUP_LENGTH,
+	};
+
+	// sub-tab animation state for the collapsible settings groups
+	float m_aSettingsGroupExpand[SETTINGS_GROUP_LENGTH] = {};
+	int m_aSettingsGroupLastPage[SETTINGS_GROUP_LENGTH] = {SETTINGS_LANGUAGE, SETTINGS_TCLIENT, SETTINGS_VCLIENT};
+	int m_SettingsGroupCollapsedIndex = -1;
+	int SettingsGroupOfPage(int Page) const;
+	bool SettingsPageIsGroupHeader(int Page) const;
 
 	enum
 	{
@@ -915,13 +966,10 @@ private:
 	void RenderInGameNetwork(CUIRect MainView);
 	void RenderGhost(CUIRect MainView);
 
-	// found in menus_settings.cpp
-	void RenderSettingsDDNet(CUIRect MainView);
-	void RenderSettingsAppearance(CUIRect MainView);
-
-	// found in menus_tclient.cpp
+	// TClient: found in menus_tclient.cpp
 	void RenderSettingsTClient(CUIRect MainView);
 	void RenderSettingsTClientSettings(CUIRect MainView);
+	void RenderTClientSettingsPage(CUIRect MainView, bool VClientPage);
 	void RenderSettingsTClientBindWheel(CUIRect MainView);
 	void RenderSettingsTClientChatBinds(CUIRect MainView);
 	void RenderSettingsTClientWarList(CUIRect MainView);
@@ -1007,9 +1055,6 @@ private:
 		ColorRGBA ColorFeet = ColorRGBA(0, 0, 0, 0), ColorRGBA ColorBody = ColorRGBA(0, 0, 0, 0));
 	void RenderFontIcon(CUIRect Rect, const char *pText, float Size, int Align);
 	int DoButtonNoRect_FontIcon(CButtonContainer *pButtonContainer, const char *pText, int Checked, const CUIRect *pRect, int Corners = IGraphics::CORNER_ALL);
-
-	ColorHSLA RenderHSLColorPicker(const CUIRect *pRect, unsigned int *pColor, bool Alpha);
-	bool RenderHslaScrollbars(CUIRect *pRect, unsigned int *pColor, bool Alpha, float DarkestLight);
 	int DoButtonLineSize_Menu(CButtonContainer *pButtonContainer, const char *pText, int Checked, const CUIRect *pRect, float ButtonLineSize, bool Fake = false, const char *pImageName = nullptr, int Corners = IGraphics::CORNER_ALL, float Rounding = 5.0f, float FontFactor = 0.0f, ColorRGBA Color = ColorRGBA(1.0f, 1.0f, 1.0f, 0.5f));
 };
 #endif

@@ -162,6 +162,13 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	char aTBuf[64];
 	str_format(aTBuf, sizeof(aTBuf), CLIENT_NAME " %s", CLIENT_RELEASE_VERSION);
 	Ui()->DoLabel(&TClientVersion, aTBuf, 14.0f, TEXTALIGN_MR);
+
+	CUIRect VClientVersion;
+	MainView.HSplitTop(15.0f, &VClientVersion, &MainView);
+	VClientVersion.VSplitRight(40.0f, &VClientVersion, nullptr);
+	char aVBuf[64];
+	str_format(aVBuf, sizeof(aVBuf), VCLIENT_NAME " %s", VCLIENT_VERSION);
+	Ui()->DoLabel(&VClientVersion, aVBuf, 14.0f, TEXTALIGN_MR);
 #if defined(CONF_AUTOUPDATE)
 	CUIRect UpdateToDateText;
 	MainView.HSplitTop(15.0f, &UpdateToDateText, nullptr);
@@ -200,7 +207,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	if(State == IUpdater::CLEAN && NeedUpdate)
 	{
 		static CButtonContainer s_VersionUpdate;
-		if(GameClient()->m_Menus.DoButton_Menu(&s_VersionUpdate, Localize("Update now"), 0, &UpdateButton, BUTTONFLAG_LEFT, 0, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+		if(GameClient()->m_Menus.DoButton_Menu(&s_VersionUpdate, Localize("Update now"), 0, &UpdateButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 		{
 			Updater()->InitiateUpdate();
 		}
@@ -208,7 +215,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	else if(State == IUpdater::NEED_RESTART)
 	{
 		static CButtonContainer s_VersionUpdate;
-		if(GameClient()->m_Menus.DoButton_Menu(&s_VersionUpdate, Localize("Restart"), 0, &UpdateButton, BUTTONFLAG_LEFT, 0, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+		if(GameClient()->m_Menus.DoButton_Menu(&s_VersionUpdate, Localize("Restart"), 0, &UpdateButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 		{
 			Client()->Restart();
 		}
@@ -253,7 +260,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 		VersionUpdate.VSplitRight(10.0f, &VersionUpdate, nullptr);
 
 		static CButtonContainer s_DownloadButton;
-		if(GameClient()->m_Menus.DoButton_Menu(&s_DownloadButton, Localize("Download"), 0, &DownloadButton, BUTTONFLAG_LEFT, 0, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+		if(GameClient()->m_Menus.DoButton_Menu(&s_DownloadButton, Localize("Download"), 0, &DownloadButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 		{
 			Client()->ViewLink("https://ddnet.org/downloads/");
 		}

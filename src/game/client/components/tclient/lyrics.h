@@ -14,7 +14,7 @@
 #include <memory>
 #include <vector>
 
-class CHttpRequest;
+class IHttpRequest;
 
 class CLyrics : public CComponent
 {
@@ -116,7 +116,7 @@ private:
 	std::vector<SDrawnLine> m_vDrawn;
 	std::vector<SSparkle> m_vSparkles;
 
-	std::shared_ptr<CHttpRequest> m_pRequest;
+	std::shared_ptr<IHttpRequest> m_pRequest;
 	bool m_RequestDone = false;
 	bool m_HasLyrics = false;
 	bool m_PlainEstimate = false;

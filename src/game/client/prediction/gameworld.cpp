@@ -18,6 +18,7 @@
 #include <game/client/laser_data.h>
 #include <game/client/pickup_data.h>
 #include <game/client/projectile_data.h>
+#include <game/collision.h>
 #include <game/mapbugs.h>
 #include <game/mapitems.h>
 
@@ -119,7 +120,9 @@ void CGameWorld::InsertEntity(CEntity *pEnt, bool Last)
 			pLast->m_pNextTypeEntity = pEnt;
 		}
 		else
+		{
 			m_apFirstEntityTypes[pEnt->m_ObjType] = pEnt;
+		}
 		pEnt->m_pPrevTypeEntity = pLast;
 		pEnt->m_pNextTypeEntity = nullptr;
 	}
@@ -384,7 +387,9 @@ void CGameWorld::CreateExplosion(vec2 Pos, int Owner, int Weapon, bool NoDamage,
 					continue;
 				pChar->TakeDamage(ForceDir * Dmg * 2, (int)Dmg, Owner, Weapon);
 				if(pOwnerChar)
+				{
 					pOwnerChar->AntiPingInterference(pChar->GetCid());
+				}
 				if(pOwnerChar ? pOwnerChar->GrenadeHitDisabled() : !g_Config.m_SvHit || NoDamage)
 					break;
 			}
@@ -483,9 +488,11 @@ void CGameWorld::NetObjAdd(int ObjId, int ObjType, const void *pObjData, const C
 						First = Dist;
 					}
 					else if(Dist < Second)
+					{
 						Second = Dist;
+					}
 				}
-				if(pClosest && maximum(First, 2.f) * 1.2f < Second)
+				if(pClosest && std::max(First, 2.0f) * 1.2f < Second)
 					NetProj.m_Owner = pClosest->m_Id;
 			}
 		}
@@ -510,7 +517,7 @@ void CGameWorld::NetObjAdd(int ObjId, int ObjType, const void *pObjData, const C
 		CEntity *pEnt = new CPickup(NetPickup);
 		InsertEntity(pEnt, true);
 	}
-	else if((ObjType == NETOBJTYPE_LASER || ObjType == NETOBJTYPE_DDNETLASER) && (m_WorldConfig.m_PredictWeapons || m_WorldConfig.m_PredictLights))
+	else if(ObjType == NETOBJTYPE_LASER || ObjType == NETOBJTYPE_DDNETLASER)
 	{
 		CLaserData Data = ExtractLaserInfo(ObjType, pObjData, this, pDataEx);
 		if(!IsLocalTeam(Data.m_Owner) || !Data.m_Predict)
@@ -536,8 +543,12 @@ void CGameWorld::NetObjAdd(int ObjId, int ObjType, const void *pObjData, const C
 			return;
 		}
 
-		if(!m_WorldConfig.m_PredictWeapons)
+		// Doors are static world geometry that only ever adds move restrictions to tiles,
+		// so they follow the tile physics config rather than the weapon prediction config.
+		if(!(Data.m_Type == LASERTYPE_DOOR ? m_WorldConfig.m_PredictTiles : m_WorldConfig.m_PredictWeapons))
+		{
 			return;
+		}
 
 		if(Data.m_Type == LASERTYPE_RIFLE || Data.m_Type == LASERTYPE_SHOTGUN || Data.m_Type < 0)
 		{
@@ -597,7 +608,6 @@ void CGameWorld::NetObjAdd(int ObjId, int ObjType, const void *pObjData, const C
 				return;
 			}
 			CDoor *pEnt = new CDoor(NetDoor);
-			pEnt->ResetCollision();
 			InsertEntity(pEnt);
 		}
 		else if(Data.m_Type == LASERTYPE_PLASMA)
@@ -614,6 +624,29 @@ void CGameWorld::NetObjAdd(int ObjId, int ObjType, const void *pObjData, const C
 			InsertEntity(pEnt);
 		}
 	}
+}
+
+void CGameWorld::ResetDoorCollision()
+{
+	// Doors add their move restrictions to the collision grid shared by the whole client
+	// rather than keeping them on the entity, so the grid is rebuilt after every snapshot:
+	// a destroyed door clears its entire span, including tiles another door still occupies.
+	// Doors are applied in map order, the order the server creates them in, so intersecting
+	// doors resolve to the same tile on both sides. Two doors originating on the same tile
+	// share a map index; the server creates the game/front-layer door before the switch-layer
+	// one, so the switch door (m_Number > 0) stamps the shared origin tile last and wins.
+	std::vector<CDoor *> vpDoors;
+	for(CEntity *pEnt = FindFirst(ENTTYPE_DOOR); pEnt; pEnt = pEnt->TypeNext())
+		vpDoors.push_back(static_cast<CDoor *>(pEnt));
+	std::stable_sort(vpDoors.begin(), vpDoors.end(), [this](const CDoor *pLeft, const CDoor *pRight) {
+		const int LeftIndex = Collision()->GetPureMapIndex(pLeft->m_Pos);
+		const int RightIndex = Collision()->GetPureMapIndex(pRight->m_Pos);
+		if(LeftIndex != RightIndex)
+			return LeftIndex < RightIndex;
+		return (pLeft->m_Number > 0) < (pRight->m_Number > 0);
+	});
+	for(CDoor *pDoor : vpDoors)
+		pDoor->ResetCollision();
 }
 
 void CGameWorld::NetObjEnd()
@@ -633,6 +666,7 @@ void CGameWorld::NetObjEnd()
 						pHookedChar->m_MarkedForDestroy = false;
 					}
 	RemoveEntities();
+	ResetDoorCollision();
 
 	// Update character IDs and pointers
 	for(int i = 0; i < MAX_CLIENTS; i++)
@@ -669,8 +703,8 @@ void CGameWorld::CopyWorldClean(CGameWorld *pFrom)
 	Clear();
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
-		m_apCharacters[i] = 0;
-		m_Core.m_apCharacters[i] = 0;
+		m_apCharacters[i] = nullptr;
+		m_Core.m_apCharacters[i] = nullptr;
 	}
 	// copy and add the new entities
 	for(int Type = 0; Type < NUM_ENTTYPES; Type++)

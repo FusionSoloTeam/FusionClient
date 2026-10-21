@@ -2,20 +2,22 @@
 #include <base/io.h>
 #include <base/time.h>
 
-#include <engine/external/json-parser/json.h>
 #include <engine/server.h>
+#include <engine/server/authmanager.h>
 #include <engine/shared/config.h>
+#include <engine/shared/json.h>
 
 #include <game/gamecore.h>
 #include <game/server/teehistorian.h>
 
 #include <gtest/gtest.h>
 
+#include <string>
 #include <vector>
 
 void RegisterGameUuids(CUuidManager *pManager);
 
-class TeeHistorian : public ::testing::Test
+class TeeHistorian : public ::testing::Test // NOLINT(readability-identifier-naming)
 {
 protected:
 	CTeeHistorian m_TH;
@@ -42,7 +44,7 @@ protected:
 	m_Config.m_##Name = (Def);
 #define MACRO_CONFIG_COL(Name, ScriptName, Def, Save, Desc) MACRO_CONFIG_INT(Name, ScriptName, Def, 0, 0, Save, Desc)
 #define MACRO_CONFIG_STR(Name, ScriptName, Len, Def, Save, Desc) \
-	str_copy(m_Config.m_##Name, (Def), sizeof(m_Config.m_##Name));
+	str_copy(m_Config.m_##Name, (Def));
 #include <engine/shared/config_variables.h>
 #undef MACRO_CONFIG_STR
 #undef MACRO_CONFIG_COL
@@ -85,12 +87,8 @@ protected:
 
 	static void WriteBuffer(std::vector<unsigned char> &vBuffer, const void *pData, size_t DataSize)
 	{
-		if(DataSize <= 0)
-			return;
-
-		const size_t OldSize = vBuffer.size();
-		vBuffer.resize(OldSize + DataSize);
-		mem_copy(&vBuffer[OldSize], pData, DataSize);
+		const unsigned char *pBytes = static_cast<const unsigned char *>(pData);
+		vBuffer.insert(vBuffer.end(), pBytes, pBytes + DataSize);
 	}
 
 	static void Write(const void *pData, int DataSize, void *pUser)
@@ -108,8 +106,8 @@ protected:
 
 	void Expect(const unsigned char *pOutput, size_t OutputSize)
 	{
-		static CUuid TEEHISTORIAN_UUID = CalculateUuid("teehistorian@ddnet.tw");
-		static const char PREFIX1[] = "{\"comment\":\"teehistorian@ddnet.tw\",\"version\":\"2\",\"version_minor\":\"19\",\"game_uuid\":\"a1eb7182-796e-3b3e-941d-38ca71b2a4a8\",\"server_version\":\"DDNet test\",\"start_time\":\"";
+		static const CUuid TEEHISTORIAN_UUID = CalculateUuid("teehistorian@ddnet.tw");
+		static const char PREFIX1[] = "{\"comment\":\"teehistorian@ddnet.tw\",\"version\":\"2\",\"version_minor\":\"23\",\"game_uuid\":\"a1eb7182-796e-3b3e-941d-38ca71b2a4a8\",\"server_version\":\"DDNet test\",\"start_time\":\"";
 		static const char PREFIX2[] = "\",\"server_name\":\"server name\",\"server_port\":\"8303\",\"game_type\":\"game type\",\"map_name\":\"Kobra 3 Solo\",\"map_size\":\"903514\",\"map_sha256\":\"0123456789012345678901234567890123456789012345678901234567890123\",\"map_crc\":\"eceaf25c\",\"prng_description\":\"test-prng:02468ace\",\"config\":{},\"tuning\":{},\"uuids\":[";
 		static const char PREFIX3[] = "]}";
 
@@ -160,25 +158,47 @@ protected:
 			io_close(File);
 		}
 
-		printf("pOutput = {");
-		size_t Start = 0; // skip over header;
+		// skip over header
+		size_t StartActual = 0;
 		for(size_t i = 0; i < m_vBuffer.size(); i++)
 		{
-			if(Start == 0)
+			if(m_vBuffer[i] == 0)
 			{
-				if(m_vBuffer[i] == 0)
-					Start = i + 1;
-				continue;
+				StartActual = i + 1;
+				break;
 			}
-			if((i - Start) % 10 == 0)
-				printf("\n\t");
-			else
-				printf(", ");
-			printf("0x%.2x", m_vBuffer[i]);
 		}
-		printf("\n}\n");
-		ASSERT_EQ(m_vBuffer.size(), OutputSize);
-		ASSERT_TRUE(mem_comp(m_vBuffer.data(), pOutput, OutputSize) == 0);
+		size_t StartExpected = 0;
+		for(size_t i = 0; i < OutputSize; i++)
+		{
+			if(pOutput[i] == 0)
+			{
+				StartExpected = i + 1;
+				break;
+			}
+		}
+
+		std::string OutputActualHex;
+		if(StartActual < m_vBuffer.size())
+		{
+			const size_t DataSize = m_vBuffer.size() - StartActual;
+			OutputActualHex.resize(6 * DataSize + 1);
+			str_hex_cstyle(OutputActualHex.data(), OutputActualHex.length(), &m_vBuffer[StartActual], DataSize, 10);
+		}
+		std::string OutputExpectedHex;
+		if(StartExpected < OutputSize)
+		{
+			const size_t DataSize = OutputSize - StartExpected;
+			OutputExpectedHex.resize(6 * DataSize + 1);
+			str_hex_cstyle(OutputExpectedHex.data(), OutputExpectedHex.length(), &pOutput[StartExpected], DataSize, 10);
+		}
+
+		ASSERT_EQ(StartActual, StartExpected) << "Header size mismatch. Actual " << StartActual << ", expected " << StartExpected << ".";
+		ASSERT_TRUE(mem_comp(m_vBuffer.data(), pOutput, StartExpected) == 0) << "Header mismatch. Check full output in .teehistorian files.";
+		ASSERT_EQ(m_vBuffer.size(), OutputSize) << "Output size mismatch. Actual " << m_vBuffer.size() << ", expected " << OutputSize << ".";
+		ASSERT_TRUE(mem_comp(m_vBuffer.data(), pOutput, OutputSize) == 0) << "Output mismatch. Actual m_vBuffer = {\n"
+										  << OutputActualHex.c_str() << "\n}\nExpected pOutput = {\n"
+										  << OutputExpectedHex.c_str() << "\n}";
 	}
 
 	void Tick(int Tick)
@@ -404,29 +424,32 @@ TEST_F(TeeHistorian, DDNetVersion)
 TEST_F(TeeHistorian, Auth)
 {
 	const unsigned char EXPECTED[] = {
-		// EX uuid=60daba5c-52c4-3aeb-b8ba-b2953fb55a17 data_len=16
+		// EX uuid=7a202cc7-3591-3d4f-a8a6-98286d5c4f9c data_len=21
 		0x4a,
-		0x60, 0xda, 0xba, 0x5c, 0x52, 0xc4, 0x3a, 0xeb,
-		0xb8, 0xba, 0xb2, 0x95, 0x3f, 0xb5, 0x5a, 0x17,
-		0x10,
-		// (AUTH_INIT) cid=0 level=3 auth_name="default_admin"
-		0x00, 0x03, 'd', 'e', 'f', 'a', 'u', 'l',
-		't', '_', 'a', 'd', 'm', 'i', 'n', 0x00,
-		// EX uuid=37ecd3b8-9218-3bb9-a71b-a935b86f6a81 data_len=9
+		0x7a, 0x20, 0x2c, 0xc7, 0x35, 0x91, 0x3d, 0x4f,
+		0xa8, 0xa6, 0x98, 0x28, 0x6d, 0x5c, 0x4f, 0x9c,
+		0x15,
+		// (AUTH_INIT_ROLE) cid=0 role="admin" auth_name="default_admin"
+		0x00, 'a', 'd', 'm', 'i', 'n', 0x00, 'd',
+		'e', 'f', 'a', 'u', 'l', 't', '_', 'a',
+		'd', 'm', 'i', 'n', 0x00,
+		// EX uuid=09d8570e-045e-345c-9bc6-65d3b091c3f4 data_len=18
 		0x4a,
-		0x37, 0xec, 0xd3, 0xb8, 0x92, 0x18, 0x3b, 0xb9,
-		0xa7, 0x1b, 0xa9, 0x35, 0xb8, 0x6f, 0x6a, 0x81,
-		0x09,
-		// (AUTH_LOGIN) cid=1 level=2 auth_name="foobar"
-		0x01, 0x02, 'f', 'o', 'o', 'b', 'a', 'r',
-		0x00,
-		// EX uuid=37ecd3b8-9218-3bb9-a71b-a935b86f6a81 data_len=7
+		0x09, 0xd8, 0x57, 0x0e, 0x04, 0x5e, 0x34, 0x5c,
+		0x9b, 0xc6, 0x65, 0xd3, 0xb0, 0x91, 0xc3, 0xf4,
+		0x12,
+		// (AUTH_LOGIN_ROLE) cid=1 role="moderator" auth_name="foobar"
+		0x01, 'm', 'o', 'd', 'e', 'r', 'a', 't',
+		'o', 'r', 0x00, 'f', 'o', 'o', 'b', 'a',
+		'r', 0x00,
+		// EX uuid=09d8570e-045e-345c-9bc6-65d3b091c3f4 data_len=13
 		0x4a,
-		0x37, 0xec, 0xd3, 0xb8, 0x92, 0x18, 0x3b, 0xb9,
-		0xa7, 0x1b, 0xa9, 0x35, 0xb8, 0x6f, 0x6a, 0x81,
-		0x07,
-		// (AUTH_LOGIN) cid=1 level=2 auth_name="help"
-		0x02, 0x01, 'h', 'e', 'l', 'p', 0x00,
+		0x09, 0xd8, 0x57, 0x0e, 0x04, 0x5e, 0x34, 0x5c,
+		0x9b, 0xc6, 0x65, 0xd3, 0xb0, 0x91, 0xc3, 0xf4,
+		0x0d,
+		// (AUTH_LOGIN_ROLE) cid=1 role="helper" auth_name="help"
+		0x02, 'h', 'e', 'l', 'p', 'e', 'r', 0x00,
+		'h', 'e', 'l', 'p', 0x00,
 		// EX uuid=d4f5abe8-edd2-3fb9-abd8-1c8bb84f4a63 data_len=7
 		0x4a,
 		0xd4, 0xf5, 0xab, 0xe8, 0xed, 0xd2, 0x3f, 0xb9,
@@ -436,9 +459,9 @@ TEST_F(TeeHistorian, Auth)
 		0x01,
 		0x40, // FINISH
 	};
-	m_TH.RecordAuthInitial(0, AUTHED_ADMIN, "default_admin");
-	m_TH.RecordAuthLogin(1, AUTHED_MOD, "foobar");
-	m_TH.RecordAuthLogin(2, AUTHED_HELPER, "help");
+	m_TH.RecordAuthInitial(0, RoleName::ADMIN, "default_admin");
+	m_TH.RecordAuthLogin(1, RoleName::MODERATOR, "foobar");
+	m_TH.RecordAuthLogin(2, RoleName::HELPER, "help");
 	m_TH.RecordAuthLogout(1);
 	Finish();
 	Expect(EXPECTED, sizeof(EXPECTED));
@@ -901,7 +924,7 @@ TEST_F(TeeHistorian, PrevGameUuid)
 	m_GameInfo.m_PrevGameUuid = PrevGameUuid;
 	Reset(&m_GameInfo);
 	Finish();
-	json_value *pJson = json_parse((const char *)m_vBuffer.data() + 16, -1);
+	json_value *pJson = JsonParse((const char *)m_vBuffer.data() + 16, m_vBuffer.size() - 16);
 	ASSERT_TRUE(pJson);
 	const json_value &JsonPrevGameUuid = (*pJson)["prev_game_uuid"];
 	ASSERT_EQ(JsonPrevGameUuid.type, json_string);

@@ -2,7 +2,13 @@
 
 #include <base/color.h>
 #include <base/math.h>
-#include <base/system.h>
+#include <base/dbg.h>
+#include <base/log.h>
+#include <base/math.h>
+#include <base/mem.h>
+#include <base/str.h>
+#include <base/time.h>
+#include <base/types.h>
 
 #include <engine/graphics.h>
 #include <engine/shared/config.h>
@@ -65,9 +71,8 @@ void CCursorTrail::SampleCurrentPos()
 		if(RenderSpecCursor)
 		{
 			const vec2 Center = GameClient()->m_Camera.m_Center;
-			float aPoints[4];
-			Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->WorldAspect(), 1.0f, aPoints);
-			const vec2 HalfSize = vec2(Center.x - aPoints[0], Center.y - aPoints[1]);
+			const CScreenRect WorldRect = Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->WorldAspect(), 1.0f);
+			const vec2 HalfSize = Center - WorldRect.m_TopLeft;
 			const vec2 ScreenPos = (GameClient()->m_CursorInfo.WorldTarget() - Center) / GameClient()->m_Camera.m_RenderZoom;
 			const float ClampFactor = maximum(1.0f, absolute(ScreenPos.x / HalfSize.x), absolute(ScreenPos.y / HalfSize.y));
 			Pos = ScreenPos / ClampFactor + Center;
@@ -131,12 +136,10 @@ void CCursorTrail::RenderTrail() const
 	}
 
 	const vec2 Center = GameClient()->m_Camera.m_Center;
-	float ScreenX0, ScreenY0, ScreenX1, ScreenY1;
-	Graphics()->GetScreen(&ScreenX0, &ScreenY0, &ScreenX1, &ScreenY1);
-	float aPoints[4];
-	Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->WorldAspect(), 1.0f, aPoints);
+	const CScreenRect PrevScreen = Graphics()->GetScreen();
+	const CScreenRect WorldRect = Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->WorldAspect(), 1.0f);
 	Graphics()->TextureClear();
-	Graphics()->MapScreen(aPoints[0], aPoints[1], aPoints[2], aPoints[3]);
+	Graphics()->MapScreen(WorldRect);
 
 	Graphics()->LinesBegin();
 	for(int i = 0; i < Num - 1; i++)
@@ -147,7 +150,7 @@ void CCursorTrail::RenderTrail() const
 	}
 	Graphics()->LinesEnd();
 
-	Graphics()->MapScreen(ScreenX0, ScreenY0, ScreenX1, ScreenY1);
+	Graphics()->MapScreen(PrevScreen);
 }
 
 void CCursorTrail::OnRender()

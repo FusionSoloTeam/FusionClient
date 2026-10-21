@@ -1,6 +1,82 @@
-#include <base/system.h>
+#include <base/dbg.h>
+#include <base/str.h>
 
 #include <engine/shared/json.h>
+
+#include <vector>
+
+static bool JsonValidateUtf8(const json_value *pRoot)
+{
+	std::vector<const json_value *> vpValues;
+	vpValues.push_back(pRoot);
+	while(!vpValues.empty())
+	{
+		const json_value *pValue = vpValues.back();
+		vpValues.pop_back();
+		switch(pValue->type)
+		{
+		case json_string:
+			if(!str_utf8_check(*pValue))
+			{
+				return false;
+			}
+			break;
+		case json_array:
+			for(unsigned i = 0; i < pValue->u.array.length; i++)
+			{
+				vpValues.push_back(pValue->u.array.values[i]);
+			}
+			break;
+		case json_object:
+			for(unsigned i = 0; i < pValue->u.object.length; i++)
+			{
+				if(!str_utf8_check(pValue->u.object.values[i].name))
+				{
+					return false;
+				}
+				vpValues.push_back(pValue->u.object.values[i].value);
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	return true;
+}
+
+json_value *JsonParse(const json_char *pJson, size_t Length)
+{
+	json_value *pValue = json_parse(pJson, Length);
+	if(pValue == nullptr)
+	{
+		return nullptr;
+	}
+	if(!JsonValidateUtf8(pValue))
+	{
+		json_value_free(pValue);
+		return nullptr;
+	}
+	return pValue;
+}
+
+json_value *JsonParseEx(json_settings *pSettings, const json_char *pJson, size_t Length, char *pError)
+{
+	json_value *pValue = json_parse_ex(pSettings, pJson, Length, pError);
+	if(pValue == nullptr)
+	{
+		return nullptr;
+	}
+	if(!JsonValidateUtf8(pValue))
+	{
+		if(pError)
+		{
+			str_copy(pError, "invalid utf-8 in string literal", json_error_max);
+		}
+		json_value_free(pValue);
+		return nullptr;
+	}
+	return pValue;
+}
 
 const struct _json_value *json_object_get(const json_value *pObject, const char *pIndex)
 {
@@ -62,6 +138,7 @@ static char EscapeJsonChar(char c)
 char *EscapeJson(char *pBuffer, int BufferSize, const char *pString)
 {
 	dbg_assert(BufferSize > 0, "can't null-terminate the string");
+	dbg_assert(str_utf8_check(pString), "invalid UTF-8 in string");
 	// Subtract the space for null termination early.
 	BufferSize--;
 
@@ -89,7 +166,9 @@ char *EscapeJson(char *pBuffer, int BufferSize, const char *pString)
 			{
 				break;
 			}
-			str_format(pBuffer, BufferSize, "\\u%04x", c);
+			// +1 for null termination or this would be truncated with `BufferSize == 6`.
+			// We know this fits because space for null termination is reserved early.
+			str_format(pBuffer, BufferSize + 1, "\\u%04x", c);
 			pBuffer += 6;
 			BufferSize -= 6;
 		}

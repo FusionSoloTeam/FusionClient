@@ -1,6 +1,5 @@
 #include <base/log.h>
 #include <base/math.h>
-#include <base/system.h>
 #include <base/types.h>
 
 #include <engine/font_icons.h>
@@ -31,6 +30,7 @@
 #include <game/client/ui_listbox.h>
 #include <game/client/ui_scrollregion.h>
 #include <game/localization.h>
+#include <game/version.h>
 
 #include <algorithm>
 #include <string>
@@ -83,11 +83,6 @@ static void SetFlag(int32_t &Flags, int n, bool Value)
 		Flags |= (1 << n);
 	else
 		Flags &= ~(1 << n);
-}
-
-static bool IsFlagSet(int32_t Flags, int n)
-{
-	return (Flags & (1 << n)) != 0;
 }
 
 bool CMenus::DoLine_KeyReader(CUIRect &View, CButtonContainer &ReaderButton, CButtonContainer &ClearButton, const char *pName, const char *pCommand)
@@ -163,7 +158,7 @@ bool CMenus::DoSliderWithScaledValue(const void *pId, int *pOption, const CUIRec
 	}
 
 	CUIRect Label, ScrollBar;
-	pRect->VSplitMid(&Label, &ScrollBar, minimum(10.0f, pRect->w * 0.05f));
+	pRect->VSplitMid(&Label, &ScrollBar, std::min(10.0f, pRect->w * 0.05f));
 
 	const float LabelFontSize = Label.h * CUi::ms_FontmodHeight * 0.8f;
 	Ui()->DoLabel(&Label, aBuf, LabelFontSize, TEXTALIGN_ML);
@@ -322,60 +317,32 @@ void CMenus::RenderSettingsTClient(CUIRect MainView)
 		s_Time = (float)rand() / (float)RAND_MAX;
 	}
 
-	static int s_CurCustomTab = 0;
-
-	CUIRect TabBar, Button;
-	int TabCount = NUMBER_OF_TCLIENT_TABS;
-	for(int Tab = 0; Tab < NUMBER_OF_TCLIENT_TABS; ++Tab)
+	switch(g_Config.m_UiSettingsPage)
 	{
-		if(IsFlagSet(g_Config.m_TcTClientSettingsTabs, Tab))
-		{
-			TabCount--;
-			if(s_CurCustomTab == Tab)
-				s_CurCustomTab++;
-		}
-	}
-
-	MainView.HSplitTop(LineSize, &TabBar, &MainView);
-	const float TabWidth = TabBar.w / TabCount;
-	static CButtonContainer s_aPageTabs[NUMBER_OF_TCLIENT_TABS] = {};
-	const char *apTabNames[] = {
-		TCLocalize("Settings"),
-		TCLocalize("Bind Wheel"),
-		TCLocalize("War List"),
-		TCLocalize("Friendlist"),
-		TCLocalize("Chat Binds"),
-		TCLocalize("Status Bar"),
-		TCLocalize("Info")};
-
-	for(int Tab = 0; Tab < NUMBER_OF_TCLIENT_TABS; ++Tab)
-	{
-		if(IsFlagSet(g_Config.m_TcTClientSettingsTabs, Tab))
-			continue;
-
-		TabBar.VSplitLeft(TabWidth, &Button, &TabBar);
-		const int Corners = Tab == 0 ? IGraphics::CORNER_L : Tab == NUMBER_OF_TCLIENT_TABS - 1 ? IGraphics::CORNER_R :
-													 IGraphics::CORNER_NONE;
-		if(DoButton_MenuTab(&s_aPageTabs[Tab], apTabNames[Tab], s_CurCustomTab == Tab, &Button, Corners, nullptr, nullptr, nullptr, nullptr, 4.0f))
-			s_CurCustomTab = Tab;
-	}
-
-	MainView.HSplitTop(Margin, nullptr, &MainView);
-
-	if(s_CurCustomTab == TCLIENT_TAB_SETTINGS)
+	case SETTINGS_TCLIENT:
 		RenderSettingsTClientSettings(MainView);
-	if(s_CurCustomTab == TCLIENT_TAB_BINDCHAT)
-		RenderSettingsTClientChatBinds(MainView);
-	if(s_CurCustomTab == TCLIENT_TAB_BINDWHEEL)
+		break;
+	case SETTINGS_TCLIENT_BINDWHEEL:
 		RenderSettingsTClientBindWheel(MainView);
-	if(s_CurCustomTab == TCLIENT_TAB_WARLIST)
+		break;
+	case SETTINGS_TCLIENT_WARLIST:
 		RenderSettingsTClientWarList(MainView);
-	if(s_CurCustomTab == TCLIENT_TAB_FRIENDLIST)
+		break;
+	case SETTINGS_TCLIENT_FRIENDLIST:
 		RenderSettingsTClientFriendList(MainView);
-	if(s_CurCustomTab == TCLIENT_TAB_STATUSBAR)
+		break;
+	case SETTINGS_TCLIENT_CHATBINDS:
+		RenderSettingsTClientChatBinds(MainView);
+		break;
+	case SETTINGS_TCLIENT_STATUSBAR:
 		RenderSettingsTClientStatusBar(MainView);
-	if(s_CurCustomTab == TCLIENT_TAB_INFO)
+		break;
+	case SETTINGS_TCLIENT_INFO:
 		RenderSettingsTClientInfo(MainView);
+		break;
+	default:
+		break;
+	}
 }
 
 static bool SettingsSectionVisible(const char *pSearch, std::initializer_list<const char *> Keywords)
@@ -540,6 +507,20 @@ static int CountSettingsSearchMatches(const char *pSearch)
 
 void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 {
+	RenderTClientSettingsPage(MainView, false);
+}
+
+void CMenus::RenderSettingsVClientSettings(CUIRect MainView)
+{
+	RenderTClientSettingsPage(MainView, true);
+}
+
+void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool VClientPage)
+{
+	const auto SectionEnabled = [VClientPage](bool IsVClientSection, const char *pSearch, std::initializer_list<const char *> Keywords) {
+		return VClientPage == IsVClientSection && SettingsSectionVisible(pSearch, Keywords);
+	};
+
 	CUIRect Column, LeftView, RightView, Button, Label;
 
 	// TClient settings search
@@ -575,17 +556,15 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	static CScrollRegion s_ScrollRegion;
-	vec2 ScrollOffset(0.0f, 0.0f);
 	CScrollRegionParams ScrollParams;
 	ScrollParams.m_ScrollUnit = 60.0f;
-	ScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
+	ScrollParams.m_ForceShowScrollbar = true;
 	ScrollParams.m_ScrollbarMargin = 5.0f;
-	s_ScrollRegion.Begin(&MainView, &ScrollOffset, &ScrollParams);
+	s_ScrollRegion.Begin(&MainView, &ScrollParams);
 
 	static std::vector<CUIRect> s_SectionBoxes;
-	static vec2 s_PrevScrollOffset(0.0f, 0.0f);
-
-	MainView.y += ScrollOffset.y;
+	const float ScrollOffset = MainView.y;
+	static float s_PrevScrollOffset = 0.0f;
 
 	MainView.VSplitRight(5.0f, &MainView, nullptr); // Padding for scrollbar
 	MainView.VSplitLeft(5.0f, nullptr, &MainView); // Padding for scrollbar
@@ -601,7 +580,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 		Section.h += Padding;
 		Section.x -= Padding * 0.5f;
 		Section.y -= Padding * 0.5f;
-		Section.y -= s_PrevScrollOffset.y - ScrollOffset.y;
+		Section.y -= s_PrevScrollOffset - ScrollOffset;
 		Section.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 10.0f);
 	}
 	s_PrevScrollOffset = ScrollOffset;
@@ -611,7 +590,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	Column = LeftView;
 
 	// ***** Visual Miscellaneous ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"visual", "font", "custom", "color", "settings", "icon", "menu", "spectate", "prefix"}))
+	if(SectionEnabled(false, pSettingsSearch, {"visual", "font", "custom", "color", "settings", "icon", "menu", "spectate", "prefix"}))
 	{
 	Column.HSplitTop(Margin, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -762,7 +741,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
 
 	}
-	if(SettingsSectionVisible(pSettingsSearch, {"aspect", "ratio", "custom", "screen", "viewport"}))
+	if(SectionEnabled(true, pSettingsSearch, {"aspect", "ratio", "custom", "screen", "viewport"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -881,7 +860,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Flying Name Plates (ported from BestClient) ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"flying", "nameplate", "kite"}))
+	if(SectionEnabled(true, pSettingsSearch, {"flying", "nameplate", "kite"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -906,7 +885,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Input ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"input", "mouse", "sens", "fast", "subtick"}))
+	if(SectionEnabled(false, pSettingsSearch, {"input", "mouse", "sens", "fast", "subtick"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -949,6 +928,8 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClSubTickAiming, TCLocalize("Sub-Tick aiming"), &g_Config.m_ClSubTickAiming, &Column, LineSize);
+	if(!g_Config.m_ClSubTickAiming)
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcFastInputRepredictHook, TCLocalize("Repredict on mid-tick hook direction change (may lag)"), &g_Config.m_TcFastInputRepredictHook, &Column, LineSize);
 
 	// A little extra spacing because these are multi line
 	Column.HSplitTop(MarginSmall, nullptr, &Column);
@@ -957,7 +938,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Anti Latency Tools ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"anti", "latency", "prediction", "margin", "freeze", "tp", "tiles", "laser"}))
+	if(SectionEnabled(false, pSettingsSearch, {"anti", "latency", "prediction", "margin", "freeze", "tp", "tiles", "laser"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -994,7 +975,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Improved Anti Ping ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"antiping", "smoothing", "prediction"}))
+	if(SectionEnabled(false, pSettingsSearch, {"antiping", "smoothing", "prediction"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1017,7 +998,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Performance ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"performance", "priority", "process", "discord"}))
+	if(SectionEnabled(true, pSettingsSearch, {"performance", "priority", "process", "discord"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1041,7 +1022,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	// ***** Discord ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"discord", "rpc", "rich presence", "status"}))
+	if(SectionEnabled(true, pSettingsSearch, {"discord", "rpc", "rich presence", "status"}))
 	{
 		Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 		s_SectionBoxes.push_back(Column);
@@ -1055,7 +1036,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	// ***** Info ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"info", "vram", "ram", "memory", "overlay"}))
+	if(SectionEnabled(true, pSettingsSearch, {"info", "vram", "ram", "memory", "overlay"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1070,7 +1051,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	// ***** Execute on join ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"execute", "connect", "join", "auto"}))
+	if(SectionEnabled(false, pSettingsSearch, {"execute", "connect", "join", "auto"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1108,7 +1089,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Voting ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"vote", "voting"}))
+	if(SectionEnabled(false, pSettingsSearch, {"vote", "voting"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1138,7 +1119,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Auto Reply ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"reply", "message"}))
+	if(SectionEnabled(false, pSettingsSearch, {"reply", "message"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1173,7 +1154,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Camera ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"camera", "respawn", "smooth camera"}))
+	if(SectionEnabled(true, pSettingsSearch, {"camera", "respawn", "smooth camera"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1194,7 +1175,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	// ***** Above/Below Player ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"above", "below", "player", "position", "notify"}))
+	if(SectionEnabled(true, pSettingsSearch, {"above", "below", "player", "position", "notify"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1229,7 +1210,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Player Indicator ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"indicator", "player"}))
+	if(SectionEnabled(false, pSettingsSearch, {"indicator", "player"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1286,7 +1267,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Pet ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"pet"}))
+	if(SectionEnabled(false, pSettingsSearch, {"pet"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1348,7 +1329,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Cursor Trail ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"cursor", "trail"}))
+	if(SectionEnabled(true, pSettingsSearch, {"cursor", "trail"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1413,7 +1394,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Keystrokes ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"keystrokes", "keys", "keyboard", "wasd"}))
+	if(SectionEnabled(true, pSettingsSearch, {"keystrokes", "keys", "keyboard", "wasd"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1433,7 +1414,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Finish Prediction ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"finish", "prediction", "time"}))
+	if(SectionEnabled(true, pSettingsSearch, {"finish", "prediction", "time"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1483,7 +1464,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Jelly Tee ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"jelly", "tee", "deform"}))
+	if(SectionEnabled(true, pSettingsSearch, {"jelly", "tee", "deform"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1506,7 +1487,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Custom Hooks ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"hook", "style", "custom", "effect"}))
+	if(SectionEnabled(true, pSettingsSearch, {"hook", "style", "custom", "effect"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1644,7 +1625,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Hook Effects ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"hook", "effects", "jump", "hammer", "hold"}))
+	if(SectionEnabled(true, pSettingsSearch, {"hook", "effects", "jump", "hammer", "hold"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1677,7 +1658,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Weather ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"weather", "snow", "rain", "fireflies", "dust", "leaves", "sakura", "petals"}))
+	if(SectionEnabled(true, pSettingsSearch, {"weather", "snow", "rain", "fireflies", "dust", "leaves", "sakura", "petals"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1755,7 +1736,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** 3D Sound ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"sound", "3d", "raycast", "echo", "occlusion", "audio"}))
+	if(SectionEnabled(true, pSettingsSearch, {"sound", "3d", "raycast", "echo", "occlusion", "audio"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1788,7 +1769,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	Column = RightView;
 
 	// ***** HUD ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"hud", "fps", "chat", "scoreboard"}))
+	if(SectionEnabled(false, pSettingsSearch, {"hud", "fps", "chat", "scoreboard"}))
 	{
 	Column.HSplitTop(Margin, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1840,7 +1821,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Frozen Tee Display ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"frozen", "freeze", "tee", "display"}))
+	if(SectionEnabled(false, pSettingsSearch, {"frozen", "freeze", "tee", "display"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1877,7 +1858,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Tile Outlines ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"outline", "tile", "pulsate", "audio", "discord"}))
+	if(SectionEnabled(false, pSettingsSearch, {"outline", "tile", "pulsate", "audio", "discord"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1958,7 +1939,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Ghost Tools ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"ghost", "prediction", "swap"}))
+	if(SectionEnabled(false, pSettingsSearch, {"ghost", "prediction", "swap"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1982,7 +1963,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Rainbow ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"rainbow", "color"}))
+	if(SectionEnabled(false, pSettingsSearch, {"rainbow", "color"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2018,7 +1999,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Tee Trails ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"trail", "tee"}))
+	if(SectionEnabled(false, pSettingsSearch, {"trail", "tee"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2068,7 +2049,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** BG Draw ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"background", "draw", "bg"}))
+	if(SectionEnabled(false, pSettingsSearch, {"background", "draw", "bg"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2096,7 +2077,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Finish Name ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"finish", "name", "message"}))
+	if(SectionEnabled(false, pSettingsSearch, {"finish", "name", "message"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2129,7 +2110,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	// ***** Automation ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"automation", "notify", "join", "move", "name", "message", "afk", "spectate", "spec", "unspectate", "unspec", "bypass", "nick", "mute", "war", "heart"}))
+	if(SectionEnabled(true, pSettingsSearch, {"automation", "notify", "join", "move", "name", "message", "afk", "spectate", "spec", "unspectate", "unspec", "bypass", "nick", "mute", "war", "heart"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2179,7 +2160,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	// ***** Notify on button press ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"notify", "button", "switch", "press"}))
+	if(SectionEnabled(true, pSettingsSearch, {"notify", "button", "switch", "press"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2205,7 +2186,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	// ***** Idle Aura ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"aura", "idle"}))
+	if(SectionEnabled(true, pSettingsSearch, {"aura", "idle"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2243,7 +2224,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	// ***** Hover Notifications ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"hover", "notification"}))
+	if(SectionEnabled(true, pSettingsSearch, {"hover", "notification"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2281,7 +2262,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	// ***** Better chat ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"better chat", "smooth chat", "typing", "caret", "chat animation", "chat input"}))
+	if(SectionEnabled(true, pSettingsSearch, {"better chat", "smooth chat", "typing", "caret", "chat animation", "chat input"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2299,7 +2280,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	// ***** Lyrics ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"lyrics", "song", "music", "karaoke", "lrc", "3d text", "sing"}))
+	if(SectionEnabled(true, pSettingsSearch, {"lyrics", "song", "music", "karaoke", "lrc", "3d text", "sing"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2356,7 +2337,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	// ***** Vignette ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"vignette", "blur", "edge", "screen", "color"}))
+	if(SectionEnabled(true, pSettingsSearch, {"vignette", "blur", "edge", "screen", "color"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2397,7 +2378,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	// ***** Gradient ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"gradient", "nameplate", "clan", "skin", "chat", "message"}))
+	if(SectionEnabled(true, pSettingsSearch, {"gradient", "nameplate", "clan", "skin", "chat", "message"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2424,7 +2405,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	}
 
 	// ***** Swap Timer ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"swap", "timer"}))
+	if(SectionEnabled(true, pSettingsSearch, {"swap", "timer"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2443,7 +2424,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Dynamic Camera ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"dynamic", "camera", "zoom", "speed"}))
+	if(SectionEnabled(true, pSettingsSearch, {"dynamic", "camera", "zoom", "speed"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2506,7 +2487,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Drift Camera ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"drift", "camera", "speed"}))
+	if(SectionEnabled(true, pSettingsSearch, {"drift", "camera", "speed"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2567,7 +2548,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Laser Glow ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"laser", "glow", "rifle"}))
+	if(SectionEnabled(true, pSettingsSearch, {"laser", "glow", "rifle"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2601,7 +2582,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Shotgun Glow ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"shotgun", "glow"}))
+	if(SectionEnabled(true, pSettingsSearch, {"shotgun", "glow"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2635,7 +2616,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Rocket Glow ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"rocket", "grenade", "glow"}))
+	if(SectionEnabled(true, pSettingsSearch, {"rocket", "grenade", "glow"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2669,7 +2650,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 	// ***** Freeze Lightning ***** //
-	if(SettingsSectionVisible(pSettingsSearch, {"freeze", "lightning", "frost", "strike"}))
+	if(SectionEnabled(true, pSettingsSearch, {"freeze", "lightning", "frost", "strike"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2730,13 +2711,120 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 
 	}
 
+	// ***** Translate ***** //
+	if(SectionEnabled(false, pSettingsSearch, {"translate", "translation", "language", "backend", "libretranslate"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Translate"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	// Current backend's language table -- Google and LibreTranslate genuinely
+	// support different language sets (see translate.h/.cpp's
+	// g_aTranslateBackends), so the dropdowns below are backend-scoped
+	// rather than one shared list.
+	int CurrentBackendIndex = 0;
+	for(size_t i = 0; i < g_aTranslateBackends.size(); i++)
+	{
+		if(str_comp_nocase(g_Config.m_TcTranslateBackend, g_aTranslateBackends[i].m_pValue) == 0)
+			CurrentBackendIndex = (int)i;
+	}
+	const STranslateBackendInfo &CurrentBackend = g_aTranslateBackends[CurrentBackendIndex];
+
+	{
+		static std::vector<const char *> s_TranslateBackendNames;
+		s_TranslateBackendNames.clear();
+		for(const STranslateBackendInfo &Backend : g_aTranslateBackends)
+			s_TranslateBackendNames.push_back(Backend.m_pName);
+
+		static CUi::SDropDownState s_TranslateBackendDropDownState;
+		static CScrollRegion s_TranslateBackendDropDownScrollRegion;
+		s_TranslateBackendDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_TranslateBackendDropDownScrollRegion;
+		CUIRect BackendDropDownRect;
+		Column.HSplitTop(LineSize, &BackendDropDownRect, &Column);
+		BackendDropDownRect.VSplitLeft(120.0f, &Label, &BackendDropDownRect);
+		Ui()->DoLabel(&Label, TCLocalize("Backend: "), FontSize, TEXTALIGN_ML);
+		const int BackendSelectedNew = Ui()->DoDropDown(&BackendDropDownRect, CurrentBackendIndex, s_TranslateBackendNames.data(), s_TranslateBackendNames.size(), s_TranslateBackendDropDownState);
+		if(BackendSelectedNew != CurrentBackendIndex)
+			str_copy(g_Config.m_TcTranslateBackend, g_aTranslateBackends[BackendSelectedNew].m_pValue);
+	}
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcTranslateAuto, TCLocalize("Automatically translate incoming messages"), &g_Config.m_TcTranslateAuto, &Column, LineSize);
+	if(g_Config.m_TcTranslateAuto)
+	{
+		CUIRect IncomingTargetBox;
+		Column.HSplitTop(LineSize + MarginExtraSmall, &IncomingTargetBox, &Column);
+		IncomingTargetBox.HSplitTop(MarginExtraSmall, nullptr, &IncomingTargetBox);
+		IncomingTargetBox.VSplitMid(&Label, &IncomingTargetBox);
+		Ui()->DoLabel(&Label, TCLocalize("Translate incoming to:"), FontSize, TEXTALIGN_ML);
+		static CUi::SDropDownState s_IncomingLangDropDownState;
+		static CScrollRegion s_IncomingLangDropDownScrollRegion;
+		s_IncomingLangDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_IncomingLangDropDownScrollRegion;
+		static std::vector<const char *> s_IncomingLangNames;
+		s_IncomingLangNames.clear();
+		for(const STranslateLanguage &Language : CurrentBackend.m_vLanguages)
+			s_IncomingLangNames.push_back(Language.m_pName);
+		const int IncomingLangOld = TranslateLanguageIndex(CurrentBackend.m_vLanguages, g_Config.m_TcTranslateTarget);
+		const int IncomingLangNew = Ui()->DoDropDown(&IncomingTargetBox, IncomingLangOld, s_IncomingLangNames.data(), s_IncomingLangNames.size(), s_IncomingLangDropDownState);
+		if(IncomingLangOld != IncomingLangNew)
+			str_copy(g_Config.m_TcTranslateTarget, CurrentBackend.m_vLanguages[IncomingLangNew].m_pCode);
+	}
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcTranslateOutgoing, TCLocalize("Translate your outgoing messages"), &g_Config.m_TcTranslateOutgoing, &Column, LineSize);
+	if(g_Config.m_TcTranslateOutgoing)
+	{
+		CUIRect OutgoingTargetBox;
+		Column.HSplitTop(LineSize + MarginExtraSmall, &OutgoingTargetBox, &Column);
+		OutgoingTargetBox.HSplitTop(MarginExtraSmall, nullptr, &OutgoingTargetBox);
+		OutgoingTargetBox.VSplitMid(&Label, &OutgoingTargetBox);
+		Ui()->DoLabel(&Label, TCLocalize("Translate outgoing to:"), FontSize, TEXTALIGN_ML);
+		static CUi::SDropDownState s_OutgoingLangDropDownState;
+		static CScrollRegion s_OutgoingLangDropDownScrollRegion;
+		s_OutgoingLangDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_OutgoingLangDropDownScrollRegion;
+		static std::vector<const char *> s_OutgoingLangNames;
+		s_OutgoingLangNames.clear();
+		for(const STranslateLanguage &Language : CurrentBackend.m_vLanguages)
+			s_OutgoingLangNames.push_back(Language.m_pName);
+		const int OutgoingLangOld = TranslateLanguageIndex(CurrentBackend.m_vLanguages, g_Config.m_TcTranslateOutgoingTarget);
+		const int OutgoingLangNew = Ui()->DoDropDown(&OutgoingTargetBox, OutgoingLangOld, s_OutgoingLangNames.data(), s_OutgoingLangNames.size(), s_OutgoingLangDropDownState);
+		if(OutgoingLangOld != OutgoingLangNew)
+			str_copy(g_Config.m_TcTranslateOutgoingTarget, CurrentBackend.m_vLanguages[OutgoingLangNew].m_pCode);
+	}
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	if(CurrentBackend.m_NeedsEndpointConfig)
+	{
+		CUIRect EndpointBox;
+		Column.HSplitTop(LineSize + MarginExtraSmall, &EndpointBox, &Column);
+		EndpointBox.VSplitMid(&Label, &EndpointBox);
+		Ui()->DoLabel(&Label, TCLocalize("LibreTranslate endpoint:"), FontSize, TEXTALIGN_ML);
+		static CLineInput s_TranslateEndpoint(g_Config.m_TcTranslateEndpoint, sizeof(g_Config.m_TcTranslateEndpoint));
+		s_TranslateEndpoint.SetEmptyText("localhost:5000/translate");
+		Ui()->DoEditBox(&s_TranslateEndpoint, &EndpointBox, EditBoxFontSize);
+		Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+
+		CUIRect KeyBox;
+		Column.HSplitTop(LineSize + MarginExtraSmall, &KeyBox, &Column);
+		KeyBox.VSplitMid(&Label, &KeyBox);
+		Ui()->DoLabel(&Label, TCLocalize("LibreTranslate API key:"), FontSize, TEXTALIGN_ML);
+		static CLineInput s_TranslateKey(g_Config.m_TcTranslateKey, sizeof(g_Config.m_TcTranslateKey));
+		s_TranslateKey.SetEmptyText(TCLocalize("Optional"));
+		Ui()->DoEditBox(&s_TranslateKey, &KeyBox, EditBoxFontSize);
+	}
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+	}
+
 	// ***** END OF PAGE 1 SETTINGS ***** //
 	RightView = Column;
 
 	// Scroll
 	CUIRect ScrollRegion;
 	ScrollRegion.x = MainView.x;
-	ScrollRegion.y = maximum(LeftView.y, RightView.y) + MarginSmall * 2.0f;
+	ScrollRegion.y = std::max(LeftView.y, RightView.y) + MarginSmall * 2.0f;
 	ScrollRegion.w = MainView.w;
 	ScrollRegion.h = 0.0f;
 	s_ScrollRegion.AddRect(ScrollRegion);
@@ -2748,7 +2836,7 @@ void CMenus::RenderSettingsTClientBindWheel(CUIRect MainView)
 	CUIRect LeftView, RightView, Label, Button;
 	MainView.VSplitLeft(MainView.w / 2.1f, &LeftView, &RightView);
 
-	const float Radius = minimum(RightView.w, RightView.h) / 2.0f;
+	const float Radius = std::min(RightView.w, RightView.h) / 2.0f;
 	vec2 Center = RightView.Center();
 	// Draw Circle
 	Graphics()->TextureClear();
@@ -2904,17 +2992,15 @@ void CMenus::RenderSettingsTClientChatBinds(CUIRect MainView)
 	CUIRect LeftView, RightView, Button, Label;
 
 	static CScrollRegion s_ScrollRegion;
-	vec2 ScrollOffset(0.0f, 0.0f);
 	CScrollRegionParams ScrollParams;
 	ScrollParams.m_ScrollUnit = 60.0f;
-	ScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
+	ScrollParams.m_ForceShowScrollbar = true;
 	ScrollParams.m_ScrollbarMargin = 5.0f;
-	s_ScrollRegion.Begin(&MainView, &ScrollOffset, &ScrollParams);
+	s_ScrollRegion.Begin(&MainView, &ScrollParams);
 
 	static std::vector<CUIRect> s_SectionBoxes;
-	static vec2 s_PrevScrollOffset(0.0f, 0.0f);
-
-	MainView.y += ScrollOffset.y;
+	const float ScrollOffset = MainView.y;
+	static float s_PrevScrollOffset = 0.0f;
 
 	MainView.HSplitTop(Margin, nullptr, &MainView);
 	MainView.VSplitRight(5.0f, &MainView, nullptr); // Padding for scrollbar
@@ -2931,7 +3017,7 @@ void CMenus::RenderSettingsTClientChatBinds(CUIRect MainView)
 		Section.h += Padding;
 		Section.x -= Padding * 0.5f;
 		Section.y -= Padding * 0.5f;
-		Section.y -= s_PrevScrollOffset.y - ScrollOffset.y;
+		Section.y -= s_PrevScrollOffset - ScrollOffset;
 		Section.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 10.0f);
 	}
 	s_PrevScrollOffset = ScrollOffset;
@@ -2989,7 +3075,7 @@ void CMenus::RenderSettingsTClientChatBinds(CUIRect MainView)
 	// Scroll
 	CUIRect ScrollRegion;
 	ScrollRegion.x = MainView.x;
-	ScrollRegion.y = maximum(LeftView.y, RightView.y) + MarginSmall * 2.0f;
+	ScrollRegion.y = std::max(LeftView.y, RightView.y) + MarginSmall * 2.0f;
 	ScrollRegion.w = MainView.w;
 	ScrollRegion.h = 0.0f;
 	s_ScrollRegion.AddRect(ScrollRegion);
@@ -3745,7 +3831,7 @@ void CMenus::RenderSettingsTClientStatusBar(CUIRect MainView)
 	Ui()->DoLabel(&Label, TCLocalize("Local Time"), HeadlineFontSize, TEXTALIGN_ML);
 	LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcStatusBar12HourClock, TCLocalize("Use 12 hour clock"), &g_Config.m_TcStatusBar12HourClock, &LeftView, LineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcStatusBarLocalTimeSeocnds, TCLocalize("Show seconds on clock"), &g_Config.m_TcStatusBarLocalTimeSeocnds, &LeftView, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcStatusBarLocalTimeSeconds, TCLocalize("Show seconds on clock"), &g_Config.m_TcStatusBarLocalTimeSeconds, &LeftView, LineSize);
 	LeftView.HSplitTop(HeadlineHeight, &Label, &LeftView);
 
 	LeftView.HSplitTop(HeadlineHeight, &Label, &LeftView);
@@ -3919,7 +4005,7 @@ void CMenus::RenderSettingsTClientStatusBar(CUIRect MainView)
 			float Progress = std::pow(2.0, -5.0 * (1.0 - s_ItemSwaps[i].m_Duration / 0.15f));
 			TempItemButton.x = mix(TempItemButton.x, s_ItemSwaps[i].m_InitialPosition.x, Progress);
 		}
-		if(DoButtonLineSize_Menu(s_pItemButtons[i], StatusItem->m_aDisplayName, 0, &TempItemButton, LineSize, false, 0, IGraphics::CORNER_ALL, 5.0f, 0.0f, Col))
+		if(DoButtonLineSize_Menu(s_pItemButtons[i], StatusItem->m_aDisplayName, 0, &TempItemButton, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, Col))
 		{
 			if(s_SelectedItem == -2)
 				s_SelectedItem++;
@@ -3962,18 +4048,18 @@ void CMenus::RenderSettingsTClientInfo(CUIRect MainView)
 
 	LeftView.HSplitTop(LineSize * 2.0f, &Button, &LeftView);
 	Button.VSplitMid(&ButtonLeft, &ButtonRight, MarginSmall);
-	if(DoButtonLineSize_Menu(&s_DiscordButton, TCLocalize("Discord"), 0, &ButtonLeft, LineSize, false, 0, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+	if(DoButtonLineSize_Menu(&s_DiscordButton, TCLocalize("Discord"), 0, &ButtonLeft, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 		Client()->ViewLink("https://discord.gg/fBvhH93Bt6");
-	if(DoButtonLineSize_Menu(&s_WebsiteButton, TCLocalize("Website"), 0, &ButtonRight, LineSize, false, 0, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+	if(DoButtonLineSize_Menu(&s_WebsiteButton, TCLocalize("Website"), 0, &ButtonRight, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 		Client()->ViewLink("https://tclient.app/");
 
 	LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
 	LeftView.HSplitTop(LineSize * 2.0f, &Button, &LeftView);
 	Button.VSplitMid(&ButtonLeft, &ButtonRight, MarginSmall);
 
-	if(DoButtonLineSize_Menu(&s_GithubButton, TCLocalize("Github"), 0, &ButtonLeft, LineSize, false, 0, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+	if(DoButtonLineSize_Menu(&s_GithubButton, TCLocalize("Github"), 0, &ButtonLeft, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 		Client()->ViewLink("https://github.com/sjrc6/TaterClient-ddnet");
-	if(DoButtonLineSize_Menu(&s_SupportButton, TCLocalize("Support ♥"), 0, &ButtonRight, LineSize, false, 0, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+	if(DoButtonLineSize_Menu(&s_SupportButton, TCLocalize("Support ♥"), 0, &ButtonRight, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 		Client()->ViewLink("https://ko-fi.com/Totar");
 
 	LeftView = LowerLeftView;
@@ -3989,12 +4075,12 @@ void CMenus::RenderSettingsTClientInfo(CUIRect MainView)
 	Button.VSplitMid(&TClientConfig, &ProfilesFile, MarginSmall);
 
 	static CButtonContainer s_Config, s_Profiles, s_Warlist, s_Chatbinds;
-	if(DoButtonLineSize_Menu(&s_Config, TCLocalize("TClient Settings"), 0, &TClientConfig, LineSize, false, 0, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+	if(DoButtonLineSize_Menu(&s_Config, TCLocalize("TClient Settings"), 0, &TClientConfig, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 	{
 		Storage()->GetCompletePath(IStorage::TYPE_SAVE, s_aConfigDomains[ConfigDomain::TCLIENT].m_aConfigPath, aBuf, sizeof(aBuf));
 		Client()->ViewFile(aBuf);
 	}
-	if(DoButtonLineSize_Menu(&s_Profiles, TCLocalize("Profiles"), 0, &ProfilesFile, LineSize, false, 0, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+	if(DoButtonLineSize_Menu(&s_Profiles, TCLocalize("Profiles"), 0, &ProfilesFile, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 	{
 		Storage()->GetCompletePath(IStorage::TYPE_SAVE, s_aConfigDomains[ConfigDomain::TCLIENTPROFILES].m_aConfigPath, aBuf, sizeof(aBuf));
 		Client()->ViewFile(aBuf);
@@ -4004,12 +4090,12 @@ void CMenus::RenderSettingsTClientInfo(CUIRect MainView)
 	LeftView.HSplitTop(LineSize * 2.0f, &Button, &LeftView);
 	Button.VSplitMid(&WarlistFile, &ChatbindsFile, MarginSmall);
 
-	if(DoButtonLineSize_Menu(&s_Warlist, TCLocalize("War List"), 0, &WarlistFile, LineSize, false, 0, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+	if(DoButtonLineSize_Menu(&s_Warlist, TCLocalize("War List"), 0, &WarlistFile, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 	{
 		Storage()->GetCompletePath(IStorage::TYPE_SAVE, s_aConfigDomains[ConfigDomain::TCLIENTWARLIST].m_aConfigPath, aBuf, sizeof(aBuf));
 		Client()->ViewFile(aBuf);
 	}
-	if(DoButtonLineSize_Menu(&s_Chatbinds, TCLocalize("Chat Binds"), 0, &ChatbindsFile, LineSize, false, 0, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+	if(DoButtonLineSize_Menu(&s_Chatbinds, TCLocalize("Chat Binds"), 0, &ChatbindsFile, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 	{
 		Storage()->GetCompletePath(IStorage::TYPE_SAVE, s_aConfigDomains[ConfigDomain::TCLIENTCHATBINDS].m_aConfigPath, aBuf, sizeof(aBuf));
 		Client()->ViewFile(aBuf);
@@ -4110,6 +4196,72 @@ void CMenus::RenderSettingsTClientInfo(CUIRect MainView)
 	// Ui()->DoLabel(&Label, TCLocalize("Integration"), HeadlineFontSize, TEXTALIGN_ML);
 	// RightView.HSplitTop(MarginSmall, nullptr, &RightView);
 	// DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcDiscordRPC, TCLocalize("Enable Discord Integration"), &g_Config.m_TcDiscordRPC, &RightView, LineSize);
+}
+
+void CMenus::RenderSettingsVClientInfo(CUIRect MainView)
+{
+	CUIRect LeftView, RightView, Button, Label;
+	MainView.HSplitTop(MarginSmall, nullptr, &MainView);
+
+	MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+	LeftView.VSplitLeft(MarginSmall, nullptr, &LeftView);
+	RightView.VSplitRight(MarginSmall, &RightView, nullptr);
+
+	// ---- links ----
+	LeftView.HSplitTop(HeadlineHeight, &Label, &LeftView);
+	Ui()->DoLabel(&Label, TCLocalize("VClient Links"), HeadlineFontSize, TEXTALIGN_ML);
+	LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
+
+	static CButtonContainer s_DiscordButton, s_WebsiteButton, s_GithubButton;
+	CUIRect ButtonLeft, ButtonRight;
+
+	LeftView.HSplitTop(LineSize * 2.0f, &Button, &LeftView);
+	Button.VSplitMid(&ButtonLeft, &ButtonRight, MarginSmall);
+	if(DoButtonLineSize_Menu(&s_DiscordButton, TCLocalize("Discord"), 0, &ButtonLeft, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+		Client()->ViewLink("https://discord.gg/4BhPbEuYeS");
+	if(DoButtonLineSize_Menu(&s_WebsiteButton, TCLocalize("Website"), 0, &ButtonRight, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+		Client()->ViewLink("https://velocity-soft.vercel.app/");
+
+	LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
+	LeftView.HSplitTop(LineSize * 2.0f, &Button, &LeftView);
+	Button.VSplitMid(&ButtonLeft, &ButtonRight, MarginSmall);
+	if(DoButtonLineSize_Menu(&s_GithubButton, TCLocalize("Github"), 0, &ButtonLeft, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+		Client()->ViewLink("https://github.com/Kyouki-Arx/VClient");
+	LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
+
+	LeftView.HSplitTop(HeadlineHeight, &Label, &LeftView);
+	Ui()->DoLabel(&Label, TCLocalize("Version"), HeadlineFontSize, TEXTALIGN_ML);
+	LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
+	char aBuf[128];
+	str_format(aBuf, sizeof(aBuf), "%s %s  \u00b7  %s %s", VCLIENT_NAME, VCLIENT_VERSION, CLIENT_NAME, CLIENT_RELEASE_VERSION);
+	LeftView.HSplitTop(LineSize, &Button, &LeftView);
+	Ui()->DoLabel(&Button, aBuf, FontSize, TEXTALIGN_ML);
+
+	// ---- developer ----
+	RightView.HSplitTop(HeadlineHeight, &Label, &RightView);
+	Ui()->DoLabel(&Label, TCLocalize("VClient Developer"), HeadlineFontSize, TEXTALIGN_ML);
+	RightView.HSplitTop(MarginSmall, nullptr, &RightView);
+	RightView.HSplitTop(MarginSmall, nullptr, &RightView);
+
+	const float TeeSize = 50.0f;
+	const float CardSize = TeeSize + MarginSmall;
+	CUIRect TeeRect, DevCardRect;
+	static CButtonContainer s_DevLinkButton;
+	{
+		RightView.HSplitTop(CardSize, &DevCardRect, &RightView);
+		DevCardRect.VSplitLeft(CardSize, &TeeRect, &Label);
+		Label.VSplitLeft(TextRender()->TextWidth(LineSize, "Zytexen"), &Label, &Button);
+		Button.VSplitLeft(MarginSmall, nullptr, &Button);
+		Button.w = LineSize, Button.h = LineSize, Button.y = Label.y + (Label.h / 2.0f - Button.h / 2.0f);
+		Ui()->DoLabel(&Label, "Zytexen", LineSize, TEXTALIGN_ML);
+		if(Ui()->DoButton_FontIcon(&s_DevLinkButton, FontIcon::ARROW_UP_RIGHT_FROM_SQUARE, 0, &Button, IGraphics::CORNER_ALL))
+			Client()->ViewLink("https://github.com/Kyouki-Arx");
+		RenderDevSkin(TeeRect.Center(), 50.0f, "eptrnanami", "default", false, 0, 0, 0, false, true);
+	}
+
+	RightView.HSplitTop(MarginSmall, nullptr, &RightView);
+	RightView.HSplitTop(LineSize, &Button, &RightView);
+	Ui()->DoLabel(&Button, TCLocalize("Skin: eptrnanami"), FontSize, TEXTALIGN_ML);
 }
 
 void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
@@ -4479,6 +4631,7 @@ void CMenus::RenderSettingsTClientConfigs(CUIRect MainView)
 		const bool ApplyClicked = DoButton_Menu(&s_ApplyBtn, Localize("Apply Changes"), DisabledStyle, &ApplyBtn);
 		if(ChangesCount > 0 && ApplyClicked)
 		{
+			// NOLINTBEGIN(bugprone-nondeterministic-pointer-iteration-order)
 			for(const auto &It : s_StagedInts)
 			{
 				const SConfigVariable *pVar = It.first;
@@ -4504,6 +4657,7 @@ void CMenus::RenderSettingsTClientConfigs(CUIRect MainView)
 				str_format(aCmd, sizeof(aCmd), "%s %u", pVar->m_pScriptName, It.second.m_Value);
 				Console()->ExecuteLine(aCmd, IConsole::CLIENT_ID_UNSPECIFIED);
 			}
+			// NOLINTEND(bugprone-nondeterministic-pointer-iteration-order)
 			ClearStagedAndCaches();
 		}
 		const bool ClearClicked = DoButton_Menu(&s_ClearBtn, Localize("Clear Changes"), DisabledStyle, &ClearBtn);
@@ -4630,18 +4784,16 @@ void CMenus::RenderSettingsTClientConfigs(CUIRect MainView)
 	});
 
 	static CScrollRegion s_ScrollRegion;
-	vec2 ScrollOffset(0.0f, 0.0f);
 	CScrollRegionParams ScrollParams;
 	ScrollParams.m_ScrollUnit = 60.0f;
-	ScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
-	s_ScrollRegion.Begin(&ListArea, &ScrollOffset, &ScrollParams);
+	ScrollParams.m_ForceShowScrollbar = true;
+	s_ScrollRegion.Begin(&ListArea, &ScrollParams);
 
-	ListArea.y += ScrollOffset.y;
 	ListArea.VSplitRight(5.0f, &ListArea, nullptr);
 	CUIRect Content = ListArea;
 
-	auto DomainName = [](ConfigDomain D) {
-		switch(D)
+	auto DomainName = [](ConfigDomain Domain) {
+		switch(Domain)
 		{
 		case ConfigDomain::DDNET: return "DDNet";
 		case ConfigDomain::TCLIENT: return "TClient";

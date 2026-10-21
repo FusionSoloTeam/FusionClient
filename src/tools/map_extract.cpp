@@ -1,8 +1,10 @@
 // Adapted from TWMapImagesRecovery by Tardo: https://github.com/Tardo/TWMapImagesRecovery
 
+#include <base/fs.h>
+#include <base/io.h>
 #include <base/logger.h>
 #include <base/os.h>
-#include <base/system.h>
+#include <base/str.h>
 
 #include <engine/gfx/image_loader.h>
 #include <engine/shared/datafile.h>
@@ -50,6 +52,12 @@ static void ExtractMapImages(CDataFileReader &Reader, const char *pPathSave)
 		if(pItem->m_Version >= 2 && pItem->m_MustBe1 != 1)
 		{
 			log_error("map_extract", "ignoring image '%s' with unknown format %d", aBuf, pItem->m_MustBe1);
+			continue;
+		}
+
+		if(pItem->m_Width <= 0 || pItem->m_Height <= 0)
+		{
+			log_error("map_extract", "ignoring image '%s' with invalid dimensions %dx%d", aBuf, pItem->m_Width, pItem->m_Height);
 			continue;
 		}
 

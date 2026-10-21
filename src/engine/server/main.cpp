@@ -9,6 +9,7 @@
 
 #include <engine/console.h>
 #include <engine/engine.h>
+#include <engine/http.h>
 #include <engine/map.h>
 #include <engine/server.h>
 #include <engine/server/antibot.h>
@@ -128,13 +129,22 @@ int main(int argc, const char **argv)
 	pFutureAssertionLogger->Set(CreateAssertionLogger(pStorage, GAME_NAME));
 
 	{
-		char aBuf[IO_MAX_PATH_LENGTH];
+		char aTimestamp[20];
+		str_timestamp(aTimestamp, sizeof(aTimestamp));
+
 		char aBufName[IO_MAX_PATH_LENGTH];
-		char aDate[64];
-		str_timestamp(aDate, sizeof(aDate));
-		str_format(aBufName, sizeof(aBufName), "dumps/" GAME_NAME "-Server_%s_crash_log_%s_%d_%s.RTP", CONF_PLATFORM_STRING, aDate, process_id(), GIT_SHORTREV_HASH != nullptr ? GIT_SHORTREV_HASH : "");
-		pStorage->GetCompletePath(IStorage::TYPE_SAVE, aBufName, aBuf, sizeof(aBuf));
-		crashdump_init_if_available(aBuf);
+		str_format(aBufName, sizeof(aBufName), "dumps/%s-Server_%s_%s_%s_crash_log_%s_%d_%s.RTP",
+			GAME_NAME,
+			GAME_RELEASE_VERSION,
+			CONF_PLATFORM_STRING,
+			CONF_ARCH_STRING,
+			aTimestamp,
+			process_id(),
+			GIT_SHORTREV_HASH != nullptr ? GIT_SHORTREV_HASH : "");
+
+		char aBufPath[IO_MAX_PATH_LENGTH];
+		pStorage->GetCompletePath(IStorage::TYPE_SAVE, aBufName, aBufPath, sizeof(aBufPath));
+		crashdump_init_if_available(aBufPath);
 	}
 
 	IConsole *pConsole = CreateConsole(CFGFLAG_SERVER | CFGFLAG_ECON).release();
@@ -142,6 +152,10 @@ int main(int argc, const char **argv)
 
 	IConfigManager *pConfigManager = CreateConfigManager();
 	pKernel->RegisterInterface(pConfigManager);
+
+	IEngineHttp *pEngineHttp = CreateEngineHttp();
+	pKernel->RegisterInterface(pEngineHttp); // IEngineHttp
+	pKernel->RegisterInterface(static_cast<IHttp *>(pEngineHttp), false);
 
 	IEngineAntibot *pEngineAntibot = CreateEngineAntibot();
 	pKernel->RegisterInterface(pEngineAntibot); // IEngineAntibot
@@ -184,7 +198,9 @@ int main(int argc, const char **argv)
 		IOHANDLE Logfile = pStorage->OpenFile(g_Config.m_Logfile, Mode, IStorage::TYPE_SAVE_OR_ABSOLUTE);
 		if(Logfile)
 		{
-			pFutureFileLogger->Set(log_logger_file(Logfile));
+			auto pFileLogger = log_logger_file(Logfile);
+			pFileLogger->SetFilter(CLogFilter{IConsole::ToLogLevelFilter(g_Config.m_Loglevel)});
+			pFutureFileLogger->Set(std::move(pFileLogger));
 		}
 		else
 		{
@@ -241,9 +257,9 @@ JNI_EXPORTED_FUNCTION(ANDROID_PACKAGE_NAME_JNI, NativeServer, runServer, jint, J
 	// Set working directory to external storage location. This is not possible
 	// in Java so we pass the intended working directory to the native code.
 	const char *pWorkingDirectory = pEnv->GetStringUTFChars(WorkingDirectory, nullptr);
-	const bool WorkingDirectoryError = fs_chdir(pWorkingDirectory) != 0;
+	const std::string WorkingDirectoryCopy = pWorkingDirectory;
 	pEnv->ReleaseStringUTFChars(WorkingDirectory, pWorkingDirectory);
-	if(WorkingDirectoryError)
+	if(fs_chdir(WorkingDirectoryCopy.c_str()) != 0)
 	{
 		return -1001;
 	}
@@ -252,13 +268,14 @@ JNI_EXPORTED_FUNCTION(ANDROID_PACKAGE_NAME_JNI, NativeServer, runServer, jint, J
 
 	std::vector<std::string> vArguments;
 	vArguments.reserve(NumArguments + 1);
-	vArguments.push_back(std::string(pWorkingDirectory) + "/" + GAME_NAME "-Server");
+	vArguments.push_back(WorkingDirectoryCopy + "/" + GAME_NAME "-Server");
 	for(jsize ArgumentIndex = 0; ArgumentIndex < NumArguments; ArgumentIndex++)
 	{
 		jstring ArgumentString = (jstring)pEnv->GetObjectArrayElement(ArgumentsArray, ArgumentIndex);
 		const char *pArgumentString = pEnv->GetStringUTFChars(ArgumentString, nullptr);
 		vArguments.emplace_back(pArgumentString);
 		pEnv->ReleaseStringUTFChars(ArgumentString, pArgumentString);
+		pEnv->DeleteLocalRef(ArgumentString);
 	}
 
 	std::vector<const char *> vpArguments;

@@ -1,6 +1,8 @@
 #include "outlines.h"
 
+#include <base/dbg.h>
 #include <base/math.h>
+#include <base/time.h>
 
 #include <engine/graphics.h>
 #include <engine/shared/config.h>
@@ -175,21 +177,18 @@ void COutlines::OnRender()
 	const float PulsateBonus = g_Config.m_TcOutlinePulsate ? m_SystemAudio.Level() * (g_Config.m_TcOutlinePulsateStrength / 100.0f) * 64.0f : 0.0f;
 	const float GradientOffset = g_Config.m_TcOutlineGradientSpeed > 0 ? (float)(time_get() / (double)time_freq()) * (g_Config.m_TcOutlineGradientSpeed / 100.0f) * 0.5f : 0.0f;
 
-	float PrevX0, PrevY0, PrevX1, PrevY1;
-	Graphics()->GetScreen(&PrevX0, &PrevY0, &PrevX1, &PrevY1);
+	const CScreenRect PrevScreen = Graphics()->GetScreen();
 
-	float aWorldPoints[4];
-	Graphics()->MapScreenToWorld(GameClient()->m_Camera.m_Center.x, GameClient()->m_Camera.m_Center.y, 100.0f, 100.0f, 100.0f, 0.0f, 0.0f, Graphics()->WorldAspect(), GameClient()->m_Camera.m_RenderZoom, aWorldPoints);
-	Graphics()->MapScreen(aWorldPoints[0], aWorldPoints[1], aWorldPoints[2], aWorldPoints[3]);
+	const CScreenRect WorldRect = Graphics()->MapScreenToWorld(GameClient()->m_Camera.m_Center.x, GameClient()->m_Camera.m_Center.y, 100.0f, 100.0f, 100.0f, 0.0f, 0.0f, Graphics()->WorldAspect(), GameClient()->m_Camera.m_RenderZoom);
+	Graphics()->MapScreen(WorldRect);
 
 	const float Scale = 32.0f;
 
-	float ScreenX0, ScreenY0, ScreenX1, ScreenY1;
-	Graphics()->GetScreen(&ScreenX0, &ScreenY0, &ScreenX1, &ScreenY1);
-	int StartY = std::clamp((int)std::floor(ScreenY0 / Scale) - 1, 0, m_MapDataSize.y);
-	int StartX = std::clamp((int)std::floor(ScreenX0 / Scale) - 1, 0, m_MapDataSize.x);
-	int EndY = std::clamp((int)std::ceil(ScreenY1 / Scale) + 1, 0, m_MapDataSize.y);
-	int EndX = std::clamp((int)std::ceil(ScreenX1 / Scale) + 1, 0, m_MapDataSize.x);
+	const CScreenRect ScreenRect = Graphics()->GetScreen();
+	int StartY = std::clamp((int)std::floor(ScreenRect.m_TopLeft.y / Scale) - 1, 0, m_MapDataSize.y);
+	int StartX = std::clamp((int)std::floor(ScreenRect.m_TopLeft.x / Scale) - 1, 0, m_MapDataSize.x);
+	int EndY = std::clamp((int)std::ceil(ScreenRect.m_BottomRight.y / Scale) + 1, 0, m_MapDataSize.y);
+	int EndX = std::clamp((int)std::ceil(ScreenRect.m_BottomRight.x / Scale) + 1, 0, m_MapDataSize.x);
 	int MaxScale = 12;
 	if(EndX - StartX > Graphics()->ScreenWidth() / MaxScale || EndY - StartY > Graphics()->ScreenHeight() / MaxScale)
 	{
@@ -313,5 +312,5 @@ void COutlines::OnRender()
 
 	Graphics()->QuadsEnd();
 
-	Graphics()->MapScreen(PrevX0, PrevY0, PrevX1, PrevY1);
+	Graphics()->MapScreen(PrevScreen);
 }

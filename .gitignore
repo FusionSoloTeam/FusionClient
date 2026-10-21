@@ -3,9 +3,14 @@
 data/
 !/data/
 
+# Doxygen output
+docs/warn.log
+docs/html
+
 bundle/
 !/other/bundle/
 
+# tidy-alphabetical-start
 .DS_Store
 .ninja_deps
 .ninja_log
@@ -19,6 +24,8 @@ CPackSourceConfig.cmake
 CTestTestfile.cmake
 Debug
 Makefile
+MinSizeRel
+RelWithDebInfo
 Release
 SAN.*
 _CPack_Packages/
@@ -35,11 +42,14 @@ googletest-src/
 gtest.pc
 gtest_main.pc
 install_manifest*.txt
+minsizerel
 ninja_package
 pack_*/
 release
+relwithdebinfo
 rules.ninja
 testrunner\[1\]_include.cmake
+# tidy-alphabetical-end
 
 /SDL2.framework
 
@@ -65,6 +75,7 @@ map_diff
 map_extract
 map_find_env
 map_optimize
+map_render
 map_replace_area
 map_replace_image
 map_resave
@@ -89,6 +100,9 @@ target
 /integration_test/*
 /source_date_epoch
 
+# Cache folder for scripts/parse_crashlog_drmingw.py
+/scripts/drmingw_symbols_cache
+
 # IDE project files
 .cache
 .cproject
@@ -108,6 +122,7 @@ tags
 # don't ignore this, it's used for the vscode workspace that ddnet provides
 !ddnet-cmake-tools-kits.json
 
+# tidy-alphabetical-start
 *.a
 *.cmd
 *.csv
@@ -142,6 +157,7 @@ tags
 *.user
 *.vcxproj
 *.zip
-/build
+# tidy-alphabetical-end
 
+# TClient
 !steam_api.dll

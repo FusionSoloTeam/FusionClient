@@ -135,13 +135,16 @@ public:
 
 	bool IsSuper() const { return m_Core.m_Super; }
 
-	void AntiPingInterference(int ClientId, bool DisallowReset = false, bool RequireUnfrozen = false);
-	bool IsInterfering() const { return m_Interfering; }
-	int m_FreezeAccumulation;
-	int m_AliveAccumulation;
 
 	// TClient
 	CNetObj_PlayerInput *LatestInput() { return &m_LatestInput; }
+
+	int m_FreezeAccumulation;
+	int m_AliveAccumulation;
+
+	// antiping
+	void AntiPingInterference(int ClientId, bool DisallowReset = false, bool HasToBeUnfrozen = false);
+	bool IsInterfering() const { return m_Interfering; }
 
 private:
 	// weapon info
@@ -178,7 +181,7 @@ private:
 
 	// DDRace
 
-	static bool IsSwitchActiveCb(int Number, void *pUser);
+	static bool IsSwitchActiveCb(unsigned char Number, void *pUser);
 	void HandleTiles(int Index);
 	void HandleSkippableTiles(int Index);
 	void DDRaceTick();

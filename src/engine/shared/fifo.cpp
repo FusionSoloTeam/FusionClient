@@ -1,14 +1,16 @@
 #include "fifo.h"
 
 #include <base/log.h>
-#include <base/system.h>
+#include <base/str.h>
 #if defined(CONF_FAMILY_UNIX)
+#include <base/fs.h>
 
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <cstdlib>
 
 void CFifo::Init(IConsole *pConsole, const char *pFifoFile, int Flag)
@@ -85,7 +87,7 @@ void CFifo::Shutdown()
 		return;
 
 	close(m_File);
-	fs_remove(m_aFilename);
+	(void)fs_remove(m_aFilename);
 }
 
 void CFifo::Update()

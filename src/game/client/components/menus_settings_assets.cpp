@@ -1,8 +1,18 @@
 #include "menus.h"
 
+#include <base/dbg.h>
 #include <base/fs.h>
 #include <base/io.h>
-#include <base/system.h>
+#include <base/str.h>
+#include <base/dbg.h>
+#include <base/log.h>
+#include <base/math.h>
+#include <base/mem.h>
+#include <base/str.h>
+#include <base/time.h>
+#include <base/types.h>
+#include <base/time.h>
+
 #include <zlib.h>
 
 #include <engine/font_icons.h>
@@ -565,7 +575,7 @@ static bool ExtractZipToStorage(IStorage *pStorage, const char *pZipPath, const 
 
 	const int64_t TailSize = minimum<int64_t>(FileSize, 66000);
 	std::vector<unsigned char> vTail((size_t)TailSize);
-	io_seek(File, FileSize - TailSize, IOSEEK_START);
+	io_seek(File, FileSize - TailSize, EIoSeekOrigin::START);
 	io_read(File, vTail.data(), (unsigned)vTail.size());
 
 	int64_t EocdPos = -1;
@@ -591,7 +601,7 @@ static bool ExtractZipToStorage(IStorage *pStorage, const char *pZipPath, const 
 	for(unsigned EntryIndex = 0; EntryIndex < NumEntries; ++EntryIndex)
 	{
 		unsigned char aHeader[46];
-		io_seek(File, Position, IOSEEK_START);
+		io_seek(File, Position, EIoSeekOrigin::START);
 		if(io_read(File, aHeader, sizeof(aHeader)) != (int)sizeof(aHeader))
 			break;
 		if(ZipReadLE32(aHeader) != 0x02014b50)
@@ -623,7 +633,7 @@ static bool ExtractZipToStorage(IStorage *pStorage, const char *pZipPath, const 
 			continue;
 
 		unsigned char aLocal[30];
-		io_seek(File, LocalOffset, IOSEEK_START);
+		io_seek(File, LocalOffset, EIoSeekOrigin::START);
 		if(io_read(File, aLocal, sizeof(aLocal)) != (int)sizeof(aLocal))
 			continue;
 		if(ZipReadLE32(aLocal) != 0x04034b50)
@@ -633,7 +643,7 @@ static bool ExtractZipToStorage(IStorage *pStorage, const char *pZipPath, const 
 		const int64_t DataOffset = (int64_t)LocalOffset + 30 + LocalNameLength + LocalExtraLength;
 
 		std::vector<unsigned char> vComp(CompSize);
-		io_seek(File, DataOffset, IOSEEK_START);
+		io_seek(File, DataOffset, EIoSeekOrigin::START);
 		if(CompSize > 0 && io_read(File, vComp.data(), CompSize) != (int)CompSize)
 			continue;
 
@@ -759,7 +769,7 @@ static int InitSearchList(std::vector<const TName *> &vpSearchList, std::vector<
 	return vAssetList.size();
 }
 
-void CMenus::RenderSettingsCustom(CUIRect MainView)
+void CMenus::RenderSettingsAssets(CUIRect MainView)
 {
 	CUIRect TabBar, CustomList, QuickSearch, DirectoryButton, ReloadButton, AssetsEditorButton;
 

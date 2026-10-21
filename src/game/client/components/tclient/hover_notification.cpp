@@ -1,4 +1,6 @@
 #include "hover_notification.h"
+#include <base/time.h>
+
 #include <game/client/gameclient.h>
 
 #include <algorithm>
