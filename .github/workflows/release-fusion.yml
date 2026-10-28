@@ -1,0 +1,277 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version used for the artifact names and the folder inside the archives'
+        required: true
+        default: '1.1'
+      tag:
+        description: 'Git tag to publish (created automatically if it does not exist)'
+        required: true
+        default: 'v1.1'
+      body:
+        description: 'Additional release notes (optional)'
+        required: false
+        default: ''
+      prerelease:
+        description: 'Mark the release as a pre-release'
+        type: boolean
+        required: false
+        default: false
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  meta:
+    name: Resolve version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      folder: ${{ steps.resolve.outputs.folder }}
+    steps:
+      - name: Resolve version and tag
+        id: resolve
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
+          tag="${INPUT_TAG:-${GITHUB_REF_NAME}}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "folder=fusion-${version}" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: Windows (${{ matrix.artifact }})
+    needs: meta
+    runs-on: windows-latest
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: win64
+            arch: x64
+            vulkan: 'ON'
+            rust-target: x86_64-pc-windows-msvc
+            optional: false
+          - artifact: win32
+            arch: Win32
+            vulkan: 'OFF'
+            rust-target: i686-pc-windows-msvc
+            optional: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.rust-target }}
+
+      - name: Install Vulkan SDK
+        if: matrix.vulkan == 'ON'
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.3.296.0
+          cache: true
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -A ${{ matrix.arch }}
+          -DCMAKE_BUILD_TYPE=Release
+          -DVULKAN=${{ matrix.vulkan }}
+          -DDISCORD=OFF
+          -DTOOLS=OFF
+          -DAUTOUPDATE=OFF
+          -DCMAKE_RUST_COMPILER_TARGET=${{ matrix.rust-target }}
+          -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=.
+
+      - name: Build
+        run: cmake --build build --config Release --target game-client game-server
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $folder = "${{ needs.meta.outputs.folder }}"
+          cmake --install build --config Release --component portable --prefix stage
+          if ($LASTEXITCODE -ne 0) { throw 'portable install failed' }
+          $dirs = @(Get-ChildItem stage -Directory)
+          if ($dirs.Count -ne 1) { throw "expected exactly one staged directory, found $($dirs.Count)" }
+          Rename-Item $dirs[0].FullName -NewName $folder
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path "stage/$folder" -DestinationPath "dist/$folder-${{ matrix.artifact }}.zip"
+          Get-ChildItem dist | Select-Object Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.meta.outputs.folder }}-${{ matrix.artifact }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux (x86_64)
+    needs: meta
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            curl \
+            libavcodec-dev \
+            libavformat-dev \
+            libavutil-dev \
+            libcurl4-openssl-dev \
+            libfreetype6-dev \
+            libglew-dev \
+            libminiupnpc-dev \
+            libnotify-dev \
+            libogg-dev \
+            libopus-dev \
+            libopusfile-dev \
+            libpng-dev \
+            libsdl2-dev \
+            libsqlite3-dev \
+            libswresample-dev \
+            libswscale-dev \
+            libwavpack-dev \
+            libwebsockets-dev \
+            libx264-dev \
+            ninja-build \
+            pkg-config
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=.
+          -DVULKAN=OFF
+          -DDISCORD=OFF
+          -DTOOLS=OFF
+          -DAUTOUPDATE=OFF
+
+      - name: Build
+        run: cmake --build build --target game-client game-server
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          folder="${{ needs.meta.outputs.folder }}"
+          cmake --install build --component portable --prefix stage
+          dirs=($(find stage -mindepth 1 -maxdepth 1 -type d))
+          if [ "${#dirs[@]}" -ne 1 ]; then
+            echo "expected exactly one staged directory, found ${#dirs[@]}"
+            ls -la stage
+            exit 1
+          fi
+          mv "${dirs[0]}" "stage/${folder}"
+          mkdir -p dist
+          tar -czf "dist/${folder}-linux-x86_64.tar.gz" -C stage "${folder}"
+          ls -l dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.meta.outputs.folder }}-linux
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  android:
+    name: Android (arm64)
+    needs: meta
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    env:
+      CARGO_HTTP_MULTIPLEXING: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y ninja-build openjdk-21-jdk openssl
+          curl -LO https://github.com/Kitware/CMake/releases/download/v3.22.1/cmake-3.22.1-Linux-x86_64.tar.gz
+          mkdir -p "$HOME/cmake"
+          tar --strip-components 1 -C "$HOME/cmake" -xf cmake-3.22.1-Linux-x86_64.tar.gz
+          cargo install cargo-ndk
+          rustup target add armv7-linux-androideabi
+          rustup target add aarch64-linux-android
+          rustup target add i686-linux-android
+          rustup target add x86_64-linux-android
+          scripts/android/download_android_sdk.sh "$HOME"
+
+      - name: Build APK
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="$HOME/Android/Sdk"
+          unset ANDROID_SDK_ROOT
+          export PATH="$HOME/cmake/bin:$PATH"
+          export TW_VERSION_NAME="${{ needs.meta.outputs.version }}"
+          scripts/android/cmake_android.sh arm64 DDNet org.ddnet.client Release build-android
+          mkdir -p dist
+          cp build-android/DDNet.apk "dist/${{ needs.meta.outputs.folder }}-android.apk"
+          ls -l dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.meta.outputs.folder }}-android
+          path: dist/*.apk
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [meta, windows, linux, android]
+    if: ${{ !cancelled() && needs.windows.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ needs.meta.outputs.folder }}-*
+          path: dist
+          merge-multiple: true
+
+      - name: Show artifacts
+        run: ls -lR dist
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: Fusion Client ${{ needs.meta.outputs.version }}
+          prerelease: ${{ inputs.prerelease || false }}
+          fail_on_unmatched_files: false
+          files: dist/*
+          body: |
+            ${{ inputs.body }}
+
+            | Platform | Asset |
+            | --- | --- |
+            | Windows 64-bit | `${{ needs.meta.outputs.folder }}-win64.zip` |
+            | Windows 32-bit | `${{ needs.meta.outputs.folder }}-win32.zip` |
+            | Linux x86_64 | `${{ needs.meta.outputs.folder }}-linux-x86_64.tar.gz` |
+            | Android (arm64) | `${{ needs.meta.outputs.folder }}-android.apk` |
+
+            Every archive extracts into a `${{ needs.meta.outputs.folder }}` folder.
