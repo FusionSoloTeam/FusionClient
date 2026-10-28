@@ -5,6 +5,7 @@
 #include <base/mem.h>
 #include <base/str.h>
 
+#if defined(CONF_VIDEORECORDER)
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -14,11 +15,13 @@ extern "C" {
 }
 
 #include <vector>
+#endif
 
 namespace {
 
 constexpr const char *const s_apVideoExtensions[] = {".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi"};
 
+#if defined(CONF_VIDEORECORDER)
 constexpr size_t VIDEO_MAX_FRAMES = 512;
 constexpr size_t VIDEO_MAX_TOTAL_PIXELS = 192ull * 1024 * 1024;
 constexpr int VIDEO_MIN_FRAME_DELAY_MS = 20;
@@ -66,6 +69,8 @@ void ApplyAlphaKey(CImageInfo &Image, int AlphaMode)
 	}
 }
 
+#endif
+
 }
 
 bool CVideoLoader::IsVideoFile(const char *pPath)
@@ -81,6 +86,8 @@ bool CVideoLoader::IsVideoFile(const char *pPath)
 
 	return false;
 }
+
+#if defined(CONF_VIDEORECORDER)
 
 bool CVideoLoader::Load(const char *pPath, size_t TargetWidth, size_t TargetHeight, size_t MaxFrames, int AlphaMode, CGifAnimation &Animation)
 {
@@ -275,3 +282,18 @@ bool CVideoLoader::Load(const char *pPath, size_t TargetWidth, size_t TargetHeig
 
 	return true;
 }
+
+#else
+
+bool CVideoLoader::Load(const char *pPath, size_t TargetWidth, size_t TargetHeight, size_t MaxFrames, int AlphaMode, CGifAnimation &Animation)
+{
+	(void)TargetWidth;
+	(void)TargetHeight;
+	(void)MaxFrames;
+	(void)AlphaMode;
+	(void)Animation;
+	log_error("video", "cannot decode '%s': this build has no FFmpeg support", pPath);
+	return false;
+}
+
+#endif
