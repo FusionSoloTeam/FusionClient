@@ -268,7 +268,6 @@ void CSmtc::ThreadRun()
 		HRESULT hr = SmtcVt<HRESULT(WINAPI *)(void *, void **)>(pManager, 6)(pManager, &pSession);
 		if(SUCCEEDED(hr) && pSession != nullptr)
 		{
-			// IGlobalSystemMediaTransportControlsSession::GetSourceAppUserModelId
 			SmtcReadString(pSession, 6, aAppId, sizeof(aAppId));
 			void *pAsync = nullptr;
 			if(SUCCEEDED(SmtcVt<HRESULT(WINAPI *)(void *, void **)>(pSession, 7)(pSession, &pAsync)) && pAsync != nullptr)
@@ -276,7 +275,6 @@ void CSmtc::ThreadRun()
 				void *pProps = nullptr;
 				if(SmtcAwait(pAsync, &pProps))
 				{
-					// IGlobalSystemMediaTransportControlsSessionMediaProperties getters
 					SmtcReadString(pProps, 6, aTitle, sizeof(aTitle));
 					SmtcReadString(pProps, 8, aArtist, sizeof(aArtist));
 					SmtcReadString(pProps, 10, aAlbum, sizeof(aAlbum));

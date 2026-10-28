@@ -380,6 +380,7 @@ void CLyrics::ClearState()
 	m_LastLineIndex = -2;
 	m_RequestAttempts = 0;
 	m_RequestRetryAt = 0.0f;
+	m_SongDuration = 0.0f;
 }
 
 void CLyrics::ResetSong()
@@ -534,13 +535,6 @@ void CLyrics::OnUpdate()
 	const float FrameTime = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.1f);
 	UpdatePosition(FrameTime);
 
-	if(g_Config.m_TcLyricsTest && m_HasLyrics && !m_vLines.empty() && m_Position > m_vLines.back().m_Time + 6.0f)
-	{
-		m_Position = g_Config.m_TcLyricsOffset / 1000.0f;
-		m_LastLineIndex = -2;
-		m_vDrawn.clear();
-	}
-
 	if(m_HasLyrics && !m_vLines.empty())
 	{
 		const float SongTime = m_Position;
@@ -574,6 +568,15 @@ void CLyrics::OnUpdate()
 	}
 }
 
+float CLyrics::SongLength() const
+{
+	if(m_SongDuration > 5.0f)
+		return m_SongDuration + 1.0f;
+	if(m_HasLyrics && !m_vLines.empty())
+		return m_vLines.back().m_Time + 6.0f;
+	return 0.0f;
+}
+
 void CLyrics::UpdatePosition(float FrameTime)
 {
 	const float Now = Client()->LocalTime();
@@ -581,20 +584,29 @@ void CLyrics::UpdatePosition(float FrameTime)
 	m_LastPosTime = Now;
 	Delta = std::clamp(Delta, 0.0f, 0.25f);
 
+	const bool LivePosition = m_HasPosAnchor && Now - m_LastSmtcTime < 5.0;
 	const bool Paused = m_SmtcChanges >= 2 && Now - m_LastSmtcChange > 8.0f;
 	if(!Paused)
-	{
-		const float OldPosition = m_Position;
 		m_Position += Delta;
-		if(m_SongDuration > 5.0f && OldPosition > m_SongDuration * 0.8f && m_Position < m_SongDuration * 0.2f)
+
+	if(LivePosition)
+	{
+		if(m_SongDuration > 5.0f && m_Position > m_SongDuration + 3.0f)
+			m_Position = m_SongDuration + 3.0f;
+	}
+	else
+	{
+		const float Length = SongLength();
+		if(Length > 0.0f && m_Position >= Length)
 		{
+			m_Position = g_Config.m_TcLyricsOffset / 1000.0f;
 			m_LastLineIndex = -2;
 			m_vDrawn.clear();
+			m_HasPosAnchor = false;
+			m_LastSmtcPos = -1.0f;
 		}
 	}
 
-	if(m_SongDuration > 5.0f && m_Position > m_SongDuration + 3.0f)
-		m_Position = m_SongDuration + 3.0f;
 	if(m_Position < 0.0f)
 		m_Position = 0.0f;
 }
@@ -930,8 +942,8 @@ void CLyrics::StartRequest()
 	}
 
 	auto pRequest = HttpGet(aUrl);
-	pRequest->HeaderString("User-Agent", "VClient/1.0 (https://github.com/Kyouki-Arx/VClient)");
-	pRequest->HeaderString("Lrclib-Client", "VClient/1.0 (https://github.com/Kyouki-Arx/VClient)");
+	pRequest->HeaderString("User-Agent", "FusionClient/1.0 (https://github.com/FusionSoloTeam/FusionClient)");
+	pRequest->HeaderString("Lrclib-Client", "FusionClient/1.0 (https://github.com/FusionSoloTeam/FusionClient)");
 	pRequest->MaxResponseSize(4 * 1024 * 1024);
 	pRequest->Timeout(CTimeout{0, 15000, 1, 5});
 	m_pRequest = std::shared_ptr<IHttpRequest>(std::move(pRequest));
@@ -1050,6 +1062,7 @@ void CLyrics::ApplyLrcDoc(const char *pText)
 		return;
 
 	float OffsetSeconds = 0.0f;
+	float LengthSeconds = 0.0f;
 	const char *pCursor = pText;
 	if(str_startswith(pCursor, "\xEF\xBB\xBF"))
 		pCursor += 3;
@@ -1078,6 +1091,16 @@ void CLyrics::ApplyLrcDoc(const char *pText)
 			if(str_startswith_nocase(aTag, "offset:"))
 			{
 				OffsetSeconds = (float)str_toint(aTag + 7) / 1000.0f;
+			}
+			else if(str_startswith_nocase(aTag, "length:"))
+			{
+				const char *pLength = aTag + 7;
+				int Minutes = 0;
+				int Seconds = 0;
+				while(*pLength == ' ' || *pLength == ':')
+					pLength++;
+				if(sscanf(pLength, "%d:%d", &Minutes, &Seconds) == 2)
+					LengthSeconds = Minutes * 60.0f + Seconds;
 			}
 			else if(!IsLrcMetaTag(aTag))
 			{
@@ -1119,7 +1142,6 @@ void CLyrics::ApplyLrcDoc(const char *pText)
 			continue;
 
 		TrimInPlace(p);
-		// strip enhanced lrc word timestamps: <00:12.34>
 		char aText[256];
 		int Out = 0;
 		for(const char *pSrc = p; *pSrc != '\0' && Out < (int)sizeof(aText) - 1;)
@@ -1159,6 +1181,8 @@ void CLyrics::ApplyLrcDoc(const char *pText)
 	std::stable_sort(vLines.begin(), vLines.end(), [](const SLine &A, const SLine &B) { return A.m_Time < B.m_Time; });
 	m_vLines = std::move(vLines);
 	m_HasLyrics = true;
+	if(LengthSeconds > 5.0f && m_SongDuration <= 5.0f)
+		m_SongDuration = LengthSeconds;
 	if(!m_HasPosAnchor)
 		m_Position = g_Config.m_TcLyricsOffset / 1000.0f;
 	m_LastLineIndex = -2;
@@ -1522,7 +1546,6 @@ void CLyrics::DrawGlyphPass(const SDrawnLine &Line, vec2 Origin, float Scale, fl
 			TopBoost = Outline ? 1.03f : (Layer > 0 ? 1.10f : 1.06f);
 			BottomShade = Outline ? 0.95f : 0.88f;
 		}
-		// per-vertex colors are no longer supported, so fold the top/bottom shading into one factor
 		const float AverageShade = (TopBoost + BottomShade) * 0.5f;
 		const float R = std::clamp(BaseColor.r * Shade * AverageShade, 0.0f, 1.0f);
 		const float G = std::clamp(BaseColor.g * Shade * AverageShade, 0.0f, 1.0f);

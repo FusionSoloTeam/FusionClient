@@ -995,7 +995,6 @@ void CMenus::AssetsEditorColorizeRect(CImageInfo &Image, int X, int Y, int W, in
 			{
 			case ASSETS_EDITOR_COLOR_BLEND_TEELIKE:
 			{
-				// Same approach as skin coloring: grayscale luma * tint color.
 				const float Luma = 0.2126f * SrcR + 0.7152f * SrcG + 0.0722f * SrcB;
 				OutR = Luma * Tint.r;
 				OutG = Luma * Tint.g;
@@ -1080,8 +1079,6 @@ CUi::EPopupMenuFunctionResult CMenus::AssetsEditorPopupColorEditor(void *pContex
 
 	SAssetsEditorPartSlot &Slot = pMenus->m_AssetsEditorState.m_vPartSlots[pPopup->m_SlotIndex];
 
-	// Explicit ESC handling: guarantees the popup closes even if the generic
-	// popup hotkey check misses (e.g. while a popup drag is in progress).
 	if(Active && pMenus->Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
 		return CUi::POPUP_CLOSE_CURRENT;
 
@@ -1701,9 +1698,6 @@ void CMenus::RenderAssetsEditorScreen(CUIRect MainView)
 
 	if(m_AssetsEditorState.m_FullscreenOpen)
 	{
-		// The persistent menu tab bar (CMenus::Render) reserves the top 24 units of the
-		// screen and is drawn after the page content, so it would paint over the editor's
-		// top row if we covered that band too.
 		MainView = *Ui()->Screen();
 		MainView.HSplitTop(24.0f, nullptr, &MainView);
 	}
@@ -1838,8 +1832,6 @@ void CMenus::RenderAssetsEditorScreen(CUIRect MainView)
 	if(DoButton_CheckBox(&s_ShowGridButton, Localize("Show Grid"), m_AssetsEditorState.m_ShowGrid, &GridToggleButton))
 		m_AssetsEditorState.m_ShowGrid = !m_AssetsEditorState.m_ShowGrid;
 
-	// Built after Reload/Export, which can reload m_avAssets and reallocate its entries:
-	// building this earlier would leave vAssetNames holding dangling m_aName pointers.
 	std::vector<const char *> vAssetNames;
 	vAssetNames.reserve(vAssets.size());
 	for(const auto &Asset : vAssets)
@@ -1879,8 +1871,6 @@ void CMenus::RenderAssetsEditorScreen(CUIRect MainView)
 	CUIRect TargetFittedRect;
 	const bool HasTargetFitted = AssetsEditorCalcFittedRect(RightCanvas, m_AssetsEditorState.m_ComposedPreviewWidth, m_AssetsEditorState.m_ComposedPreviewHeight, TargetFittedRect);
 	const vec2 MousePos = Ui()->MousePos();
-	// Ignore clicks while any popup menu is open: the popup captures the mouse,
-	// clicks must not leak into asset slots below (e.g. while dragging the popup).
 	const bool PopupMenuOpen = Ui()->IsPopupOpen();
 	const bool ClickedLmb = !PopupMenuOpen && Ui()->MouseButtonClicked(0);
 	const bool ClickedRmb = !PopupMenuOpen && Ui()->MouseButtonClicked(1);

@@ -86,6 +86,7 @@ private:
 	void StartRequest();
 	void ScheduleRetry();
 	void UpdatePosition(float FrameTime);
+	float SongLength() const;
 	void SyncSmtcPosition(float SmtcPosition);
 	void SpawnLine(int Index);
 	void SetStatus(const char *pFormat, ...);
@@ -103,8 +104,6 @@ private:
 	void DrawSparkles(float Now);
 	void SpawnSparkles(const std::vector<vec2> &vPoints, int Amount, float Now);
 
-	// The engine glyph atlas is single channel, the quad shader would read it as fully opaque.
-	// Keep an RGBA mirror of it so glyph quads get a proper alpha channel.
 	IGraphics::CTextureHandle EnsureGlyphAtlas(int Index);
 	void UnloadGlyphAtlases();
 

@@ -163,12 +163,12 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	str_format(aTBuf, sizeof(aTBuf), CLIENT_NAME " %s", CLIENT_RELEASE_VERSION);
 	Ui()->DoLabel(&TClientVersion, aTBuf, 14.0f, TEXTALIGN_MR);
 
-	CUIRect VClientVersion;
-	MainView.HSplitTop(15.0f, &VClientVersion, &MainView);
-	VClientVersion.VSplitRight(40.0f, &VClientVersion, nullptr);
+	CUIRect FusionVersion;
+	MainView.HSplitTop(15.0f, &FusionVersion, &MainView);
+	FusionVersion.VSplitRight(40.0f, &FusionVersion, nullptr);
 	char aVBuf[64];
-	str_format(aVBuf, sizeof(aVBuf), VCLIENT_NAME " %s", VCLIENT_VERSION);
-	Ui()->DoLabel(&VClientVersion, aVBuf, 14.0f, TEXTALIGN_MR);
+	str_format(aVBuf, sizeof(aVBuf), FUSION_NAME " %s", FUSION_VERSION);
+	Ui()->DoLabel(&FusionVersion, aVBuf, 14.0f, TEXTALIGN_MR);
 #if defined(CONF_AUTOUPDATE)
 	CUIRect UpdateToDateText;
 	MainView.HSplitTop(15.0f, &UpdateToDateText, nullptr);

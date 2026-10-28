@@ -22,19 +22,14 @@ namespace
 	constexpr float SETTINGS_POPUP_WIDTH = 210.0f;
 	constexpr float SETTINGS_POPUP_HEIGHT = 138.0f;
 
-	// Mirrors CUi::SPopupMenu::POPUP_BORDER + POPUP_MARGIN, which we can't reach directly
-	// since that struct is a private implementation detail of CUi.
 	constexpr float POPUP_FRAME_MARGIN = 5.0f;
 	constexpr float POPUP_FRAME_ROUNDING = 3.0f;
 
-	// Corner indices used for both the resize handles and CHudEditor::m_ResizeCorner.
 	constexpr int RESIZE_CORNER_NONE = -1;
 	constexpr int RESIZE_CORNER_TL = 0;
 	constexpr int RESIZE_CORNER_TR = 1;
 	constexpr int RESIZE_CORNER_BL = 2;
 	constexpr int RESIZE_CORNER_BR = 3;
-	// Quarter-circle "bracket" handles: a fixed decorative arc accent at each corner
-	// (independent of the module's own corner rounding), not a dot or a square.
 	constexpr float RESIZE_HANDLE_RADIUS = 4.2f;
 	constexpr float RESIZE_HANDLE_THICKNESS = 1.8f;
 	constexpr float RESIZE_HANDLE_OUTLINE = 0.7f;
@@ -54,8 +49,6 @@ namespace
 		}
 	}
 
-	// Arc center + sweep for a corner's resize-handle bracket, at the given radius.
-	// Angle convention matches DrawRoundedRectOutline()'s per-corner arcs below.
 	void CornerArcParams(const CUIRect &Rect, int Corner, float Radius, vec2 &OutCenter, float &OutStartAngle, float &OutEndAngle)
 	{
 		switch(Corner)
@@ -84,7 +77,6 @@ namespace
 		}
 	}
 
-	// Point used for hit-testing a corner's handle: the middle of its arc sweep.
 	vec2 HandleCenterPoint(const CUIRect &Rect, int Corner)
 	{
 		vec2 Center;
@@ -94,10 +86,6 @@ namespace
 		return Center + vec2(std::cos(Mid), std::sin(Mid)) * RESIZE_HANDLE_RADIUS;
 	}
 
-	// Maps a RESIZE_CORNER_* index to the matching IGraphics::CORNER_* bit, so handle
-	// visibility can be checked against a module's Visual.m_Corners mask (see
-	// HudLayout::BackgroundCorners(), which clears bits for edges flush against a
-	// screen edge - handles at those corners are hidden the same way).
 	int CornerBit(int Corner)
 	{
 		switch(Corner)
@@ -110,9 +98,6 @@ namespace
 		}
 	}
 
-	// Draws a filled ring segment (quarter-circle band) between two radii, the same
-	// technique CUi::RenderProgressSpinner() uses for its filled arcs. Must be called
-	// between Graphics()->QuadsBegin()/QuadsEnd().
 	void DrawArcBand(IGraphics *pGraphics, vec2 Center, float StartAngle, float EndAngle, float InnerRadius, float OuterRadius, ColorRGBA Color)
 	{
 		if(Color.a <= 0.0f || OuterRadius <= InnerRadius)
@@ -131,9 +116,6 @@ namespace
 		}
 	}
 
-	// Small filled disc, used to cap the two ends of an arc band so it reads as a
-	// rounded bracket instead of a strip with sharp, "cut off" ends. Must be called
-	// between Graphics()->QuadsBegin()/QuadsEnd().
 	void DrawFilledCircle(IGraphics *pGraphics, vec2 Center, float Radius, ColorRGBA Color)
 	{
 		if(Color.a <= 0.0f || Radius <= 0.0f)
@@ -153,9 +135,6 @@ namespace
 		}
 	}
 
-	// The full resize-handle bracket: an arc band with its two ends capped by a
-	// rounded disc, so it doesn't look like a strip that's been cut off (see
-	// DrawArcBand()/DrawFilledCircle()). Must be called between QuadsBegin()/QuadsEnd().
 	void DrawHandleBracket(IGraphics *pGraphics, vec2 Center, float StartAngle, float EndAngle, float InnerRadius, float OuterRadius, ColorRGBA Color)
 	{
 		DrawArcBand(pGraphics, Center, StartAngle, EndAngle, InnerRadius, OuterRadius, Color);
@@ -165,9 +144,6 @@ namespace
 		DrawFilledCircle(pGraphics, Center + vec2(std::cos(EndAngle), std::sin(EndAngle)) * MidRadius, CapRadius, Color);
 	}
 
-	// Growth animation used by both the opening popup (PopupModuleSettings) and the
-	// closing ghost frame (CHudEditor::RenderClosingPopupFrame), so they stay visually
-	// identical when played forwards vs. backwards.
 	CUIRect ComputeAnimRect(const CUIRect &OuterRect, bool GrowFromRight, float Phase)
 	{
 		CUIRect AnimRect;
@@ -186,7 +162,6 @@ namespace
 		InnerAnimRect.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.75f * Phase), IGraphics::CORNER_ALL, POPUP_FRAME_ROUNDING);
 	}
 
-	// Kinds accepted by CHudEditor::StartResetAnimation().
 	constexpr int RESET_KIND_POSITION = 1;
 	constexpr int RESET_KIND_SCALE = 2;
 	constexpr int RESET_KIND_ALL = 3;
@@ -202,9 +177,6 @@ namespace
 		return Result;
 	}
 
-	// Modules the editor currently knows how to draw a drag handle for and render
-	// a live preview of. Add a case here plus a GetModuleVisual() branch and one
-	// CollectModuleVisuals() line to wire up a new module.
 	bool IsEditorModule(HudLayout::EModule Module)
 	{
 		return Module == HudLayout::MODULE_SCORE ||
@@ -314,7 +286,7 @@ namespace
 		return Rect;
 	}
 
-} // namespace
+}
 
 void CHudEditor::OnConsoleInit()
 {
@@ -454,7 +426,7 @@ CUIRect CHudEditor::GetFallbackModuleRect(HudLayout::EModule Module) const
 	case HudLayout::MODULE_SPECTATOR_COUNT:
 	{
 		const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
-		Rect = {Layout.m_X, Layout.m_Y, 22.0f * Scale, 14.0f * Scale};
+		Rect = {Layout.m_X - 22.0f * Scale, Layout.m_Y, 22.0f * Scale, 14.0f * Scale};
 		break;
 	}
 	case HudLayout::MODULE_DUMMY_ACTIONS:
@@ -646,7 +618,6 @@ HudLayout::EModule CHudEditor::HitTestModule(vec2 MousePos) const
 	int Count = 0;
 	CollectModuleVisuals(aVisuals, Count);
 
-	// Editable modules should always win hit-tests over locked preview modules.
 	for(int i = Count - 1; i >= 0; --i)
 	{
 		if(!aVisuals[i].m_Editable)
@@ -669,9 +640,6 @@ HudLayout::EModule CHudEditor::HitTestResizeHandle(vec2 MousePos, int &OutCorner
 {
 	OutCorner = RESIZE_CORNER_NONE;
 
-	// Resize handles are only hot on the module that currently shows them, i.e. the
-	// hovered and/or selected module (see the RenderModuleOutline/RenderResizeHandles
-	// call site in RenderOverlay), so we never fight another module's handles for input.
 	auto TryModule = [&](HudLayout::EModule Module) {
 		if(Module == HudLayout::MODULE_COUNT || !IsEditableModule(Module))
 			return false;
@@ -679,8 +647,6 @@ HudLayout::EModule CHudEditor::HitTestResizeHandle(vec2 MousePos, int &OutCorner
 		static constexpr int aCorners[4] = {RESIZE_CORNER_TL, RESIZE_CORNER_TR, RESIZE_CORNER_BL, RESIZE_CORNER_BR};
 		for(int Corner : aCorners)
 		{
-			// Flush against a screen edge - see RenderResizeHandles(), no bracket is
-			// drawn there so it shouldn't be grabbable either.
 			if((Visual.m_Corners & CornerBit(Corner)) == 0)
 				continue;
 			if(distance(MousePos, HandleCenterPoint(Visual.m_Rect, Corner)) <= RESIZE_HANDLE_HIT_RADIUS)
@@ -711,6 +677,11 @@ void CHudEditor::ApplyDraggedPosition(HudLayout::EModule Module, const CUIRect &
 		return;
 	}
 	if(Module == HudLayout::MODULE_FPS_PING)
+	{
+		HudLayout::SetPosition(Module, (Rect.x + Rect.w) * CanvasScale, Rect.y);
+		return;
+	}
+	if(Module == HudLayout::MODULE_SPECTATOR_COUNT)
 	{
 		HudLayout::SetPosition(Module, (Rect.x + Rect.w) * CanvasScale, Rect.y);
 		return;
@@ -793,10 +764,6 @@ void CHudEditor::UpdateResizing(vec2 MousePos)
 	if(m_ResizingModule == HudLayout::MODULE_COUNT || m_ResizeCorner == RESIZE_CORNER_NONE || !IsEditableModule(m_ResizingModule))
 		return;
 
-	// The corner opposite the one being dragged stays fixed in HUD space; the dragged
-	// corner follows the mouse. Since modules only expose a single uniform Scale (no
-	// independent width/height), we derive the new scale from how far the dragged
-	// corner's distance to that fixed anchor changed, keeping the module's aspect ratio.
 	const CUIRect &Anchor = m_ResizeAnchorRect;
 	vec2 FixedPoint;
 	switch(m_ResizeCorner)
@@ -881,10 +848,6 @@ void CHudEditor::StartResetAnimation(HudLayout::EModule Module, int Kind)
 	if(!IsEditableModule(Module))
 		return;
 
-	// Reuses the module's existing entry (restarting it from its current, possibly
-	// mid-flight, state) if one was already running - each module animates
-	// independently, so this never touches any other module's entry (see the top-left
-	// "Reset All" button in OnRender(), which starts one of these per editable module).
 	SResetAnim *pAnim = FindOrAddResetAnim(Module);
 	if(!pAnim)
 		return;
@@ -893,11 +856,6 @@ void CHudEditor::StartResetAnimation(HudLayout::EModule Module, int Kind)
 	pAnim->m_StartScale = HudLayout::Get(Module, HudWidth(), HudHeight()).m_Scale;
 	pAnim->m_Kind = Kind;
 
-	// Apply the reset immediately so we can read the resulting target rect/scale, then
-	// roll position+scale back to where they were - UpdateResetAnimation() drives them
-	// back to this (already-applied) target smoothly every frame instead of snapping.
-	// Enabled/background (only touched by RESET_KIND_ALL) are left applied as-is, since
-	// toggling those isn't something that can be meaningfully interpolated.
 	if(Kind == RESET_KIND_SCALE)
 		HudLayout::ResetScale(Module);
 	else if(Kind == RESET_KIND_POSITION)
@@ -936,9 +894,6 @@ void CHudEditor::UpdateResetAnimation()
 		HudLayout::SetScale(Anim.m_Module, CurScale);
 		if(Anim.m_Phase >= 1.0f && Anim.m_Kind != RESET_KIND_SCALE)
 		{
-			// Leave position at the true default (no runtime override) so dynamic
-			// right-edge stacking - Dummy Actions appearing/disappearing, etc. -
-			// keeps working instead of baking a temporary stack gap into the save.
 			HudLayout::ResetPosition(Anim.m_Module);
 			HudLayout::SetScale(Anim.m_Module, Anim.m_TargetScale);
 		}
@@ -948,7 +903,6 @@ void CHudEditor::UpdateResetAnimation()
 		}
 	}
 
-	// Compact away finished entries (swap-remove, order doesn't matter here).
 	int Write = 0;
 	for(int Read = 0; Read < m_ResetAnimCount; ++Read)
 	{
@@ -969,10 +923,6 @@ CUi::EPopupMenuFunctionResult CHudEditor::PopupModuleSettings(void *pContext, CU
 	if(pThis->m_SelectedModule == HudLayout::MODULE_COUNT)
 		return CUi::POPUP_CLOSE_CURRENT;
 
-	// Smoothly grow the popup out of the module it belongs to instead of popping in at
-	// full size: the outer frame (border+background) is drawn here manually - growing
-	// from the corner nearest the module - since DoPopupMenu() already drew a transparent
-	// one for us (see OpenModuleSettings), and the real content below is clipped to match.
 	if(BCUiAnimations::Enabled())
 		BCUiAnimations::UpdatePhase(pThis->m_PopupRevealPhase, 1.0f, pThis->Client()->RenderFrameTime(), BCUiAnimations::MsToSeconds(140));
 	else
@@ -984,8 +934,6 @@ CUi::EPopupMenuFunctionResult CHudEditor::PopupModuleSettings(void *pContext, CU
 	OuterRect.y -= POPUP_FRAME_MARGIN;
 	OuterRect.w += POPUP_FRAME_MARGIN * 2.0f;
 	OuterRect.h += POPUP_FRAME_MARGIN * 2.0f;
-	// Cached so RenderClosingPopupFrame() can replay the same box, shrinking, after this
-	// popup is gone from CUi's popup stack (see the close-detection in OnRender()).
 	pThis->m_LastPopupOuterRect = OuterRect;
 
 	const CUIRect AnimRect = ComputeAnimRect(OuterRect, pThis->m_PopupGrowFromRight, Phase);
@@ -1069,8 +1017,6 @@ void CHudEditor::OpenModuleSettings(const SModuleVisual &Visual)
 	const float PopupY = std::clamp(ModuleRectUi.y, PopupMargin, maximum(PopupMargin, Ui()->Screen()->h - PopupHeight - PopupMargin));
 	m_PopupRevealPhase = 0.0f;
 	Ui()->ClosePopupMenus();
-	// The popup's own border/background are drawn manually inside PopupModuleSettings so
-	// they can grow in sync with the reveal animation, so make DoPopupMenu's copy invisible.
 	SPopupMenuProperties Props;
 	Props.m_BorderColor = ColorRGBA(0.0f, 0.0f, 0.0f, 0.0f);
 	Props.m_BackgroundColor = ColorRGBA(0.0f, 0.0f, 0.0f, 0.0f);
@@ -1106,15 +1052,9 @@ void CHudEditor::RenderResizeHandles(const SModuleVisual &Visual) const
 	Graphics()->QuadsBegin();
 	for(int Corner : aCorners)
 	{
-		// Flush against a screen edge - see HudLayout::BackgroundCorners() - so there's
-		// nothing meaningful to grab there; hide the bracket instead of clipping it
-		// against the wall.
 		if((Visual.m_Corners & CornerBit(Corner)) == 0)
 			continue;
 
-		// A quarter-circle bracket accenting the corner, independent of the module's own
-		// rounding, instead of a dot sitting on top of it. Rounded end caps (via
-		// DrawHandleBracket) keep it from looking like a strip that's been cut off.
 		vec2 Center;
 		float StartAngle, EndAngle;
 		CornerArcParams(Rect, Corner, RESIZE_HANDLE_RADIUS, Center, StartAngle, EndAngle);
@@ -1126,9 +1066,6 @@ void CHudEditor::RenderResizeHandles(const SModuleVisual &Visual) const
 
 void CHudEditor::RenderClosingPopupFrame() const
 {
-	// The real popup is already gone from CUi's stack by the time this runs (see
-	// OnRender()'s close-detection), so this just replays its frame shrinking back
-	// into the corner it grew from - the mirror image of PopupModuleSettings's opening draw.
 	const float Phase = BCUiAnimations::EaseOutCubic(m_PopupClosePhase);
 	if(Phase <= 0.0f)
 		return;
@@ -1161,13 +1098,10 @@ void CHudEditor::RenderModuleLabel(const SModuleVisual &Visual) const
 	if(!PointingDown)
 		Y = minimum(Height - LabelH - TailSize - 2.0f, Visual.m_Rect.y + Visual.m_Rect.h + TailSize + 2.0f);
 
-	// Soft border first, then an inset fill, so the tooltip reads as a distinct floating
-	// chip instead of a flat black box that blends into a dark HUD background.
 	CUIRect LabelRect = {X, Y, LabelW, LabelH};
 	Graphics()->DrawRect(LabelRect.x - 0.6f, LabelRect.y - 0.6f, LabelRect.w + 1.2f, LabelRect.h + 1.2f, ColorRGBA(1.0f, 1.0f, 1.0f, 0.14f), IGraphics::CORNER_ALL, 6.0f);
 	Graphics()->DrawRect(LabelRect.x, LabelRect.y, LabelRect.w, LabelRect.h, ColorRGBA(0.04f, 0.04f, 0.05f, 0.88f), IGraphics::CORNER_ALL, 5.5f);
 
-	// Small tail connecting the chip to the element it describes, like a speech bubble.
 	const float TailCenterX = std::clamp(Visual.m_Rect.x + Visual.m_Rect.w * 0.5f, LabelRect.x + TailSize * 2.0f, LabelRect.x + LabelRect.w - TailSize * 2.0f);
 	const float TailBaseY = PointingDown ? LabelRect.y + LabelRect.h : LabelRect.y;
 	const float TailDir = PointingDown ? 1.0f : -1.0f;
@@ -1202,9 +1136,6 @@ void CHudEditor::RenderModulePreview(const SModuleVisual &Visual) const
 	if(Rect.w <= 0.0f || Rect.h <= 0.0f)
 		return;
 
-	// All modules currently wired into the editor render themselves live (see the
-	// RenderXPreview() calls in RenderOverlay), so this is just a translucent
-	// highlight over the real content marking the draggable area.
 	ColorRGBA Fill = Visual.m_Editable ? ColorRGBA(0.22f, 0.37f, 0.56f, 0.10f) : ColorRGBA(0.25f, 0.25f, 0.25f, 0.08f);
 	if(Visual.m_IsFallbackPreview)
 		Fill = ColorRGBA(0.30f, 0.26f, 0.20f, 0.20f);
@@ -1392,11 +1323,6 @@ void CHudEditor::OnRender()
 
 	RenderOverlay(MousePos);
 
-	// CUi closes the settings popup on its own (click elsewhere, Escape) during the
-	// RenderPopupMenus() call inside RenderOverlay(), without going through any of our own
-	// ClosePopupMenus() calls above, so catch that transition here (comparing against
-	// PopupOpen from the top of this same frame) and play a closing animation instead of
-	// just having it vanish.
 	if(PopupOpen && !Ui()->IsPopupOpen(&m_SettingsPopupId) && !m_SuppressCloseAnim)
 	{
 		m_PopupClosing = true;

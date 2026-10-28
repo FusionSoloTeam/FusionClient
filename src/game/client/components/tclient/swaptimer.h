@@ -32,4 +32,4 @@ public:
 	void GameClientMessage(int MsgType, void *pRawMsg, bool Dummy);
 };
 
-#endif // GAME_CLIENT_COMPONENTS_TCLIENT_SWAPTIMER_H
+#endif

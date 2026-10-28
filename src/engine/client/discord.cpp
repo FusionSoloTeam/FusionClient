@@ -55,7 +55,7 @@ class CDiscord : public IDiscord
 	bool m_UpdateActivity = false;
 	int64_t m_LastActivityUpdate = 0;
 
-	char m_aClientName[32] = "VClient";
+	char m_aClientName[32] = "Fusion Client";
 	char m_aClientVersion[32] = "";
 
 	IDiscordCore *m_pCore = nullptr;
@@ -178,7 +178,7 @@ public:
 	{
 		mem_zero(&m_Activity, sizeof(DiscordActivity));
 
-		str_copy(m_Activity.assets.large_image, "velocity", sizeof(m_Activity.assets.large_image));
+		str_copy(m_Activity.assets.large_image, "fusion", sizeof(m_Activity.assets.large_image));
 		UpdateLargeText();
 		m_Activity.timestamps.start = time_timestamp();
 		str_copy(m_Activity.details, "Offline", sizeof(m_Activity.details));
@@ -192,7 +192,7 @@ public:
 	{
 		mem_zero(&m_Activity, sizeof(DiscordActivity));
 
-		str_copy(m_Activity.assets.large_image, "velocity", sizeof(m_Activity.assets.large_image));
+		str_copy(m_Activity.assets.large_image, "fusion", sizeof(m_Activity.assets.large_image));
 		UpdateLargeText();
 		m_Activity.timestamps.start = time_timestamp();
 		str_copy(m_Activity.name, "Online");
@@ -287,12 +287,10 @@ public:
 
 class CDiscord : public IDiscord
 {
-	static constexpr const char *LARGE_IMAGE = "velocity";
+	static constexpr const char *LARGE_IMAGE = "fusion";
 
 	static constexpr const char *BUTTON1_LABEL = "Discord";
-	static constexpr const char *BUTTON1_URL = "https://discord.gg/4BhPbEuYeS";
-	static constexpr const char *BUTTON2_LABEL = "Website";
-	static constexpr const char *BUTTON2_URL = "https://velocity-soft.vercel.app/";
+	static constexpr const char *BUTTON1_URL = "https://discord.gg/AYeDKHk9f3";
 
 	HANDLE m_Pipe = INVALID_HANDLE_VALUE;
 	int64_t m_NextConnectAttempt = 0;
@@ -305,7 +303,7 @@ class CDiscord : public IDiscord
 	bool m_PartyPublic = false;
 	time_t m_StartTimestamp = 0;
 
-	char m_aClientName[32] = "VClient";
+	char m_aClientName[32] = "Fusion Client";
 	char m_aClientVersion[32] = "";
 	char m_aDetails[128] = "Main menu";
 	char m_aState[128] = "";
@@ -398,15 +396,15 @@ class CDiscord : public IDiscord
 			{
 				mem_copy(aPayload, m_aReadBuffer + Offset + 8, Length);
 				aPayload[Length] = '\0';
-				if(Opcode == 2) // close
+				if(Opcode == 2)
 				{
 					Disconnect();
 					m_NextConnectAttempt = time_get() + time_freq() * 5;
 					return;
 				}
-				else if(Opcode == 3) // ping
+				else if(Opcode == 3)
 					SendFrame(4, aPayload);
-				else if(Opcode == 1) // frame
+				else if(Opcode == 1)
 					HandleEvent(aPayload);
 			}
 
@@ -558,12 +556,6 @@ class CDiscord : public IDiscord
 		char aButton[640];
 		if(BuildButtonJson(BUTTON1_LABEL, BUTTON1_URL, aButton, sizeof(aButton)))
 			str_append(aButtonsRaw, aButton, sizeof(aButtonsRaw));
-		if(BuildButtonJson(BUTTON2_LABEL, BUTTON2_URL, aButton, sizeof(aButton)))
-		{
-			if(aButtonsRaw[0] != 0)
-				str_append(aButtonsRaw, ",", sizeof(aButtonsRaw));
-			str_append(aButtonsRaw, aButton, sizeof(aButtonsRaw));
-		}
 		if(aButtonsRaw[0] != 0)
 		{
 			str_append(aButtonsPart, ",\"buttons\":[", sizeof(aButtonsPart));
@@ -578,7 +570,6 @@ class CDiscord : public IDiscord
 			str_format(aPartyPart, sizeof(aPartyPart), ",\"party\":{\"id\":\"%s\",\"size\":[%d,%d],\"privacy\":%d}",
 				aPartyId, m_PartyCurrent, m_PartyMax, m_PartyPublic ? 0 : 1);
 		}
-		// низя юзать join secrets и кнопочки вместе *плачет* :((
 		if(aButtonsRaw[0] == 0 && m_Online && m_aJoinSecret[0] != 0)
 		{
 			char aJoinSecret[320];
@@ -637,7 +628,7 @@ public:
 
 	void SetClientInfo(const char *pName, const char *pVersion) override
 	{
-		str_copy(m_aClientName, pName != nullptr && pName[0] != '\0' ? pName : "VClient", sizeof(m_aClientName));
+		str_copy(m_aClientName, pName != nullptr && pName[0] != '\0' ? pName : "Fusion Client", sizeof(m_aClientName));
 		str_copy(m_aClientVersion, pVersion != nullptr ? pVersion : "", sizeof(m_aClientVersion));
 		RefreshStrings();
 	}
@@ -670,7 +661,6 @@ public:
 
 		Drain();
 
-		// 5 upd per 20 sec
 		if(m_UpdateActivity && time_get() >= m_LastActivityUpdate + time_freq() * 4)
 			SendActivity();
 	}

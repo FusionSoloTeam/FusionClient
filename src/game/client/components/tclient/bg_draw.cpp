@@ -193,6 +193,8 @@ private:
 public:
 	bool m_Killed = false;
 	float m_SecondsAge = 0.0f;
+	std::array<float, NUM_DUMMIES> m_aBestTimeCps;
+	std::array<int, NUM_DUMMIES> m_aLastTimeCpRaceTick;
 
 	const CBgDrawItemData &Data() const { return m_Data; }
 	const CBoundingBox &BoundingBox() const { return m_BoundingBox; }
@@ -278,6 +280,8 @@ public:
 	CBgDrawItem(CGameClient &This, vec2 StartPos) :
 		m_This(This), m_PathContainer(*This.Graphics())
 	{
+		m_aBestTimeCps.fill(-1.0f);
+		m_aLastTimeCpRaceTick.fill(-1);
 		m_BoundingBox.ExtendBoundingBox(StartPos, CurrentWidth());
 		m_Data.emplace_back(StartPos, CurrentWidth(), CurrentColor());
 	}
@@ -505,6 +509,66 @@ void CBgDraw::OnConsoleInit()
 	Console()->Register("bg_draw_load", "?r[filename]", CFGFLAG_CLIENT, ConBgDrawLoad, this, "Load drawings from a given csv file (defaults to map name)");
 }
 
+void CBgDraw::UpdateTimeCps()
+{
+	if(!g_Config.m_TcBgDrawClientTimeCps || Client()->State() != IClient::STATE_ONLINE)
+	{
+		m_aLastTimeCpPos.fill(std::nullopt);
+		m_aTimeCpRaceTick.fill(-1);
+		return;
+	}
+
+	const int Dummy = g_Config.m_ClDummy;
+	for(int OtherDummy = 0; OtherDummy < NUM_DUMMIES; ++OtherDummy)
+	{
+		if(OtherDummy != Dummy)
+			m_aLastTimeCpPos[OtherDummy].reset();
+	}
+
+	const int LocalId = GameClient()->m_aLocalIds[Dummy];
+	const int RaceTick = GameClient()->LastRaceTick();
+	if(LocalId < 0 || LocalId >= MAX_CLIENTS || RaceTick < 0 ||
+		!GameClient()->m_aClients[LocalId].m_Active ||
+		!GameClient()->m_Snap.m_aCharacters[LocalId].m_Active)
+	{
+		m_aLastTimeCpPos[Dummy].reset();
+		m_aTimeCpRaceTick[Dummy] = RaceTick;
+		return;
+	}
+
+	if(m_aTimeCpRaceTick[Dummy] != RaceTick)
+	{
+		m_aTimeCpRaceTick[Dummy] = RaceTick;
+		m_aLastTimeCpPos[Dummy].reset();
+	}
+
+	const vec2 Pos = GameClient()->m_aClients[LocalId].m_Predicted.m_Pos;
+	if(!m_aLastTimeCpPos[Dummy].has_value())
+	{
+		m_aLastTimeCpPos[Dummy] = Pos;
+		return;
+	}
+
+	const vec2 LastPos = m_aLastTimeCpPos[Dummy].value();
+	m_aLastTimeCpPos[Dummy] = Pos;
+	if(LastPos == Pos)
+		return;
+
+	const float Time = (float)(Client()->GameTick(Dummy) - RaceTick) / (float)Client()->GameTickSpeed();
+	for(CBgDrawItem &Item : *m_pvItems)
+	{
+		if(Item.m_aLastTimeCpRaceTick[Dummy] == RaceTick || !Item.LineIntersect(LastPos, Pos))
+			continue;
+
+		Item.m_aLastTimeCpRaceTick[Dummy] = RaceTick;
+		const float BestTime = Item.m_aBestTimeCps[Dummy];
+		if(BestTime >= 0.0f)
+			GameClient()->m_Hud.OnClientTimeCp(Time - BestTime);
+		if(BestTime < 0.0f || Time < BestTime)
+			Item.m_aBestTimeCps[Dummy] = Time;
+	}
+}
+
 void CBgDraw::OnRender()
 {
 	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
@@ -596,6 +660,7 @@ void CBgDraw::OnRender()
 	// Remove killed items
 	if(m_pvItems->remove_if([&](CBgDrawItem &Item) { return Item.m_Killed; }))
 		m_Dirty = true;
+	UpdateTimeCps();
 	Graphics()->SetColor(ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f));
 }
 
@@ -604,6 +669,8 @@ void CBgDraw::Reset()
 	m_aInputData.fill(InputMode::NONE);
 	m_aLastPos.fill(std::nullopt);
 	m_apActiveItems.fill(std::nullopt);
+	m_aLastTimeCpPos.fill(std::nullopt);
+	m_aTimeCpRaceTick.fill(-1);
 	m_pvItems->clear();
 }
 

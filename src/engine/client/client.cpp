@@ -3251,8 +3251,6 @@ void CClient::Update()
 		m_PredictionMarginAdjustLastTime = Now;
 	}
 
-	// smooth the prediction margin so freeze/unfreeze transitions are gradual,
-	// using a frame-rate-independent exponential approach (~0.1s time constant)
 	{
 		float dt = minimum((Now - m_PredictionMarginSmoothLastTime) / (float)time_freq(), 1.0f);
 		dt = maximum(dt, 0.0f);

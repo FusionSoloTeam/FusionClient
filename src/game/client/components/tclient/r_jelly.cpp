@@ -44,7 +44,7 @@ namespace
 		Deform.m_FeetScale.x = std::clamp(Deform.m_FeetScale.x, 0.95f, 1.15f);
 		Deform.m_FeetScale.y = std::clamp(Deform.m_FeetScale.y, 0.70f, 1.10f);
 	}
-} // namespace
+}
 
 CRJelly::CRJelly(CGameClient *pClient) :
 	m_pClient(pClient)
@@ -182,5 +182,41 @@ JellyTee CRJelly::GetDeform(int ClientId, vec2 PrevVel, vec2 Vel, vec2 LookDir, 
 	ClampDeform(Deform);
 
 	pState->m_PrevInputVel = Vel;
+	return Deform;
+}
+
+JellyTee CRJelly::GetBreathing(int ClientId, vec2 Vel, bool InAir, float Time)
+{
+	JellyTee Deform;
+	if(ClientId < 0 || ClientId >= MAX_JELLY_CLIENTS)
+		return Deform;
+
+	bool Local = false;
+	for(const int LocalId : m_pClient->m_aLocalIds)
+	{
+		if(ClientId == LocalId)
+		{
+			Local = true;
+			break;
+		}
+	}
+	if(Local && !g_Config.m_TcTeeBreathing)
+		return Deform;
+	if(!Local && !g_Config.m_TcTeeBreathingOthers)
+		return Deform;
+	if(InAir)
+		return Deform;
+	if(length(Vel) > 25.0f)
+		return Deform;
+
+	const float Phase = ClientId * 1.618f;
+	const float Breath = 0.5f + 0.5f * std::sin(Time * 2.2f + Phase);
+	const float Sway = Breath * Breath;
+	Deform.m_BodyScale.x = 1.0f - Sway * 0.035f;
+	Deform.m_BodyScale.y = 1.0f + Sway * 0.055f;
+	Deform.m_FeetScale.x = 1.0f + Sway * 0.02f;
+	Deform.m_FeetScale.y = 1.0f - Sway * 0.025f;
+	Deform.m_BodyAngle = std::sin(Time * 1.1f + Phase * 0.7f) * 0.012f;
+	Deform.m_FeetAngle = -Deform.m_BodyAngle * 0.3f;
 	return Deform;
 }

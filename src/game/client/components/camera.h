@@ -64,6 +64,8 @@ private:
 	float m_DyncamSmoothingSpeedBias;
 	float m_DynamicZoomCurrent;
 	vec2 m_DriftOffsetCurrent;
+	float m_TiltAngleCurrent = 0.0f;
+	float m_TiltAngle = 0.0f;
 	void UpdateTClientCameras();
 	bool m_CanUseCameraInfo;
 	bool m_UsingAutoSpecCamera;
@@ -89,6 +91,7 @@ public:
 
 	float m_RenderZoom;
 	vec2 m_DriftOffset;
+	float TiltAngle() const { return m_TiltAngle; }
 
 	bool m_AutoSpecCameraZooming;
 	bool m_AutoSpecCamera;

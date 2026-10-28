@@ -46,9 +46,9 @@ int CMenus::SettingsGroupOfPage(int Page) const
 	case SETTINGS_TCLIENT_STATUSBAR:
 	case SETTINGS_TCLIENT_INFO:
 		return SETTINGS_GROUP_TCLIENT;
-	case SETTINGS_VCLIENT:
-	case SETTINGS_VCLIENT_INFO:
-		return SETTINGS_GROUP_VCLIENT;
+	case SETTINGS_FUSION:
+	case SETTINGS_FUSION_INFO:
+		return SETTINGS_GROUP_FUSION;
 	default:
 		return -1;
 	}
@@ -82,7 +82,6 @@ void CMenus::RenderSettings(CUIRect MainView)
 	TabBar.HSplitTop(50.0f, &Button, &TabBar);
 	Button.Draw(ms_ColorTabbarActive, IGraphics::CORNER_BR, 10.0f);
 
-	// ---- settings navigation: collapsible groups + always-visible tabs ----
 	struct SSubTab
 	{
 		int m_Page;
@@ -109,20 +108,19 @@ void CMenus::RenderSettings(CUIRect MainView)
 		{SETTINGS_TCLIENT_STATUSBAR, TCLocalize("Status Bar")},
 		{SETTINGS_TCLIENT_INFO, TCLocalize("Info")},
 	};
-	const SSubTab aVclientTabs[] = {
-		{SETTINGS_VCLIENT, TCLocalize("Settings")},
-		{SETTINGS_VCLIENT_INFO, "Info"},
+	const SSubTab aFusionTabs[] = {
+		{SETTINGS_FUSION, TCLocalize("Settings")},
+		{SETTINGS_FUSION_INFO, "Info"},
 	};
 
-	const SSubTab *apGroupTabs[SETTINGS_GROUP_LENGTH] = {aDdnetTabs, aTclientTabs, aVclientTabs};
+	const SSubTab *apGroupTabs[SETTINGS_GROUP_LENGTH] = {aDdnetTabs, aTclientTabs, aFusionTabs};
 	const int aGroupTabCount[SETTINGS_GROUP_LENGTH] = {
 		(int)(sizeof(aDdnetTabs) / sizeof(aDdnetTabs[0])),
 		(int)(sizeof(aTclientTabs) / sizeof(aTclientTabs[0])),
-		(int)(sizeof(aVclientTabs) / sizeof(aVclientTabs[0])),
+		(int)(sizeof(aFusionTabs) / sizeof(aFusionTabs[0])),
 	};
-	const char *apGroupNames[SETTINGS_GROUP_LENGTH] = {"DDNet", TCLocalize("TClient"), "VClient"};
+	const char *apGroupNames[SETTINGS_GROUP_LENGTH] = {"DDNet", TCLocalize("TClient"), "Fusion"};
 
-	// only one group may be expanded at a time; expansion is animated both ways
 	const float Dt = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.1f);
 	const int PageGroup = SettingsGroupOfPage(g_Config.m_UiSettingsPage);
 	const int OpenGroup = m_SettingsGroupCollapsedIndex == PageGroup ? -1 : PageGroup;
@@ -157,7 +155,6 @@ void CMenus::RenderSettings(CUIRect MainView)
 			else
 			{
 				m_SettingsGroupCollapsedIndex = -1;
-				// fall back to the group's first sub-tab if the remembered page is stale
 				int Remembered = m_aSettingsGroupLastPage[Group];
 				if(SettingsGroupOfPage(Remembered) != Group)
 					Remembered = apGroupTabs[Group][0].m_Page;
@@ -170,7 +167,6 @@ void CMenus::RenderSettings(CUIRect MainView)
 		if(Expand <= 0.001f)
 			continue;
 
-		// keep the first sub-tab clear of the group header so it reads as a separate pill
 		TabBar.HSplitTop(GroupToSubGap * Expand, nullptr, &TabBar);
 
 		for(int Sub = 0; Sub < aGroupTabCount[Group]; Sub++)
@@ -206,9 +202,6 @@ void CMenus::RenderSettings(CUIRect MainView)
 			g_Config.m_UiSettingsPage = SETTINGS_ASSETS;
 	}
 
-	// remember which sub-tab each group was last on, so reopening restores it.
-	// this must use the group of the *current* page: a click in this frame may have
-	// moved to a different group, and writing it under the old one would corrupt it.
 	const int NewPageGroup = SettingsGroupOfPage(g_Config.m_UiSettingsPage);
 	if(NewPageGroup >= 0)
 		m_aSettingsGroupLastPage[NewPageGroup] = g_Config.m_UiSettingsPage;
@@ -268,13 +261,13 @@ void CMenus::RenderSettings(CUIRect MainView)
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_LANGUAGE);
 		RenderSettingsTClient(MainView);
 		break;
-	case SETTINGS_VCLIENT:
+	case SETTINGS_FUSION:
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_LANGUAGE);
-		RenderSettingsVClientSettings(MainView);
+		RenderSettingsFusionSettings(MainView);
 		break;
-	case SETTINGS_VCLIENT_INFO:
+	case SETTINGS_FUSION_INFO:
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_LANGUAGE);
-		RenderSettingsVClientInfo(MainView);
+		RenderSettingsFusionInfo(MainView);
 		break;
 	case SETTINGS_PROFILES:
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GENERAL);

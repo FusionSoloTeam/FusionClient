@@ -26,6 +26,7 @@ public:
 
 	void Reset();
 	JellyTee GetDeform(int ClientId, vec2 PrevVel, vec2 Vel, vec2 LookDir, bool InAir, bool WantOtherDir, float DeltaTime, vec2 ExtraDeformImpulse = vec2(0.0f, 0.0f), float ExtraCompression = 0.0f);
+	JellyTee GetBreathing(int ClientId, vec2 Vel, bool InAir, float Time);
 
 private:
 	static constexpr int MAX_JELLY_CLIENTS = MAX_CLIENTS;

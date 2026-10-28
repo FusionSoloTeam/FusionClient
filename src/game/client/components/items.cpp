@@ -474,7 +474,7 @@ void CItems::OnRender()
 	int DraggerStartTick = std::max((Client()->GameTick(g_Config.m_ClDummy) / 7) * 7, Client()->GameTick(g_Config.m_ClDummy) - 4);
 	int GunStartTick = (Client()->GameTick(g_Config.m_ClDummy) / 7) * 7;
 
-	bool UsePredicted = GameClient()->Predict() && GameClient()->AntiPingGunfire();
+	bool UsePredicted = GameClient()->Predict() && (GameClient()->AntiPingGunfire() || GameClient()->PredictOwnWeapons());
 	bool UsePredictedLights = g_Config.m_TcPredictLasers && GameClient()->Predict();
 	auto &aSwitchers = GameClient()->Switchers();
 
@@ -514,25 +514,29 @@ void CItems::OnRender()
 				continue;
 			RenderLaser(&Data, true);
 		}
+	}
 
-		if(UsePredictedLights)
+	if(UsePredictedLights)
+	{
+		for(auto *pLight = (CLight *)GameClient()->m_PrevPredictedWorld.FindFirst(CGameWorld::ENTTYPE_LIGHT); pLight; pLight = (CLight *)pLight->NextEntity())
 		{
-			for(auto *pLight = (CLight *)GameClient()->m_PrevPredictedWorld.FindFirst(CGameWorld::ENTTYPE_LIGHT); pLight; pLight = (CLight *)pLight->NextEntity())
+			CLaserData Data = pLight->GetData();
+			const bool Managed = !IsSuper && Data.m_SwitchNumber > 0 && Data.m_SwitchNumber < (int)aSwitchers.size();
+			const bool SwitchOn = Managed && aSwitchers[Data.m_SwitchNumber].m_aStatus[SwitcherTeam];
+			if(Managed && !SwitchOn && BlinkingLight)
+				continue;
+			const bool BeamOn = !IsSuper && (SwitchOn || pLight->m_Layer != LAYER_SWITCH || Data.m_SwitchNumber == 0);
+			if(!BeamOn)
 			{
-				CLaserData Data = pLight->GetData();
-				const bool Managed = !IsSuper && Data.m_SwitchNumber > 0 && Data.m_SwitchNumber < (int)aSwitchers.size();
-				const bool SwitchOn = Managed && aSwitchers[Data.m_SwitchNumber].m_aStatus[SwitcherTeam];
-				if(Managed && !SwitchOn && BlinkingLight)
-					continue;
-				const bool BeamOn = !IsSuper && (SwitchOn || pLight->m_Layer != LAYER_SWITCH || Data.m_SwitchNumber == 0);
-				if(!BeamOn)
-				{
-					Data.m_From.x = Data.m_To.x;
-					Data.m_From.y = Data.m_To.y;
-				}
-				RenderLaser(&Data, true);
+				Data.m_From.x = Data.m_To.x;
+				Data.m_From.y = Data.m_To.y;
 			}
+			RenderLaser(&Data, true);
 		}
+	}
+
+	if(UsePredicted)
+	{
 		for(auto *pPickup = (CPickup *)GameClient()->m_PrevPredictedWorld.FindFirst(CGameWorld::ENTTYPE_PICKUP); pPickup; pPickup = (CPickup *)pPickup->NextEntity())
 		{
 			if(!IsSuper && pPickup->m_Layer == LAYER_SWITCH && pPickup->m_Number > 0 && pPickup->m_Number < (int)aSwitchers.size() && !aSwitchers[pPickup->m_Number].m_aStatus[SwitcherTeam] && BlinkingPickup)
@@ -614,7 +618,7 @@ void CItems::OnRender()
 			CLaserData Data = ExtractLaserInfo(Item.m_Type, pData, &GameClient()->m_GameWorld, pEntEx);
 			if(!IsLaserInside(Data))
 				continue;
-			if(UsePredictedLights && Data.m_Type == LASERTYPE_FREEZE && GameClient()->m_GameWorld.GetEntity(Item.m_Id, CGameWorld::ENTTYPE_LIGHT))
+			if(UsePredictedLights && Data.m_Type == LASERTYPE_FREEZE && GameClient()->m_PrevPredictedWorld.GetEntity(Item.m_Id, CGameWorld::ENTTYPE_LIGHT))
 				continue;
 			bool Inactive = !IsSuper && Data.m_SwitchNumber > 0 && Data.m_SwitchNumber < (int)aSwitchers.size() && !aSwitchers[Data.m_SwitchNumber].m_aStatus[SwitcherTeam];
 

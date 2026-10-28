@@ -112,6 +112,7 @@ CGraphics_Threaded::CGraphics_Threaded()
 	m_State.m_Texture = -1;
 	m_State.m_BlendMode = EBlendMode::ALPHA;
 	m_State.m_WrapMode = EWrapMode::REPEAT;
+	m_State.m_ScreenRotation = 0.0f;
 
 	m_CurrentCommandBuffer = 0;
 	m_pCommandBuffer = nullptr;
@@ -213,6 +214,11 @@ void CGraphics_Threaded::MapScreen(const CScreenRect &ScreenRect)
 {
 	m_State.m_ScreenTL = ScreenRect.m_TopLeft;
 	m_State.m_ScreenBR = ScreenRect.m_BottomRight;
+}
+
+void CGraphics_Threaded::SetScreenRotation(float Angle)
+{
+	m_State.m_ScreenRotation = Angle;
 }
 
 CScreenRect CGraphics_Threaded::GetScreen() const
@@ -350,7 +356,15 @@ IGraphics::CTextureHandle CGraphics_Threaded::LoadSpriteTexture(const CImageInfo
 	SpriteInfo.m_Format = FromImageInfo.m_Format;
 	SpriteInfo.Allocate();
 	SpriteInfo.CopyRectFrom(FromImageInfo, x, y, w, h, 0, 0);
-	return LoadTextureRawMove(SpriteInfo, 0, pSprite->m_pName);
+	IGraphics::CTextureHandle Result = LoadTextureRawMove(SpriteInfo, 0, pSprite->m_pName);
+	if(m_pVcSpriteRecorder != nullptr && Result.IsValid() && !Result.IsNullTexture())
+		m_pVcSpriteRecorder->emplace_back(Result, pSprite);
+	return Result;
+}
+
+void CGraphics_Threaded::SetSpriteTextureRecorder(std::vector<std::pair<IGraphics::CTextureHandle, const CDataSprite *>> *pRecorder)
+{
+	m_pVcSpriteRecorder = pRecorder;
 }
 
 bool CGraphics_Threaded::IsImageSubFullyTransparent(const CImageInfo &FromImageInfo, int x, int y, int w, int h)
@@ -416,6 +430,33 @@ static CCommandBuffer::SCommand_Texture_Create LoadTextureCreateCommand(int Text
 		Cmd.m_Flags |= TextureFlag::NO_2D_TEXTURE;
 
 	return Cmd;
+}
+
+bool CGraphics_Threaded::ReloadTexture(CTextureHandle Texture, const CImageInfo &Image, const char *pTexName, int Flags)
+{
+	if(!Texture.IsValid() || Texture.IsNullTexture())
+		return false;
+
+	if(Image.m_Width == 0 || Image.m_Height == 0)
+		return false;
+
+	LoadTextureAddWarning(Image.m_Width, Image.m_Height, Flags, pTexName);
+
+	CCommandBuffer::SCommand_Texture_Destroy DestroyCmd;
+	DestroyCmd.m_Slot = Texture.Id();
+	AddCmd(DestroyCmd);
+
+	CCommandBuffer::SCommand_Texture_Create CreateCmd = LoadTextureCreateCommand(Texture.Id(), Image.m_Width, Image.m_Height, Flags);
+
+	uint8_t *pTmpData;
+	if(!ConvertToRgbaAlloc(pTmpData, Image))
+	{
+		log_warn("graphics", "Converted image '%s' to RGBA, consider making its file format RGBA.", pTexName ? pTexName : "(no name)");
+	}
+	CreateCmd.m_pData = pTmpData;
+	AddCmd(CreateCmd);
+
+	return true;
 }
 
 IGraphics::CTextureHandle CGraphics_Threaded::LoadTextureRaw(const CImageInfo &Image, int Flags, const char *pTexName)
@@ -2354,6 +2395,11 @@ void CGraphics_Threaded::SetForcedAspect(bool Force)
 
 	for(auto &ResizeListener : m_vResizeListeners)
 		ResizeListener();
+}
+
+bool CGraphics_Threaded::IsForcedAspect() const
+{
+	return g_GraphicsForcedAspect.load();
 }
 
 void CGraphics_Threaded::SetFrameBlendingAllowed(bool Allowed)

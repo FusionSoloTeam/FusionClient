@@ -21,4 +21,4 @@ public:
 	void OnRender() override;
 };
 
-#endif // GAME_CLIENT_COMPONENTS_TCLIENT_ABOVE_BELOW_PLAYER_H
+#endif

@@ -195,6 +195,7 @@ public:
 		int m_Texture;
 		SPoint m_ScreenTL;
 		SPoint m_ScreenBR;
+		float m_ScreenRotation;
 
 		// clip
 		bool m_ClipEnable;
@@ -969,6 +970,7 @@ public:
 	const TTwGraphicsGpuList &GetGpus() const override;
 
 	void MapScreen(const CScreenRect &ScreenRect) override;
+	void SetScreenRotation(float Angle) override;
 	CScreenRect GetScreen() const override;
 
 	void LinesBegin() override;
@@ -982,6 +984,8 @@ public:
 	IGraphics::CTextureHandle FindFreeTextureIndex();
 	void FreeTextureIndex(CTextureHandle *pIndex);
 	void UnloadTexture(IGraphics::CTextureHandle *pIndex) override;
+	bool ReloadTexture(IGraphics::CTextureHandle Texture, const CImageInfo &Image, const char *pTexName = nullptr, int Flags = 0) override;
+	void SetSpriteTextureRecorder(std::vector<std::pair<IGraphics::CTextureHandle, const CDataSprite *>> *pRecorder) override;
 	void LoadTextureAddWarning(size_t Width, size_t Height, int Flags, const char *pTexName);
 	IGraphics::CTextureHandle LoadTextureRaw(const CImageInfo &Image, int Flags, const char *pTexName = nullptr) override;
 	IGraphics::CTextureHandle LoadTextureRawMove(CImageInfo &Image, int Flags, const char *pTexName = nullptr) override;
@@ -991,6 +995,7 @@ public:
 	bool UpdateTextTexture(CTextureHandle TextureId, int x, int y, size_t Width, size_t Height, uint8_t *pData, bool IsMovedPointer) override;
 
 	CTextureHandle LoadSpriteTexture(const CImageInfo &FromImageInfo, const std::optional<CImageInfo> &FallbackImageInfo, const struct CDataSprite *pSprite) override;
+	std::vector<std::pair<IGraphics::CTextureHandle, const CDataSprite *>> *m_pVcSpriteRecorder = nullptr;
 
 	bool IsImageSubFullyTransparent(const CImageInfo &FromImageInfo, int x, int y, int w, int h) override;
 	bool IsSpriteTextureFullyTransparent(const CImageInfo &FromImageInfo, const struct CDataSprite *pSprite) override;
@@ -1321,6 +1326,7 @@ public:
 
 	// TClient
 	void SetForcedAspect(bool Force) override;
+	bool IsForcedAspect() const override;
 	void SetFrameBlendingAllowed(bool Allowed) override;
 };
 

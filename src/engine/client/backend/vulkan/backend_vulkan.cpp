@@ -80,7 +80,7 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 
 	[[nodiscard]] bool IsFrameBlendEnabled()
 	{
-		return g_Config.m_TcMotionBlur != 0 && g_Config.m_TcMotionBlurStrength > 0 && m_FrameBlendingAllowed;
+		return false;
 	}
 
 	uint64_t m_VRAMFallbackAllocations = 0;
@@ -1019,9 +1019,6 @@ private:
 	std::vector<std::vector<VkCommandBuffer>> m_vvThreadDrawCommandBuffers;
 	std::vector<VkCommandBuffer> m_vHelperThreadDrawCommandBuffers;
 	std::vector<std::vector<bool>> m_vvUsedThreadDrawCommandBuffer;
-	// secondary command buffers for the frame blend quad: with multiple render threads the
-	// render pass uses VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS, so inline draws into
-	// the primary command buffer are not allowed there
 	std::vector<VkCommandBuffer> m_vFrameBlendCommandBuffers;
 
 	std::vector<VkCommandBuffer> m_vMemoryCommandBuffers;
@@ -2628,11 +2625,6 @@ protected:
 			return false;
 		}
 
-		// Frame blend reads the previous presented frame's history image as a texture during the
-		// render pass. That image was written by vkCmdCopyImage in a previous submission on this same
-		// queue. A plain barrier here (GPU-side) makes that copy visible to this frame's blend sampling
-		// without stalling the CPU like vkWaitForFences would. When LastPresented == CurImageIndex the
-		// fence wait above already covers it.
 		m_FrameBlendEnabledThisFrame = IsFrameBlendEnabled();
 		if(m_FrameBlendEnabledThisFrame && !m_vFrameBlendImages.empty())
 		{
@@ -3352,19 +3344,50 @@ protected:
 
 	void GetStateMatrix(const CCommandBuffer::SState &State, std::array<float, (size_t)4 * 2> &Matrix)
 	{
+		const float ScaleX = 2.f / (State.m_ScreenBR.x - State.m_ScreenTL.x);
+		const float ScaleY = 2.f / (State.m_ScreenBR.y - State.m_ScreenTL.y);
+		const float TransX = -((State.m_ScreenTL.x + State.m_ScreenBR.x) / (State.m_ScreenBR.x - State.m_ScreenTL.x));
+		const float TransY = -((State.m_ScreenTL.y + State.m_ScreenBR.y) / (State.m_ScreenBR.y - State.m_ScreenTL.y));
+
+		if(State.m_ScreenRotation == 0.0f)
+		{
+			Matrix = {
+				// column 1
+				ScaleX,
+				0,
+				// column 2
+				0,
+				ScaleY,
+				// column 3
+				0,
+				0,
+				// column 4
+				TransX,
+				TransY,
+			};
+			return;
+		}
+
+		const float CosR = cosf(State.m_ScreenRotation);
+		const float SinR = sinf(State.m_ScreenRotation);
+		const float CenterX = (State.m_ScreenTL.x + State.m_ScreenBR.x) * 0.5f;
+		const float CenterY = (State.m_ScreenTL.y + State.m_ScreenBR.y) * 0.5f;
+		const float ShiftX = CenterX - (CosR * CenterX - SinR * CenterY);
+		const float ShiftY = CenterY - (SinR * CenterX + CosR * CenterY);
+
 		Matrix = {
 			// column 1
-			2.f / (State.m_ScreenBR.x - State.m_ScreenTL.x),
-			0,
+			ScaleX * CosR,
+			ScaleY * SinR,
 			// column 2
-			0,
-			2.f / (State.m_ScreenBR.y - State.m_ScreenTL.y),
+			-ScaleX * SinR,
+			ScaleY * CosR,
 			// column 3
 			0,
 			0,
 			// column 4
-			-((State.m_ScreenTL.x + State.m_ScreenBR.x) / (State.m_ScreenBR.x - State.m_ScreenTL.x)),
-			-((State.m_ScreenTL.y + State.m_ScreenBR.y) / (State.m_ScreenBR.y - State.m_ScreenTL.y)),
+			TransX + ScaleX * ShiftX,
+			TransY + ScaleY * ShiftY,
 		};
 	}
 
@@ -4359,18 +4382,13 @@ public:
 
 		if(Forced.m_Stretch)
 		{
-			// Stretch mode: use full swap image size, but indicate world aspect is forced
 			UsesForcedViewport = true;
-			// For stretch mode, the forced viewport equals the full swap image
-			// The actual stretching is done via the custom world aspect ratio in the front-end
 		}
 		else if(Forced.m_Forced)
 		{
-			// Letterbox mode: shrink the viewport
 			AutoViewportExtent.width = (uint32_t)Forced.m_Width;
 			AutoViewportExtent.height = (uint32_t)Forced.m_Height;
 			UsesForcedViewport = true;
-			// center the game inside the window
 			ForcedViewportOffset.x = (int32_t)std::max(0, ((int32_t)RetSize.width - (int32_t)Forced.m_Width) / 2);
 			ForcedViewportOffset.y = (int32_t)std::max(0, ((int32_t)RetSize.height - (int32_t)Forced.m_Height) / 2);
 		}
@@ -6350,8 +6368,6 @@ public:
 		}
 		else if(OldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 		{
-			// no layout change: only make the previous frame's copy into the history image
-			// (recorded in a previous submission on the same queue) visible to this frame's blend sampling
 			Barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 			Barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -7332,7 +7348,6 @@ public:
 		if(SourceCount <= 0)
 			return true;
 
-		// how the fuck this code still here
 		const float Strength = (float)g_Config.m_TcMotionBlurStrength;
 		const float TotalBlendStrength = 0.90f * std::sqrt(std::min(Strength, 95.0f) / 95.0f);
 		if(TotalBlendStrength <= 0.0f)
@@ -7341,7 +7356,6 @@ public:
 		for(int Source = 0; Source < SourceCount; ++Source)
 			aSourceAlphas[Source] = TotalBlendStrength * (aSourceWeights[Source] / WeightSum);
 
-		// same as above
 		const bool UseSecondaryCommandBuffer = m_ThreadCount > 1;
 		VkCommandBuffer CommandBuffer = MainCommandBuffer;
 		if(UseSecondaryCommandBuffer)
@@ -7390,8 +7404,6 @@ public:
 
 		auto &PipeLayout = GetStandardPipeLayout(false, true, BlendModeIndex, DynamicIndex);
 		auto &PipeLine = GetStandardPipe(false, true, BlendModeIndex, DynamicIndex);
-		// Bind everything explicitly — the m_vLastPipeline / dynamic state caches track other
-		// command buffers, and bind state never carries over between command buffers.
 		vkCmdBindPipeline(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, PipeLine);
 		if(ExecBuffer.m_HasDynamicState)
 		{

@@ -1,6 +1,7 @@
 #ifndef GAME_CLIENT_COMPONENTS_TCLIENT_TCLIENT_H
 #define GAME_CLIENT_COMPONENTS_TCLIENT_TCLIENT_H
 
+#include <base/types.h>
 #include <engine/client/enums.h>
 #include <engine/external/regex.h>
 #include <engine/http.h>
@@ -10,9 +11,17 @@
 #include <game/client/ui.h>
 
 #include <deque>
+#include <vector>
 
 class CTClient : public CComponent
 {
+	struct STeleportEntry
+	{
+		char m_aText[64];
+		bool m_Unpaired;
+		std::vector<ivec2> m_vPositions;
+	};
+
 	std::deque<vec2> m_aAirRescuePositions[NUM_DUMMIES];
 	void AirRescue();
 	static void ConAirRescue(IConsole::IResult *pResult, void *pUserData);
@@ -100,6 +109,16 @@ public:
 	CUIRect m_InfoOverlayRect{};
 
 	Regex m_RegexChatIgnore;
+
+	static void ConTeleportInfo(IConsole::IResult *pResult, void *pUserData);
+	static CUi::EPopupMenuFunctionResult PopupTeleportInfo(void *pContext, CUIRect View, bool Active);
+	void CollectTeleportData();
+	SPopupMenuId m_TeleportInfoPopupId;
+	std::vector<STeleportEntry> m_vTeleportEntries;
+
+public:
+	bool TeleportInfoActive() const;
+	void RenderTeleportInfo();
 };
 
 #endif

@@ -58,6 +58,6 @@ inline float UpdatePhase(float &Phase, float Target, float Dt, float DurationSec
 		Phase = std::max(Target, Phase - Dt * Speed);
 	return Phase;
 }
-} // namespace BCUiAnimations
+}
 
 #endif

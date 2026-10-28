@@ -63,6 +63,7 @@ public:
 	void LogProgress(HTTPLOG LogProgress) { m_LogProgress = LogProgress; }
 	void SkipByFileTime(bool SkipByFileTime) { m_SkipByFileTime = SkipByFileTime; }
 	void IpResolve(IPRESOLVE IpResolve) { m_IpResolve = IpResolve; }
+	void InsecureSsl(bool InsecureSsl) { m_InsecureSsl = InsecureSsl; }
 	void FailOnErrorStatus(bool FailOnErrorStatus) { m_FailOnErrorStatus = FailOnErrorStatus; }
 	// Download to memory only. Get the result via `Result*`.
 	void WriteToMemory();
@@ -151,6 +152,7 @@ protected:
 	HTTPLOG m_LogProgress = HTTPLOG::ALL;
 	bool m_SkipByFileTime = true;
 	IPRESOLVE m_IpResolve = IPRESOLVE::WHATEVER;
+	bool m_InsecureSsl = false;
 	bool m_FailOnErrorStatus = true;
 	bool m_ValidateBeforeOverwrite = false;
 	std::optional<SHA256_DIGEST> m_ExpectedSha256 = std::nullopt;

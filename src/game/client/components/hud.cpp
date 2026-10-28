@@ -111,6 +111,11 @@ void CHud::OnReset()
 	m_aLastPlayerSpeedChange[0] = ESpeedChange::NONE;
 	m_aLastPlayerSpeedChange[1] = ESpeedChange::NONE;
 	m_LastSpectatorCountTick = 0;
+	for(int i = 0; i < 2; i++)
+	{
+		m_aClickCount[i] = 0;
+		m_aClickWindowStart[i] = 0.0f;
+	}
 
 	ResetHudContainers();
 }
@@ -960,9 +965,12 @@ void CHud::RenderCursor()
 
 	Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
 	Graphics()->TextureSet(GameClient()->m_GameSkin.m_aSpriteWeaponCursors[CurWeapon]);
-	Graphics()->RenderQuadContainerAsSprite(m_HudQuadContainerIndex, m_aCursorOffset[CurWeapon], TargetPos.x, TargetPos.y, Scale, Scale);
+	const auto DrawCursor = [&](vec2 Pos, float CursorAlpha, float CursorScale) {
+		Graphics()->SetColor(1.0f, 1.0f, 1.0f, CursorAlpha);
+		Graphics()->RenderQuadContainerAsSprite(m_HudQuadContainerIndex, m_aCursorOffset[CurWeapon], Pos.x, Pos.y, CursorScale, CursorScale);
+	};
+	GameClient()->m_FgfMotionBlur.RenderCrosshair(Center, TargetPos, Alpha, Scale, DrawCursor);
 }
-
 void CHud::PrepareAmmoHealthAndArmorQuads()
 {
 	float x = 5;
@@ -1576,8 +1584,25 @@ static void GetKeystrokesContentSize(float &Width, float &Height)
 {
 	const float Key = 14.0f;
 	const float Gap = 2.0f;
+	const float CpsFontSize = 5.5f;
+	const float CpsGap = 1.0f;
 	Width = Key * 2.0f + Gap;
 	Height = Key * 2.0f + Gap;
+	if(g_Config.m_TcKeystrokesCps)
+		Height += CpsFontSize + CpsGap;
+}
+
+int CHud::CountCps(int Button) const
+{
+	const float Now = Client()->GlobalTime();
+	const float Window = 1.0f;
+	int Count = 0;
+	for(int i = 0; i < m_aClickCount[Button]; i++)
+	{
+		if(m_aaClickTimes[Button][i] > Now - Window)
+			Count++;
+	}
+	return Count;
 }
 
 void CHud::RenderKeystrokes()
@@ -1592,11 +1617,28 @@ void CHud::RenderKeystrokes()
 
 	Graphics()->MapScreen(-Layout.m_X / Scale, -Layout.m_Y / Scale, -Layout.m_X / Scale + m_Width / Scale, -Layout.m_Y / Scale + m_Height / Scale);
 
+	const float Time = Client()->GlobalTime();
+	for(int Button = 0; Button < 2; Button++)
+	{
+		int Write = 0;
+		for(int i = 0; i < m_aClickCount[Button]; i++)
+			if(m_aaClickTimes[Button][i] > Time - 1.0f)
+				m_aaClickTimes[Button][Write++] = m_aaClickTimes[Button][i];
+		m_aClickCount[Button] = Write;
+	}
+	if(g_Config.m_TcKeystrokesCps)
+	{
+		if(Input()->KeyPress(KEY_MOUSE_1) && m_aClickCount[0] < MAX_CPS_SAMPLES)
+			m_aaClickTimes[0][m_aClickCount[0]++] = Time;
+		if(Input()->KeyPress(KEY_MOUSE_2) && m_aClickCount[1] < MAX_CPS_SAMPLES)
+			m_aaClickTimes[1][m_aClickCount[1]++] = Time;
+	}
+
 	if(Layout.m_BackgroundEnabled)
 	{
 		const ColorRGBA Back = color_cast<ColorRGBA>(ColorHSLA(Layout.m_BackgroundColor, true));
 		Graphics()->TextureClear();
-		Graphics()->DrawRect(0.0f, 0.0f, ContentW, ContentH, Back, IGraphics::CORNER_NONE, 0.0f);
+		Graphics()->DrawRect(0.0f, 0.0f, ContentW, ContentH, Back, IGraphics::CORNER_ALL, 3.0f);
 	}
 
 	const CNetObj_PlayerInput &PlayerInput = GameClient()->m_Controls.m_aInputData[g_Config.m_ClDummy];
@@ -1607,24 +1649,45 @@ void CHud::RenderKeystrokes()
 
 	const float Key = 14.0f;
 	const float Gap = 2.0f;
+	const float Rounding = 2.5f;
 	const float FontSize = 7.0f;
+	const float SmallFontSize = 5.5f;
+	const float CpsFontSize = 5.5f;
+	const float CpsGap = 1.0f;
 	const float PressedOpacity = g_Config.m_TcKeystrokesOpacity / 100.0f;
 
-	auto DrawKey = [&](float X, float Y, const char *pLabel, bool Pressed) {
-		const ColorRGBA Fill = Pressed ? ColorRGBA(1.0f, 1.0f, 1.0f, PressedOpacity) : ColorRGBA(0.0f, 0.0f, 0.0f, 0.82f);
-		Graphics()->TextureClear();
-		Graphics()->DrawRect(X, Y, Key, Key, Fill, IGraphics::CORNER_NONE, 0.0f);
-		const float TextW = TextRender()->TextWidth(FontSize, pLabel);
-		TextRender()->TextColor(Pressed ? ColorRGBA(0.0f, 0.0f, 0.0f, 1.0f) : ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f));
-		TextRender()->Text(X + (Key - TextW) / 2.0f, Y + (Key - FontSize) / 2.0f - 0.5f, FontSize, pLabel, -1.0f);
+	Graphics()->TextureClear();
+
+	auto DrawKey = [&](float X, float Y, const char *pLabel, float LabelFontSize, bool Pressed) {
+		const ColorRGBA Fill = Pressed ? ColorRGBA(0.30f, 0.62f, 1.0f, PressedOpacity) : ColorRGBA(0.0f, 0.0f, 0.0f, 0.70f);
+		Graphics()->DrawRect(X, Y, Key, Key, Fill, IGraphics::CORNER_ALL, Rounding);
+		if(!Pressed)
+			Graphics()->DrawRect(X, Y, Key, Key, ColorRGBA(1.0f, 1.0f, 1.0f, 0.15f), IGraphics::CORNER_ALL, Rounding);
+		const float TextW = TextRender()->TextWidth(LabelFontSize, pLabel);
+		TextRender()->TextColor(ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f));
+		TextRender()->Text(X + (Key - TextW) / 2.0f, Y + (Key - LabelFontSize) / 2.0f - 0.5f, LabelFontSize, pLabel, -1.0f);
 		TextRender()->TextColor(TextRender()->DefaultTextColor());
 	};
 
 	const float Row2 = Key + Gap;
-	DrawKey(0.0f, 0.0f, "A", PressedA);
-	DrawKey(Key + Gap, 0.0f, "D", PressedD);
-	DrawKey(0.0f, Row2, "LMB", PressedLmb);
-	DrawKey(Key + Gap, Row2, "RMB", PressedRmb);
+	DrawKey(0.0f, 0.0f, "A", FontSize, PressedA);
+	DrawKey(Key + Gap, 0.0f, "D", FontSize, PressedD);
+	DrawKey(0.0f, Row2, "LMB", SmallFontSize, PressedLmb);
+	DrawKey(Key + Gap, Row2, "RMB", SmallFontSize, PressedRmb);
+
+	if(g_Config.m_TcKeystrokesCps)
+	{
+		char aCpsLmb[8], aCpsRmb[8];
+		str_format(aCpsLmb, sizeof(aCpsLmb), "%d", CountCps(0));
+		str_format(aCpsRmb, sizeof(aCpsRmb), "%d", CountCps(1));
+		const float CpsY = Row2 + Key + CpsGap;
+		TextRender()->TextColor(ColorRGBA(1.0f, 1.0f, 1.0f, 0.9f));
+		const float W0 = TextRender()->TextWidth(CpsFontSize, aCpsLmb);
+		TextRender()->Text(0.0f + (Key - W0) / 2.0f, CpsY, CpsFontSize, aCpsLmb, -1.0f);
+		const float W1 = TextRender()->TextWidth(CpsFontSize, aCpsRmb);
+		TextRender()->Text(Key + Gap + (Key - W1) / 2.0f, CpsY, CpsFontSize, aCpsRmb, -1.0f);
+		TextRender()->TextColor(TextRender()->DefaultTextColor());
+	}
 }
 
 CUIRect CHud::GetKeystrokesHudEditorRect() const
@@ -1949,16 +2012,11 @@ CUIRect CHud::GetVoteHudEditorRect() const
 	return Rect;
 }
 
-void CHud::RenderSpectatorCount()
+int CHud::GetSpectatorCount() const
 {
-	if(!g_Config.m_ClShowhudSpectatorCount)
-	{
-		return;
-	}
-
-	int Count = 0;
 	if(Client()->IsSixup())
 	{
+		int Count = 0;
 		for(int i = 0; i < MAX_CLIENTS; i++)
 		{
 			if(i == GameClient()->m_aLocalIds[0] || (GameClient()->Client()->DummyConnected() && i == GameClient()->m_aLocalIds[1]))
@@ -1969,16 +2027,31 @@ void CHud::RenderSpectatorCount()
 				Count++;
 			}
 		}
+		return Count;
 	}
 	else
 	{
 		const CNetObj_SpectatorCount *pSpectatorCount = GameClient()->m_Snap.m_pSpectatorCount;
 		if(!pSpectatorCount)
 		{
-			m_LastSpectatorCountTick = Client()->GameTick(g_Config.m_ClDummy);
-			return;
+			return -1;
 		}
-		Count = pSpectatorCount->m_NumSpectators;
+		return pSpectatorCount->m_NumSpectators;
+	}
+}
+
+void CHud::RenderSpectatorCount()
+{
+	if(!g_Config.m_ClShowhudSpectatorCount)
+	{
+		return;
+	}
+
+	int Count = GetSpectatorCount();
+	if(Count < 0)
+	{
+		m_LastSpectatorCountTick = Client()->GameTick(g_Config.m_ClDummy);
+		return;
 	}
 
 	if(Count == 0)
@@ -2018,9 +2091,9 @@ void CHud::RenderSpectatorCount()
 
 	const auto SpectatorCountLayout = HudLayout::Get(HudLayout::MODULE_SPECTATOR_COUNT, m_Width, m_Height);
 	const float SpectatorCountScale = std::clamp(SpectatorCountLayout.m_Scale / 100.0f, 0.25f, 3.0f);
-	Graphics()->MapScreen(StartX - SpectatorCountLayout.m_X / SpectatorCountScale, StartY - SpectatorCountLayout.m_Y / SpectatorCountScale, StartX - SpectatorCountLayout.m_X / SpectatorCountScale + m_Width / SpectatorCountScale, StartY - SpectatorCountLayout.m_Y / SpectatorCountScale + m_Height / SpectatorCountScale);
+	Graphics()->MapScreen(m_Width - SpectatorCountLayout.m_X / SpectatorCountScale, StartY - SpectatorCountLayout.m_Y / SpectatorCountScale, m_Width - SpectatorCountLayout.m_X / SpectatorCountScale + m_Width / SpectatorCountScale, StartY - SpectatorCountLayout.m_Y / SpectatorCountScale + m_Height / SpectatorCountScale);
 
-	const int SpectatorCountCorners = HudLayout::BackgroundCorners(IGraphics::CORNER_ALL, SpectatorCountLayout.m_X, SpectatorCountLayout.m_Y, BoxWidth * SpectatorCountScale, BoxHeight * SpectatorCountScale, m_Width, m_Height);
+	const int SpectatorCountCorners = HudLayout::BackgroundCorners(IGraphics::CORNER_ALL, SpectatorCountLayout.m_X - BoxWidth * SpectatorCountScale, SpectatorCountLayout.m_Y, BoxWidth * SpectatorCountScale, BoxHeight * SpectatorCountScale, m_Width, m_Height);
 	Graphics()->DrawRect(StartX, StartY, BoxWidth, BoxHeight, ColorRGBA(0.0f, 0.0f, 0.0f, 0.4f), SpectatorCountCorners, 5.0f);
 
 	float y = StartY + BoxHeight / 3;
@@ -2509,8 +2582,11 @@ CUIRect CHud::GetSpectatorCountHudEditorRect() const
 
 	const auto Layout = HudLayout::Get(HudLayout::MODULE_SPECTATOR_COUNT, m_Width, m_Height);
 	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
-	const float BoxWidth = 13.0f + TextRender()->TextWidth(6.0f, "999");
-	CUIRect BoxRect = {Layout.m_X, Layout.m_Y, BoxWidth * Scale, 14.0f * Scale};
+	const int Count = GetSpectatorCount();
+	char aBuf[16];
+	str_format(aBuf, sizeof(aBuf), "%d", maximum(0, Count));
+	const float BoxWidth = 13.0f + TextRender()->TextWidth(6.0f, Count > 0 ? aBuf : "999");
+	CUIRect BoxRect = {Layout.m_X - BoxWidth * Scale, Layout.m_Y, BoxWidth * Scale, 14.0f * Scale};
 	return BoxRect;
 }
 
@@ -2879,9 +2955,16 @@ void CHud::OnMessage(int MsgType, void *pRawMsg)
 	}
 }
 
+void CHud::OnClientTimeCp(float Diff)
+{
+	m_TimeCpDiff = Diff;
+	m_TimeCpLastReceivedTick = Client()->GameTick(g_Config.m_ClDummy);
+	m_ShowFinishTime = false;
+}
+
 void CHud::RenderDDRaceEffects()
 {
-	if(m_DDRaceTime)
+	if(m_DDRaceTime || m_TimeCpLastReceivedTick > 0)
 	{
 		char aBuf[64];
 		char aTime[32];

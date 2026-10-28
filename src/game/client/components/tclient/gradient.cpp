@@ -183,7 +183,6 @@ void CBcGradient::OnRender()
 	bool NeedRefresh = false;
 	if(m_LastEverything < 0)
 	{
-		// First frame: just seed tracked values, no rebuild.
 	}
 	else if(Everything != m_LastEverything || Nick != m_LastNick || Clan != m_LastClan ||
 		Chat != m_LastChat || ChatNicknames != m_LastChatNicknames || ChatMessages != m_LastChatMessages)

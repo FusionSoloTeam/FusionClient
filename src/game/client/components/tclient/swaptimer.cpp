@@ -186,7 +186,6 @@ void CSwapTimer::GameClientMessage(int MsgType, void *pRawMsg, bool Dummy)
 
 				RemoveSwapEntryId(GameClient()->m_aLocalIds[g_Config.m_ClDummy ^ (int)Dummy], FindClientId(aName));
 			}
-			// *** : [D] Voix has swapped with Voix.
 			if(str_utf8_find_nocase(pMsg->m_pMessage, " has swapped with "))
 			{
 				const char *pStart = str_find(pMsg->m_pMessage, " has swapped with ");
@@ -209,16 +208,17 @@ void CSwapTimer::GameClientMessage(int MsgType, void *pRawMsg, bool Dummy)
 
 CUIRect CSwapTimer::GetHudEditorRect() const
 {
-	const CUIRect Screen = *Ui()->Screen();
+	const float HudWidth = HudLayout::CANVAS_HEIGHT * Graphics()->ScreenAspect();
+	const float HudHeight = HudLayout::CANVAS_HEIGHT;
 	if(!g_Config.m_TcEnableSwapTimer || m_vSwapList.empty())
 	{
 		CUIRect EmptyRect = {0.0f, 0.0f, 0.0f, 0.0f};
 		return EmptyRect;
 	}
 
-	const float SwapTimerWidth = Screen.w / 4.0f;
-	const float SwapTimerHeight = 12.0f * (float)m_vSwapList.size();
-	const auto Layout = HudLayout::Get(HudLayout::MODULE_SWAP_TIMER, Screen.w, Screen.h);
+	const float SwapTimerWidth = HudWidth / 4.0f;
+	const float SwapTimerHeight = 6.0f * (float)m_vSwapList.size();
+	const auto Layout = HudLayout::Get(HudLayout::MODULE_SWAP_TIMER, HudWidth, HudHeight);
 	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
 	CUIRect BoxRect = {Layout.m_X, Layout.m_Y, SwapTimerWidth * Scale, SwapTimerHeight * Scale};
 	return BoxRect;
@@ -238,19 +238,20 @@ void CSwapTimer::OnRender()
 
 	Ui()->MapScreen();
 	int SwapSize = m_vSwapList.size();
-	const CUIRect Screen = *Ui()->Screen();
-	const float LineSize = 12.0f;
-	const float FontSize = 8.0f;
-	const float Margin = 2.0f;
+	const float HudWidth = HudLayout::CANVAS_HEIGHT * Graphics()->ScreenAspect();
+	const float HudHeight = HudLayout::CANVAS_HEIGHT;
+	const float LineSize = 6.0f;
+	const float FontSize = 4.0f;
+	const float Margin = 1.0f;
 	CUIRect Base;
-	Base.w = Screen.w / 4.0f;
-	Base.h = 12.0f * SwapSize;
-	Base.x = g_Config.m_TcEnableSwapTimerOnLeftSide ? 0.0f : (Screen.w - Base.w);
-	Base.y = (Screen.h - Base.h) * g_Config.m_TcEnableSwapTimerPosY / 100.0f;
+	Base.w = HudWidth / 4.0f;
+	Base.h = 6.0f * SwapSize;
+	Base.x = g_Config.m_TcEnableSwapTimerOnLeftSide ? 0.0f : (HudWidth - Base.w);
+	Base.y = (HudHeight - Base.h) * g_Config.m_TcEnableSwapTimerPosY / 100.0f;
 
-	const auto SwapTimerLayout = HudLayout::Get(HudLayout::MODULE_SWAP_TIMER, Screen.w, Screen.h);
+	const auto SwapTimerLayout = HudLayout::Get(HudLayout::MODULE_SWAP_TIMER, HudWidth, HudHeight);
 	const float SwapTimerScale = std::clamp(SwapTimerLayout.m_Scale / 100.0f, 0.25f, 3.0f);
-	Graphics()->MapScreen(Base.x - SwapTimerLayout.m_X / SwapTimerScale, Base.y - SwapTimerLayout.m_Y / SwapTimerScale, Base.x - SwapTimerLayout.m_X / SwapTimerScale + Screen.w / SwapTimerScale, Base.y - SwapTimerLayout.m_Y / SwapTimerScale + Screen.h / SwapTimerScale);
+	Graphics()->MapScreen(Base.x - SwapTimerLayout.m_X / SwapTimerScale, Base.y - SwapTimerLayout.m_Y / SwapTimerScale, Base.x - SwapTimerLayout.m_X / SwapTimerScale + HudWidth / SwapTimerScale, Base.y - SwapTimerLayout.m_Y / SwapTimerScale + HudHeight / SwapTimerScale);
 
 	for(size_t i = 0; i < m_vSwapList.size(); i++)
 	{

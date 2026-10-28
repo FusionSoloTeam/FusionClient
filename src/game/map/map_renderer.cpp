@@ -184,6 +184,20 @@ void CMapRenderer::Render(const CRenderLayerParams &Params)
 	}
 }
 
+float CMapRenderer::GetTileAnimationProgress(const CMapItemLayerTilemap *pLayerTilemap, int x, int y) const
+{
+	if(pLayerTilemap == nullptr)
+		return 1.0f;
+
+	for(const auto &pRenderLayer : m_vpRenderLayers)
+	{
+		const float Progress = pRenderLayer->GetTileAnimationProgress(pLayerTilemap, x, y);
+		if(Progress < 1.0f)
+			return Progress;
+	}
+	return 1.0f;
+}
+
 int CMapRenderer::GetLayerType(const CMapItemLayer *pLayer) const
 {
 	if(pLayer->m_Type != LAYERTYPE_TILES)

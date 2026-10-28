@@ -40,6 +40,6 @@ enum
 
 	bool FastInputActive();
 	bool BestMode();
-} // namespace TcInputs
+}
 
 #endif

@@ -243,6 +243,8 @@ void CFgfWeather::Draw(float Time)
 {
 	Graphics()->TextureSet(m_GlowTexture);
 	const ColorRGBA Color = WeatherColor(m_Kind);
+	const float SizeMul = g_Config.m_TcWeatherSize / 100.0f;
+	const float OpacityMul = g_Config.m_TcWeatherOpacity / 100.0f;
 
 	if(m_Kind == FGF_WEATHER_FIREFLIES)
 	{
@@ -256,11 +258,11 @@ void CFgfWeather::Draw(float Time)
 			const float Fade = std::min(1.0f, std::min(Drop.m_Life, Drop.m_LifeSpan - Drop.m_Life) / 1.0f);
 			const float Blink = std::pow(0.5f + 0.5f * std::sin(Time * 2.2f + Drop.m_Phase), 3.0f);
 			const float Alpha = Fade * mix(0.15f, 1.0f, Blink);
-			Graphics()->SetColor(Color.r, Color.g, Color.b, 0.45f * Alpha);
-			IGraphics::CQuadItem Glow(Drop.m_Pos.x, Drop.m_Pos.y, 30.0f * Drop.m_Size, 30.0f * Drop.m_Size);
+			Graphics()->SetColor(Color.r, Color.g, Color.b, 0.45f * Alpha * OpacityMul);
+			IGraphics::CQuadItem Glow(Drop.m_Pos.x, Drop.m_Pos.y, 30.0f * Drop.m_Size * SizeMul, 30.0f * Drop.m_Size * SizeMul);
 			Graphics()->QuadsDraw(&Glow, 1);
-			Graphics()->SetColor(Core.r, Core.g, Core.b, Alpha);
-			IGraphics::CQuadItem CoreQuad(Drop.m_Pos.x, Drop.m_Pos.y, 6.0f * Drop.m_Size, 6.0f * Drop.m_Size);
+			Graphics()->SetColor(Core.r, Core.g, Core.b, Alpha * OpacityMul);
+			IGraphics::CQuadItem CoreQuad(Drop.m_Pos.x, Drop.m_Pos.y, 6.0f * Drop.m_Size * SizeMul, 6.0f * Drop.m_Size * SizeMul);
 			Graphics()->QuadsDraw(&CoreQuad, 1);
 		}
 		Graphics()->QuadsEnd();
@@ -283,9 +285,9 @@ void CFgfWeather::Draw(float Time)
 			const float Facing = Drop.m_Phase < pi ? 1.0f : -1.0f;
 			const float Spin = Drop.m_Settled ? Drop.m_Phase : Drop.m_Phase + Time * (Sakura ? 1.8f : 1.2f) * Facing;
 			const float Flutter = Drop.m_Settled ? 1.0f : (0.28f + 0.72f * std::abs(std::sin(Time * 2.6f + Drop.m_Phase * 1.7f)));
-			const float Size = Drop.m_Size * (Sakura ? 8.0f : 9.5f);
+			const float Size = Drop.m_Size * (Sakura ? 8.0f : 9.5f) * SizeMul;
 			Graphics()->QuadsSetRotation(Spin);
-			Graphics()->SetColor(Color.r, Color.g, Color.b, 0.95f * Fade);
+			Graphics()->SetColor(Color.r, Color.g, Color.b, 0.95f * Fade * OpacityMul);
 			IGraphics::CQuadItem Shape(Drop.m_Pos.x, Drop.m_Pos.y, Size * Flutter, Size);
 			Graphics()->QuadsDraw(&Shape, 1);
 		}
@@ -308,8 +310,8 @@ void CFgfWeather::Draw(float Time)
 			const float Fade = std::clamp(std::min(Drop.m_Life / 0.5f, (Drop.m_LifeSpan - Drop.m_Life) / 1.0f), 0.0f, 1.0f);
 			const float Spin = Drop.m_Phase + Time * (Drop.m_Phase < pi ? 0.4f : -0.4f);
 			Graphics()->QuadsSetRotation(Sprite ? Spin : 0.0f);
-			Graphics()->SetColor(Color.r, Color.g, Color.b, 0.9f * Fade);
-			const float Size = Sprite ? Drop.m_Size * 3.4f : Drop.m_Size;
+			Graphics()->SetColor(Color.r, Color.g, Color.b, 0.9f * Fade * OpacityMul);
+			const float Size = (Sprite ? Drop.m_Size * 3.4f : Drop.m_Size) * SizeMul;
 			IGraphics::CQuadItem Flake(Drop.m_Pos.x, Drop.m_Pos.y, Size, Size);
 			Graphics()->QuadsDraw(&Flake, 1);
 		}
@@ -325,8 +327,8 @@ void CFgfWeather::Draw(float Time)
 		const CDrop &Drop = m_aDrops[i];
 		Graphics()->QuadsSetRotation(angle(Drop.m_Vel));
 		const float Fade = std::clamp(std::min(Drop.m_Life / 0.06f, (Drop.m_LifeSpan - Drop.m_Life) / 0.06f), 0.0f, 1.0f);
-		Graphics()->SetColor(Color.r, Color.g, Color.b, 0.55f * Drop.m_Size * Fade);
-		IGraphics::CQuadItem Streak(Drop.m_Pos.x, Drop.m_Pos.y, 26.0f * Drop.m_Size, 2.2f);
+		Graphics()->SetColor(Color.r, Color.g, Color.b, 0.55f * Drop.m_Size * Fade * OpacityMul);
+		IGraphics::CQuadItem Streak(Drop.m_Pos.x, Drop.m_Pos.y, 26.0f * Drop.m_Size * SizeMul, 2.2f * SizeMul);
 		Graphics()->QuadsDraw(&Streak, 1);
 	}
 	Graphics()->QuadsSetRotation(0.0f);
@@ -335,8 +337,8 @@ void CFgfWeather::Draw(float Time)
 	{
 		const CSplash &Splash = m_aSplashes[i];
 		const float Fade = 1.0f - Splash.m_Life / Splash.m_LifeSpan;
-		Graphics()->SetColor(SplashColor.r, SplashColor.g, SplashColor.b, 0.7f * Fade);
-		IGraphics::CQuadItem Droplet(Splash.m_Pos.x, Splash.m_Pos.y, Splash.m_Size, Splash.m_Size);
+		Graphics()->SetColor(SplashColor.r, SplashColor.g, SplashColor.b, 0.7f * Fade * OpacityMul);
+		IGraphics::CQuadItem Droplet(Splash.m_Pos.x, Splash.m_Pos.y, Splash.m_Size * SizeMul, Splash.m_Size * SizeMul);
 		Graphics()->QuadsDraw(&Droplet, 1);
 	}
 	Graphics()->QuadsEnd();
@@ -355,6 +357,8 @@ void CFgfWeather::AmbientDust()
 	const CFxScreenRect View = FxMapScreenToWorld(Graphics(), Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0.0f, 0.0f, GameClient()->m_Camera.m_Zoom);
 	const ColorRGBA Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_TcAmbientDustColor));
 	const int Amount = round_to_int(6.0f * g_Config.m_TcAmbientDustAmount / 100.0f);
+	const float DustSizeMul = g_Config.m_TcAmbientDustSize / 100.0f;
+	const float DustOpacityMul = g_Config.m_TcAmbientDustOpacity / 100.0f;
 
 	for(int i = 0; i < Amount; i++)
 	{
@@ -367,14 +371,14 @@ void CFgfWeather::AmbientDust()
 		p.m_Pos = vec2(random_float(View.m_TopLeft.x, View.m_BottomRight.x), random_float(View.m_TopLeft.y, View.m_BottomRight.y));
 		p.m_Vel = vec2(random_float(-14.0f, 14.0f), random_float(-18.0f, 6.0f));
 		p.m_LifeSpan = LifeSpan;
-		p.m_StartSize = Sparkle ? random_float(8.0f, 16.0f) : random_float(5.0f, 14.0f);
+		p.m_StartSize = (Sparkle ? random_float(8.0f, 16.0f) : random_float(5.0f, 14.0f)) * DustSizeMul;
 		p.m_EndSize = 0.0f;
 		p.m_Rot = random_angle();
 		p.m_Rotspeed = random_float(-0.2f, 0.2f);
 		p.m_Gravity = random_float(-4.0f, 2.0f);
 		p.m_Friction = 1.0f;
 		p.m_UseAlphaFading = true;
-		p.m_StartAlpha = 0.5f;
+		p.m_StartAlpha = 0.5f * DustOpacityMul;
 		p.m_EndAlpha = 0.0f;
 		p.m_Collides = false;
 		p.m_Color = Color;

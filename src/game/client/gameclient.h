@@ -3,6 +3,7 @@
 #ifndef GAME_CLIENT_GAMECLIENT_H
 #define GAME_CLIENT_GAMECLIENT_H
 
+#include "custom_clients.h"
 #include "render.h"
 
 #include <base/color.h>
@@ -75,6 +76,7 @@
 #include "components/tclient/custom_communities.h"
 #include "components/tclient/mod.h"
 #include "components/tclient/cursor_trail.h"
+#include "components/tclient/tile_under_cursor.h"
 #include "components/tclient/moving_tiles.h"
 #include "components/tclient/mumble.h"
 #include "components/tclient/lyrics.h"
@@ -82,6 +84,7 @@
 #include "components/tclient/above_below_player.h"
 #include "components/tclient/pet.h"
 #include "components/tclient/player_indicator.h"
+#include "components/tclient/practice_tags.h"
 #include "components/tclient/rainbow.h"
 #include "components/tclient/swaptimer.h"
 #include "components/tclient/scripting.h"
@@ -99,6 +102,7 @@
 #include "components/tclient/fx/components.h"
 #include "components/tclient/notify_on_move.h"
 #include "components/tclient/afk_aura.h"
+#include "components/tclient/animated_assets.h"
 #include "components/tclient/hover_notification.h"
 #include "components/tooltips.h"
 #include "components/touch_controls.h"
@@ -241,12 +245,13 @@ public:
 
 	CLocalServer m_LocalServer;
 
-	// TClient Components
+	CVcAnimatedAssets m_AnimatedAssets;
 	CSkinProfiles m_SkinProfiles;
 	CStatusBar m_StatusBar;
 	CBindChat m_BindChat;
 	CBindWheel m_BindWheel;
 	CBgDraw m_BgDraw;
+	CPracticeTags m_PracticeTags;
 	CTClient m_TClient;
 	CTrails m_Trails;
 	CHoverNotification m_HoverNotification;
@@ -273,6 +278,7 @@ public:
 	CMovingTiles m_MovingTilesForeground = CMovingTiles{true};
 	CCursorTrail m_CursorTrailBackground = CCursorTrail{false};
 	CCursorTrail m_CursorTrailForeground = CCursorTrail{true};
+	CTileUnderCursor m_TileUnderCursor;
 
 	CWeaponVfx m_WeaponVfx;
 	CFgfWeather m_FgfWeather;
@@ -288,6 +294,7 @@ public:
 	CHookTroll m_HookTroll;
 	CHookRope m_HookRope;
 	CFgfActions m_FgfActions;
+	CFgfMotionBlur m_FgfMotionBlur;
 
 private:
 	std::vector<class CComponent *> m_vpAll;
@@ -550,6 +557,9 @@ public:
 		int m_UseCustomColor;
 		int m_ColorBody;
 		int m_ColorFeet;
+		int m_CustomClient;
+		int m_ColorBodyRaw;
+		int m_ColorFeetRaw;
 
 		char m_aName[MAX_NAME_LENGTH];
 		char m_aClan[MAX_CLAN_LENGTH];
@@ -663,6 +673,8 @@ public:
 
 	CClientData m_aClients[MAX_CLIENTS];
 
+	CCustomClientIcons m_CustomClientIcons;
+
 	class CClientStats
 	{
 		int m_IngameTicks;
@@ -768,6 +780,8 @@ public:
 	const char *DDNetVersionStr() const override;
 	int ClientVersion7() const override;
 
+	const CCustomClientIcons &CustomClientIcons() const { return m_CustomClientIcons; }
+
 	void DoTeamChangeMessage7(const char *pName, int ClientId, int Team, const char *pPrefix = "");
 
 	// actions
@@ -779,6 +793,11 @@ public:
 	bool GotWantedSkin7(bool Dummy);
 	void SendInfo(bool Start);
 	void SendDummyInfo(bool Start) override;
+	void RefreshCustomClients();
+	int m_LastCustomClientsShare = -1;
+	int m_LastCustomClientsDetect = -1;
+	int m_ShareAnnounceTries = 0;
+	int m_ShareAnnounceTick = 0;
 	void SendKill() const;
 	void SendReadyChange7(); // NOLINT(readability-make-member-function-const)
 
@@ -817,6 +836,7 @@ public:
 	bool AntiPingGrenade() const;
 	bool AntiPingWeapons() const;
 	bool AntiPingGunfire() const;
+	bool PredictOwnWeapons() const;
 	bool Predict() const;
 	bool PredictDummy() const;
 
@@ -1062,6 +1082,7 @@ private:
 		bool IsLoaded() const { return m_ImageInfo.m_pData != nullptr; }
 
 		char m_aPath[IO_MAX_PATH_LENGTH];
+		char m_aGifPath[IO_MAX_PATH_LENGTH] = "";
 		bool m_IsDefault;
 		CImageInfo m_ImageInfo;
 		std::optional<CImageInfo> m_FallbackImageInfo;

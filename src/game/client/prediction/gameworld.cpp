@@ -364,6 +364,8 @@ void CGameWorld::CreateExplosion(vec2 Pos, int Owner, int Weapon, bool NoDamage,
 	for(int i = 0; i < Num; i++)
 	{
 		auto *pChar = static_cast<CCharacter *>(apEnts[i]);
+		if(Owner < 0 && pChar->Core()->m_Solo && !(Weapon == WEAPON_SHOTGUN && m_WorldConfig.m_IsDDRace))
+			continue;
 		vec2 Diff = pChar->m_Pos - Pos;
 		vec2 ForceDir(0, 1);
 		float l = length(Diff);

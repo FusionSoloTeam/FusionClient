@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #define GRAPHICS_TYPE_UNSIGNED_BYTE 0x1401
@@ -327,6 +328,7 @@ public:
 	virtual void ClipDisable() = 0;
 
 	virtual void MapScreen(const CScreenRect &ScreenRect) = 0;
+	virtual void SetScreenRotation(float Angle) = 0;
 	void MapScreen(float TopLeftX, float TopLeftY, float BottomRightX, float BottomRightY)
 	{
 		MapScreen(CScreenRect(vec2(TopLeftX, TopLeftY), vec2(BottomRightX, BottomRightY)));
@@ -362,6 +364,8 @@ public:
 	virtual bool IsImageFormatRgba(const char *pContextName, const CImageInfo &Image) = 0;
 
 	virtual void UnloadTexture(CTextureHandle *pIndex) = 0;
+	virtual bool ReloadTexture(CTextureHandle Texture, const CImageInfo &Image, const char *pTexName = nullptr, int Flags = 0) = 0;
+	virtual void SetSpriteTextureRecorder(std::vector<std::pair<CTextureHandle, const struct CDataSprite *>> *pRecorder) = 0;
 	virtual CTextureHandle LoadTextureRaw(const CImageInfo &Image, int Flags, const char *pTexName = nullptr) = 0;
 	virtual CTextureHandle LoadTextureRawMove(CImageInfo &Image, int Flags, const char *pTexName = nullptr) = 0;
 	virtual CTextureHandle LoadTexture(const char *pFilename, int StorageType, int Flags = 0) = 0;
@@ -680,6 +684,7 @@ protected:
 
 public:
 	// TClient
+	virtual bool IsForcedAspect() const { return false; }
 	virtual void SetForcedAspect(bool Force) = 0;
 	virtual void SetFrameBlendingAllowed(bool Allowed) = 0;
 };

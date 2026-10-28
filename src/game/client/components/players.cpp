@@ -494,7 +494,6 @@ void CPlayers::RenderHookCollLine(
 		vLineSegments.emplace_back(LineStartPos, BasePos + QuantizedDirection * HookLength);
 	}
 
-	// TClient: дорисовать луч до конца, даже если он во что-то упёрся
 	if(g_Config.m_TcHookCollOverlay && Local)
 	{
 		const vec2 FullEnd = BasePos + QuantizedDirection * HookLength;
@@ -767,7 +766,7 @@ void CPlayers::RenderPlayer(
 	bool PredictLocalWeapons = false;
 	float AttackTime = (Client()->PrevGameTick(g_Config.m_ClDummy) - Player.m_AttackTick) / (float)Client()->GameTickSpeed() + Client()->GameTickTime(g_Config.m_ClDummy);
 	float LastAttackTime = (Client()->PrevGameTick(g_Config.m_ClDummy) - Player.m_AttackTick) / (float)Client()->GameTickSpeed() + s_LastGameTickTime;
-	if(ClientId >= 0 && GameClient()->m_aClients[ClientId].m_IsPredictedLocal && GameClient()->AntiPingGunfire())
+	if(ClientId >= 0 && GameClient()->m_aClients[ClientId].m_IsPredictedLocal && (GameClient()->AntiPingGunfire() || GameClient()->PredictOwnWeapons()))
 	{
 		PredictLocalWeapons = true;
 		AttackTime = (Client()->PredIntraGameTick(g_Config.m_ClDummy) + (Client()->PredGameTick(g_Config.m_ClDummy) - 1 - Player.m_AttackTick)) / (float)Client()->GameTickSpeed();
@@ -1124,6 +1123,15 @@ void CPlayers::RenderPlayer(
 	float JellyExtraCompression = 0.0f;
 	BuildJellyExtraImpulse(Collision(), Position, JellyPrevVel, Vel, InAir, JellyExtraDeformImpulse, JellyExtraCompression);
 	const JellyTee JellyDeform = rJelly ? rJelly->GetDeform(ClientId, JellyPrevVel, Vel, Direction, InAir, WantOtherDir, Client()->RenderFrameTime(), JellyExtraDeformImpulse, JellyExtraCompression) : JellyTee();
+	JellyTee Deform = JellyDeform;
+	if(rJelly)
+	{
+		const JellyTee BreathDeform = rJelly->GetBreathing(ClientId, Vel, InAir, Client()->GlobalTime());
+		Deform.m_BodyScale *= BreathDeform.m_BodyScale;
+		Deform.m_FeetScale *= BreathDeform.m_FeetScale;
+		Deform.m_BodyAngle += BreathDeform.m_BodyAngle;
+		Deform.m_FeetAngle += BreathDeform.m_FeetAngle;
+	}
 
 	// render the "shadow" tee
 	if(!RenderGhost && (g_Config.m_ClUnpredictedShadow == 3 || (Local && g_Config.m_ClUnpredictedShadow == 1) || (!Local && g_Config.m_ClUnpredictedShadow == 2)))
@@ -1135,10 +1143,19 @@ void CPlayers::RenderPlayer(
 				vec2(GameClient()->m_Snap.m_aCharacters[ClientId].m_Cur.m_X, GameClient()->m_Snap.m_aCharacters[ClientId].m_Cur.m_Y),
 				Client()->IntraGameTick(g_Config.m_ClDummy));
 
-		RenderTools()->RenderTee(&State, &RenderInfo, Player.m_Emote, Direction, ShadowPosition, g_Config.m_ClUnpredictedShadowAlpha / 100.f, JellyDeform.m_BodyScale, JellyDeform.m_FeetScale, JellyDeform.m_BodyAngle, JellyDeform.m_FeetAngle, Local); // render ghost
+		RenderTools()->RenderTee(&State, &RenderInfo, Player.m_Emote, Direction, ShadowPosition, g_Config.m_ClUnpredictedShadowAlpha / 100.f, Deform.m_BodyScale, Deform.m_FeetScale, Deform.m_BodyAngle, Deform.m_FeetAngle, Local);
 	}
 
-	RenderTools()->RenderTee(&State, &RenderInfo, Player.m_Emote, Direction, Position, Alpha, JellyDeform.m_BodyScale, JellyDeform.m_FeetScale, JellyDeform.m_BodyAngle, JellyDeform.m_FeetAngle, Local);
+	RenderTools()->RenderTee(&State, &RenderInfo, Player.m_Emote, Direction, Position, Alpha, Deform.m_BodyScale, Deform.m_FeetScale, Deform.m_BodyAngle, Deform.m_FeetAngle, Local);
+
+	if(g_Config.m_TcShowHitBox && (Local || g_Config.m_TcShowHitBoxOthers) && ClientId >= 0)
+	{
+		Graphics()->TextureClear();
+		Graphics()->QuadsBegin();
+		Graphics()->SetColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_TcShowHitBoxColor, true)));
+		Graphics()->DrawCircle(Position.x, Position.y, 2.0f, 12);
+		Graphics()->QuadsEnd();
+	}
 
 	float TeeAnimScale, TeeBaseSize;
 	CRenderTools::GetRenderTeeAnimScaleAndBaseSize(&RenderInfo, TeeAnimScale, TeeBaseSize);

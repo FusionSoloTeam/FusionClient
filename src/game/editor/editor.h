@@ -308,26 +308,6 @@ public:
 	bool HandleMapDrop(const char *pFilename, int StorageType) override;
 	void LoadIngameMap();
 
-	static constexpr int MAX_MAP_TABS = 8;
-	struct SMapTabInfo
-	{
-		char m_aTempFile[IO_MAX_PATH_LENGTH] = "";
-		char m_aSaveFile[IO_MAX_PATH_LENGTH] = "";
-		bool m_ValidSaveFile = false;
-		bool m_Modified = false;
-		bool m_Used = false;
-		vec2 m_WorldOffset = vec2(0.0f, 0.0f);
-		float m_Zoom = 0.0f;
-	};
-	void RenderMapTabs(CUIRect TabBar);
-	void SyncActiveMapTab();
-	bool SaveActiveMapTab();
-	void ApplyMapTab(int TabIndex);
-	void SwitchMapTab(int TabIndex);
-	void AddMapTab();
-	void CloseMapTab(int TabIndex);
-
-
 	void Render();
 
 	void UpdateBrushPicker();
@@ -799,16 +779,11 @@ private:
 	std::vector<std::unique_ptr<CEditorMap>> m_vpMaps;
 	size_t m_SelectedMap;
 
-	std::vector<SMapTabInfo> m_vMapTabs;
-	int m_ActiveMapTab = 0;
-	int m_MapTabFileCounter = 0;
-
 	CEditorHistory &ActiveHistory();
 
 	std::map<int, CPoint[5]> m_QuadDragOriginalPoints;
 };
 
-// Helpers shared between editor.cpp and CMapView::Render (map_view.cpp)
 bool HasSelectedTileLayer(CEditorMap *pMap);
 vec2 GetShapeCursorWorldPos(CEditor *pEditor, CEditorMap *pMap);
 void RenderShapePreview(CEditor *pEditor, const CUIRect &View, CEditorMap *pMap);

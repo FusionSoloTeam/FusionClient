@@ -253,9 +253,7 @@ public:
 	virtual bool GetGlyphMetrics(int FontSize, int Chr, SGlyphMetrics *pMetrics) = 0;
 	virtual int GetFontTextureSize() = 0;
 	virtual IGraphics::CTextureHandle GetFontTexture(int Index) = 0;
-	// Raw single channel coverage of the glyph atlas, used by custom 3D text rendering
 	virtual const uint8_t *GetFontTextureData(int Index, int *pDimension) = 0;
-	// Incremented whenever a glyph is added to the atlas
 	virtual unsigned GetFontTextureGeneration() = 0;
 
 	// old foolish interface

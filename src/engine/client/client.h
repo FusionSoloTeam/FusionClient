@@ -270,7 +270,6 @@ class CClient : public IClient, public CDemoPlayer::IListener
 	int MaxLatencyTicks() const;
 	int PredictionMargin() const;
 
-	// TClient: prediction margin adjustment on lag spikes
 	int m_PredictionMarginAdjust;
 	int64_t m_PredictionMarginAdjustLastTime;
 	int64_t m_PredictionSpikeLockout;
@@ -278,7 +277,6 @@ class CClient : public IClient, public CDemoPlayer::IListener
 	int64_t m_PredictionSpikeTimes[20];
 	void InsertPredictionSpike(int Spike, int64_t Time);
 
-	// TClient: smooth the prediction margin so freeze/unfreeze transitions are gradual
 	float m_PredictionMarginSmoothed = g_Config.m_ClPredictionMargin;
 	int64_t m_PredictionMarginSmoothLastTime = 0;
 	int PredictionMarginTarget() const;

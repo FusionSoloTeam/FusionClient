@@ -1,4 +1,4 @@
-﻿#include "tclient.h"
+#include "tclient.h"
 
 #include <base/mem.h>
 
@@ -29,7 +29,10 @@
 #include <game/client/gameclient.h>
 #include <game/client/render.h>
 #include <game/client/ui.h>
+#include <game/client/ui_listbox.h>
+#include <game/collision.h>
 #include <game/localization.h>
+#include <game/mapitems.h>
 #include <game/version.h>
 
 #if defined(CONF_FAMILY_WINDOWS)
@@ -43,7 +46,7 @@
 #include <tlhelp32.h>
 #endif
 
-static constexpr const char *TCLIENT_INFO_URL = "https://api.github.com/repos/Kyouki-Arx/VClient/releases/latest";
+static constexpr const char *TCLIENT_INFO_URL = "https://api.github.com/repos/FusionSoloTeam/FusionClient/releases/latest";
 
 CTClient::CTClient()
 {
@@ -753,6 +756,7 @@ void CTClient::OnConsoleInit()
 {
 	Console()->Register("calc", "r[expression]", CFGFLAG_CLIENT, ConCalc, this, "Evaluate an expression");
 	Console()->Register("airrescue", "", CFGFLAG_CLIENT, ConAirRescue, this, "Rescue to a nearby air tile");
+	Console()->Register("teleport_info", "", CFGFLAG_CLIENT, ConTeleportInfo, this, "Show teleport tiles and their pairs");
 
 	Console()->Register("tc_random_player", "s[type]", CFGFLAG_CLIENT, ConRandomTee, this, "Randomize player color (0 = all, 1 = body, 2 = feet, 3 = skin, 4 = flag) example: 0011 = randomize skin and flag [number is position]");
 	Console()->Chain("tc_random_player", ConchainRandomColor, this);
@@ -928,6 +932,179 @@ bool CTClient::ServerCommandExists(const char *pCommand)
 	return false;
 }
 
+bool CTClient::TeleportInfoActive() const
+{
+	return Ui()->IsPopupOpen(&m_TeleportInfoPopupId);
+}
+
+void CTClient::ConTeleportInfo(IConsole::IResult *pResult, void *pUserData)
+{
+	CTClient *pThis = static_cast<CTClient *>(pUserData);
+	if(!pThis->GameClient()->m_Snap.m_SpecInfo.m_Active)
+	{
+		pThis->GameClient()->Echo("You must be spectating to view teleport info");
+		return;
+	}
+
+	const CCollision *pCollision = pThis->GameClient()->Collision();
+	if(pCollision == nullptr || pCollision->TeleLayer() == nullptr)
+	{
+		pThis->GameClient()->Echo("No teleport layer found on this map");
+		return;
+	}
+
+	if(pThis->TeleportInfoActive())
+		pThis->Ui()->ClosePopupMenu(&pThis->m_TeleportInfoPopupId);
+
+	pThis->CollectTeleportData();
+	constexpr float PopupWidth = 300.0f;
+	constexpr float PopupHeight = 360.0f;
+	const CUIRect *pScreen = pThis->Ui()->Screen();
+	pThis->Ui()->DoPopupMenu(&pThis->m_TeleportInfoPopupId,
+		pScreen->w / 2.0f - PopupWidth / 2.0f,
+		pScreen->h / 2.0f - PopupHeight / 2.0f,
+		PopupWidth, PopupHeight, pThis, PopupTeleportInfo);
+}
+
+void CTClient::CollectTeleportData()
+{
+	m_vTeleportEntries.clear();
+
+	const CCollision *pCollision = GameClient()->Collision();
+	if(pCollision == nullptr || pCollision->TeleLayer() == nullptr)
+		return;
+
+	std::vector<std::vector<ivec2>> aFromTiles(256);
+	std::vector<std::vector<ivec2>> aToTiles(256);
+	std::vector<std::vector<ivec2>> aCheckpointTiles(256);
+	std::vector<std::vector<ivec2>> aCtoTiles(256);
+
+	const CTeleTile *pTeleLayer = pCollision->TeleLayer();
+	const int Width = pCollision->GetWidth();
+	const int Height = pCollision->GetHeight();
+	for(int y = 0; y < Height; ++y)
+	{
+		for(int x = 0; x < Width; ++x)
+		{
+			const CTeleTile &Tile = pTeleLayer[y * Width + x];
+			const int Number = Tile.m_Number;
+			if(Number <= 0)
+				continue;
+			if(Tile.m_Type == TILE_TELEIN || Tile.m_Type == TILE_TELEINEVIL)
+				aFromTiles[Number].emplace_back(x, y);
+			else if(Tile.m_Type == TILE_TELEOUT)
+				aToTiles[Number].emplace_back(x, y);
+			else if(Tile.m_Type == TILE_TELECHECK)
+				aCheckpointTiles[Number].emplace_back(x, y);
+			else if(Tile.m_Type == TILE_TELECHECKOUT)
+				aCtoTiles[Number].emplace_back(x, y);
+		}
+	}
+
+	auto AddEntries = [&](const char *pCategory, const char *pTypeA, const char *pTypeB, const std::vector<std::vector<ivec2>> &vA, const std::vector<std::vector<ivec2>> &vB) {
+		for(int Number = 1; Number < 256; ++Number)
+		{
+			const std::vector<ivec2> &vTilesA = vA[Number];
+			const std::vector<ivec2> &vTilesB = vB[Number];
+			if(vTilesA.empty() && vTilesB.empty())
+				continue;
+
+			STeleportEntry Entry;
+			Entry.m_Unpaired = vTilesA.empty() || vTilesB.empty();
+			Entry.m_vPositions = vTilesA;
+			Entry.m_vPositions.insert(Entry.m_vPositions.end(), vTilesB.begin(), vTilesB.end());
+
+			if(vTilesA.empty())
+				str_format(Entry.m_aText, sizeof(Entry.m_aText), "%s %d: %s without %s", pCategory, Number, pTypeB, pTypeA);
+			else if(vTilesB.empty())
+				str_format(Entry.m_aText, sizeof(Entry.m_aText), "%s %d: %s without %s", pCategory, Number, pTypeA, pTypeB);
+			else if(vTilesA.size() > 1 || vTilesB.size() > 1)
+				str_format(Entry.m_aText, sizeof(Entry.m_aText), "%s %d: %s x%d - %s x%d", pCategory, Number, pTypeA, (int)vTilesA.size(), pTypeB, (int)vTilesB.size());
+			else
+				str_format(Entry.m_aText, sizeof(Entry.m_aText), "%s %d: %s - %s", pCategory, Number, pTypeA, pTypeB);
+			m_vTeleportEntries.push_back(Entry);
+		}
+	};
+
+	AddEntries("Tele", "From", "To", aFromTiles, aToTiles);
+	AddEntries("Checkpoint", "Checkpoint", "CTO", aCheckpointTiles, aCtoTiles);
+}
+
+CUi::EPopupMenuFunctionResult CTClient::PopupTeleportInfo(void *pContext, CUIRect View, bool Active)
+{
+	CTClient *pThis = static_cast<CTClient *>(pContext);
+
+	CUIRect Title, List, CloseButton;
+	View.HSplitTop(20.0f, &Title, &View);
+	View.HSplitBottom(3.0f, &View, nullptr);
+	View.HSplitBottom(14.0f, &View, &CloseButton);
+	View.HMargin(4.0f, &List);
+	List.VMargin(4.0f, &List);
+
+	Title.VMargin(5.0f, &Title);
+	pThis->Ui()->DoLabel(&Title, "Teleports", 12.0f, TEXTALIGN_ML);
+
+	if(pThis->m_vTeleportEntries.empty())
+	{
+		pThis->Ui()->DoLabel(&List, "No teleports found.", 10.0f, TEXTALIGN_ML);
+	}
+	else
+	{
+		static CListBox s_ListBox;
+		s_ListBox.SetActive(Active);
+		s_ListBox.DoStart(14.0f, (int)pThis->m_vTeleportEntries.size(), 1, 16, -1, &List);
+
+		for(size_t i = 0; i < pThis->m_vTeleportEntries.size(); ++i)
+		{
+			const CListboxItem Item = s_ListBox.DoNextItem(&pThis->m_vTeleportEntries[i], false);
+			if(!Item.m_Visible)
+				continue;
+
+			CUIRect Label;
+			Item.m_Rect.VMargin(5.0f, &Label);
+
+			SLabelProperties Props;
+			Props.m_MaxWidth = Label.w;
+			Props.m_EllipsisAtEnd = true;
+			if(pThis->m_vTeleportEntries[i].m_Unpaired)
+				pThis->TextRender()->TextColor(1.0f, 0.35f, 0.35f, 1.0f);
+			else
+				pThis->TextRender()->TextColor(pThis->TextRender()->DefaultTextColor());
+			pThis->Ui()->DoLabel(&Label, pThis->m_vTeleportEntries[i].m_aText, 10.0f, TEXTALIGN_ML, Props);
+			pThis->TextRender()->TextColor(pThis->TextRender()->DefaultTextColor());
+		}
+
+		const int ClickedIndex = s_ListBox.DoEnd();
+		if(s_ListBox.WasItemSelected() && ClickedIndex >= 0 && ClickedIndex < (int)pThis->m_vTeleportEntries.size())
+		{
+			const std::vector<ivec2> &vPositions = pThis->m_vTeleportEntries[ClickedIndex].m_vPositions;
+			if(!vPositions.empty())
+				pThis->GameClient()->m_Camera.SetView(vPositions[rand() % vPositions.size()]);
+			return CUi::POPUP_CLOSE_CURRENT;
+		}
+	}
+
+	static CButtonContainer s_CloseButton;
+	if(pThis->GameClient()->m_Menus.DoButton_Menu(&s_CloseButton, "Close", 0, &CloseButton))
+		return CUi::POPUP_CLOSE_CURRENT;
+
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+void CTClient::RenderTeleportInfo()
+{
+	if(!TeleportInfoActive())
+		return;
+
+	Ui()->MapScreen();
+	Ui()->StartCheck();
+	Ui()->Update();
+	Ui()->RenderPopupMenus();
+	RenderTools()->RenderCursor(Ui()->MousePos(), 24.0f);
+	Ui()->FinishCheck();
+	Ui()->ClearHotkeys();
+}
+
 void CTClient::OnRender()
 {
 	NotifyOnMove();
@@ -1065,7 +1242,7 @@ void CTClient::FetchTClientInfo()
 	m_pTClientInfoTask = HttpGet(aUrl);
 	m_pTClientInfoTask->Timeout(CTimeout{10000, 0, 500, 10});
 	m_pTClientInfoTask->IpResolve(IPRESOLVE::V4);
-	m_pTClientInfoTask->HeaderString("User-Agent", VCLIENT_NAME "/" VCLIENT_VERSION);
+	m_pTClientInfoTask->HeaderString("User-Agent", FUSION_NAME "/" FUSION_VERSION);
 	m_pTClientInfoTask->HeaderString("Accept", "application/vnd.github+json");
 	Http()->Run(m_pTClientInfoTask);
 }
@@ -1107,14 +1284,13 @@ void CTClient::FinishTClientInfo()
 	{
 		char aNewVersionStr[64];
 		str_copy(aNewVersionStr, CurrentVersion);
-		// strip a leading "v" from tags such as "v1.1"
 		const char *pNewVersion = aNewVersionStr;
 		while(*pNewVersion == 'v' || *pNewVersion == 'V' || *pNewVersion == ' ')
 			pNewVersion++;
 		char aNewVersion[64];
 		str_copy(aNewVersion, pNewVersion, sizeof(aNewVersion));
 		char aCurVersionStr[64];
-		str_copy(aCurVersionStr, VCLIENT_VERSION);
+		str_copy(aCurVersionStr, FUSION_VERSION);
 		if(ToTCVersion(aNewVersion) > ToTCVersion(aCurVersionStr))
 		{
 			str_copy(m_aVersionStr, aNewVersion, sizeof(m_aVersionStr));

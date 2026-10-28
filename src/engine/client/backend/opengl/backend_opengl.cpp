@@ -1284,24 +1284,49 @@ void CCommandProcessorFragment_OpenGL2::SetState(const CCommandBuffer::SState &S
 		}
 	}
 
-	if(pProgram->m_LastScreenTL != State.m_ScreenTL || pProgram->m_LastScreenBR != State.m_ScreenBR)
+	if(pProgram->m_LastScreenTL != State.m_ScreenTL || pProgram->m_LastScreenBR != State.m_ScreenBR || pProgram->m_LastScreenRotation != State.m_ScreenRotation)
 	{
 		pProgram->m_LastScreenTL = State.m_ScreenTL;
 		pProgram->m_LastScreenBR = State.m_ScreenBR;
+		pProgram->m_LastScreenRotation = State.m_ScreenRotation;
 
 		// screen mapping
 		// orthographic projection matrix
 		// the z coordinate is the same for every vertex, so just ignore the z coordinate and set it in the shaders
-		float m[2 * 4] = {
-			2.f / (State.m_ScreenBR.x - State.m_ScreenTL.x),
-			0,
-			0,
-			-((State.m_ScreenBR.x + State.m_ScreenTL.x) / (State.m_ScreenBR.x - State.m_ScreenTL.x)),
-			0,
-			(2.f / (State.m_ScreenTL.y - State.m_ScreenBR.y)),
-			0,
-			-((State.m_ScreenTL.y + State.m_ScreenBR.y) / (State.m_ScreenTL.y - State.m_ScreenBR.y)),
-		};
+		const float ScaleX = 2.f / (State.m_ScreenBR.x - State.m_ScreenTL.x);
+		const float ScaleY = (2.f / (State.m_ScreenTL.y - State.m_ScreenBR.y));
+		const float TransX = -((State.m_ScreenBR.x + State.m_ScreenTL.x) / (State.m_ScreenBR.x - State.m_ScreenTL.x));
+		const float TransY = -((State.m_ScreenTL.y + State.m_ScreenBR.y) / (State.m_ScreenTL.y - State.m_ScreenBR.y));
+
+		float m[2 * 4];
+		if(State.m_ScreenRotation == 0.0f)
+		{
+			m[0] = ScaleX;
+			m[1] = 0;
+			m[2] = 0;
+			m[3] = TransX;
+			m[4] = 0;
+			m[5] = ScaleY;
+			m[6] = 0;
+			m[7] = TransY;
+		}
+		else
+		{
+			const float CosR = cosf(State.m_ScreenRotation);
+			const float SinR = sinf(State.m_ScreenRotation);
+			const float CenterX = (State.m_ScreenTL.x + State.m_ScreenBR.x) * 0.5f;
+			const float CenterY = (State.m_ScreenTL.y + State.m_ScreenBR.y) * 0.5f;
+			const float ShiftX = CenterX - (CosR * CenterX - SinR * CenterY);
+			const float ShiftY = CenterY - (SinR * CenterX + CosR * CenterY);
+			m[0] = ScaleX * CosR;
+			m[1] = -ScaleX * SinR;
+			m[2] = 0;
+			m[3] = TransX + ScaleX * ShiftX;
+			m[4] = ScaleY * SinR;
+			m[5] = ScaleY * CosR;
+			m[6] = 0;
+			m[7] = TransY + ScaleY * ShiftY;
+		}
 
 		// transpose bcs of column-major order of opengl
 		glUniformMatrix4x2fv(pProgram->m_LocPos, 1, true, (float *)&m);

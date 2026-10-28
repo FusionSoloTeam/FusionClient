@@ -831,13 +831,16 @@ void CRenderMap::RenderSpeedupOverlay(CSpeedupTile *pSpeedup, int w, int h, floa
 				if(IsValidSpeedupTile(Type))
 				{
 					// draw arrow
-					Graphics()->TextureSet(g_pData->m_aImages[IMAGE_SPEEDUP_ARROW].m_Id);
-					Graphics()->QuadsBegin();
-					Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
-					Graphics()->SelectSprite(SPRITE_SPEEDUP_ARROW);
-					Graphics()->QuadsSetRotation(pSpeedup[c].m_Angle * (pi / 180.0f));
-					Graphics()->DrawSprite(x * Scale + 16, y * Scale + 16, 35.0f);
-					Graphics()->QuadsEnd();
+					if(!(OverlayRenderFlag & OVERLAYRENDERFLAG_NO_SPRITE))
+					{
+						Graphics()->TextureSet(g_pData->m_aImages[IMAGE_SPEEDUP_ARROW].m_Id);
+						Graphics()->QuadsBegin();
+						Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
+						Graphics()->SelectSprite(SPRITE_SPEEDUP_ARROW);
+						Graphics()->QuadsSetRotation(pSpeedup[c].m_Angle * (pi / 180.0f));
+						Graphics()->DrawSprite(x * Scale + 16, y * Scale + 16, 35.0f);
+						Graphics()->QuadsEnd();
+					}
 
 					// draw force and max speed
 					if(OverlayRenderFlag & OVERLAYRENDERFLAG_TEXT)

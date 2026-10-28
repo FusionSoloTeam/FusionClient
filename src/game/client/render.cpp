@@ -16,10 +16,22 @@
 #include <generated/protocol.h>
 #include <generated/protocol7.h>
 
+#include <game/client/components/tclient/skin_gradient.h>
 #include <game/client/gameclient.h>
 #include <game/mapitems.h>
 
 #include <cmath>
+
+static void VcSkinGradientSpriteSubset(int Id, float *pU0, float *pV0, float *pU1, float *pV1)
+{
+	const CDataSprite *pSprite = &client_data7::g_pData->m_aSprites[Id];
+	const int GridX = pSprite->m_pSet->m_Gridx;
+	const int GridY = pSprite->m_pSet->m_Gridy;
+	*pU0 = pSprite->m_X / (float)GridX + 0.5f / (float)(GridX * 32);
+	*pU1 = (pSprite->m_X + pSprite->m_W) / (float)GridX - 0.5f / (float)(GridX * 32);
+	*pV0 = pSprite->m_Y / (float)GridY + 0.5f / (float)(GridY * 32);
+	*pV1 = (pSprite->m_Y + pSprite->m_H) / (float)GridY - 0.5f / (float)(GridY * 32);
+}
 
 CSkinDescriptor::CSkinDescriptor()
 {
@@ -304,6 +316,8 @@ void CRenderTools::RenderTee7(const CAnimState *pAnim, const CTeeRenderInfo *pIn
 				BaseSize *= TinyBodyScale * SizeMultiplier;
 				AnimScale *= TinyBodyScale * SizeMultiplier;
 			}
+			const vec2 TeeAnchor = Position + vec2(pAnim->GetBody()->m_X, pAnim->GetBody()->m_Y) * AnimScale;
+			const float TeeAnchorSize = BaseSize * BodyScale.x;
 			if(Filling == 1)
 			{
 				vec2 BodyPos = Position + vec2(pAnim->GetBody()->m_X, pAnim->GetBody()->m_Y) * AnimScale;
@@ -312,7 +326,7 @@ void CRenderTools::RenderTee7(const CAnimState *pAnim, const CTeeRenderInfo *pIn
 
 				if(IsBot && !OutLine)
 				{
-					IGraphics::CQuadItem BotItem(BodyPos.x + (2.f / 3.f) * AnimScale, BodyPos.y + (-16 + 2.f / 3.f) * AnimScale, BaseSize * BodyScale.x, BaseSize * BodyScale.y); // x+0.66, y+0.66 to correct some rendering bug
+					IGraphics::CQuadItem BotItem(BodyPos.x + (2.f / 3.f) * AnimScale, BodyPos.y + (-16 + 2.f / 3.f) * AnimScale, BaseSize * BodyScale.x, BaseSize * BodyScale.y);
 
 					// draw bot visuals (background)
 					Graphics()->TextureSet(pInfo->m_aSixup[g_Config.m_ClDummy].m_BotTexture);
@@ -369,6 +383,19 @@ void CRenderTools::RenderTee7(const CAnimState *pAnim, const CTeeRenderInfo *pIn
 				Item = BodyItem;
 				Graphics()->QuadsDraw(&Item, 1);
 				Graphics()->QuadsEnd();
+
+				if(!OutLine && VcSkinGradient::Enabled(IsLocal))
+				{
+					float GradientU0, GradientV0, GradientU1, GradientV1;
+					VcSkinGradientSpriteSubset(client_data7::SPRITE_TEE_BODY, &GradientU0, &GradientV0, &GradientU1, &GradientV1);
+					VcSkinGradient::RenderTeeOverlay(Graphics(),
+						BodyTexture,
+						vec2(BodyItem.m_X + BodyItem.m_Width * 0.5f, BodyItem.m_Y + BodyItem.m_Height * 0.5f),
+						vec2(BodyItem.m_Width, BodyItem.m_Height),
+						TeeAnchor, TeeAnchorSize,
+						pAnim->GetBody()->m_Angle * pi * 2 + BodyAngle,
+						Alpha, GradientU0, GradientV0, GradientU1, GradientV1);
+				}
 
 				// draw marking
 				const IGraphics::CTextureHandle &MarkingTexture = pInfo->m_aSixup[g_Config.m_ClDummy].PartTexture(protocol7::SKINPART_MARKING);
@@ -515,6 +542,19 @@ void CRenderTools::RenderTee7(const CAnimState *pAnim, const CTeeRenderInfo *pIn
 			IGraphics::CQuadItem QuadItem(Position.x + pFoot->m_X * AnimScale, Position.y + pFoot->m_Y * AnimScale, w, h);
 			Graphics()->QuadsDraw(&QuadItem, 1);
 			Graphics()->QuadsEnd();
+
+			if(!OutLine && VcSkinGradient::Enabled(IsLocal) && g_Config.m_FcSkinGradientFeet)
+			{
+				float GradientU0, GradientV0, GradientU1, GradientV1;
+				VcSkinGradientSpriteSubset(client_data7::SPRITE_TEE_FOOT, &GradientU0, &GradientV0, &GradientU1, &GradientV1);
+				VcSkinGradient::RenderTeeOverlay(Graphics(),
+					pInfo->m_aSixup[g_Config.m_ClDummy].PartTexture(protocol7::SKINPART_FEET),
+					vec2(QuadItem.m_X + QuadItem.m_Width * 0.5f, QuadItem.m_Y + QuadItem.m_Height * 0.5f),
+					vec2(QuadItem.m_Width, QuadItem.m_Height),
+					TeeAnchor, TeeAnchorSize,
+					pFoot->m_Angle * pi * 2 + FeetAngle,
+					Alpha, GradientU0, GradientV0, GradientU1, GradientV1, false);
+			}
 		}
 	}
 }
@@ -541,6 +581,10 @@ void CRenderTools::RenderTee6(const CAnimState *pAnim, const CTeeRenderInfo *pIn
 		{
 			float AnimScale, BaseSize;
 			GetRenderTeeAnimScaleAndBaseSize(pInfo, AnimScale, BaseSize);
+			const vec2 TeeAnchor = Position + vec2(pAnim->GetBody()->m_X, pAnim->GetBody()->m_Y) * AnimScale;
+			float TeeBodyScale;
+			GetRenderTeeBodyScale(BaseSize, TeeBodyScale);
+			const float TeeAnchorSize = 64.0f * TeeBodyScale * BodyScale.x;
 
 			if(TinyTee)
 			{
@@ -559,6 +603,13 @@ void CRenderTools::RenderTee6(const CAnimState *pAnim, const CTeeRenderInfo *pIn
 				GetRenderTeeBodyScale(BaseSize, RenderBodyScale);
 				Graphics()->TextureSet(OutLine == 1 ? pSkinTextures->m_BodyOutline : pSkinTextures->m_Body);
 				Graphics()->RenderQuadContainerAsSprite(m_TeeQuadContainerIndex, OutLine, BodyPos.x, BodyPos.y, RenderBodyScale * BodyScale.x, RenderBodyScale * BodyScale.y);
+
+				if(OutLine == 0 && VcSkinGradient::Enabled(IsLocal))
+				{
+					VcSkinGradient::RenderTeeOverlayQuad(Graphics(), pSkinTextures->m_Body, BodyPos, vec2(32.0f, 32.0f), vec2(RenderBodyScale * BodyScale.x, RenderBodyScale * BodyScale.y), TeeAnchor, TeeAnchorSize, pAnim->GetBody()->m_Angle * pi * 2 + BodyAngle, Alpha, 0.0f, 0.0f, 1.0f, 1.0f);
+					Graphics()->QuadsSetRotation(pAnim->GetBody()->m_Angle * pi * 2 + BodyAngle);
+					Graphics()->SetColor(pInfo->m_ColorBody.r, pInfo->m_ColorBody.g, pInfo->m_ColorBody.b, Alpha);
+				}
 
 				// draw eyes
 				if(Pass == 1)
@@ -639,6 +690,7 @@ void CRenderTools::RenderTee6(const CAnimState *pAnim, const CTeeRenderInfo *pIn
 
 			Graphics()->SetColor(pInfo->m_ColorFeet.r * ColorScale, pInfo->m_ColorFeet.g * ColorScale, pInfo->m_ColorFeet.b * ColorScale, Alpha);
 
+			IGraphics::CTextureHandle FeetTexture;
 			if(g_Config.m_TcWhiteFeet && pInfo->m_CustomColoredSkin)
 			{
 				CTeeRenderInfo WhiteFeetInfo;
@@ -646,14 +698,21 @@ void CRenderTools::RenderTee6(const CAnimState *pAnim, const CTeeRenderInfo *pIn
 				WhiteFeetInfo.m_OriginalRenderSkin = pSkin->m_OriginalSkin;
 				WhiteFeetInfo.m_ColorFeet = ColorRGBA(1, 1, 1);
 				const CSkin::CSkinTextures *pWhiteFeetTextures = &WhiteFeetInfo.m_OriginalRenderSkin;
-				Graphics()->TextureSet(OutLine == 1 ? pWhiteFeetTextures->m_FeetOutline : pWhiteFeetTextures->m_Feet);
+				FeetTexture = OutLine == 1 ? pWhiteFeetTextures->m_FeetOutline : pWhiteFeetTextures->m_Feet;
 			}
 			else
 			{
-				Graphics()->TextureSet(OutLine == 1 ? pSkinTextures->m_FeetOutline : pSkinTextures->m_Feet);
+				FeetTexture = OutLine == 1 ? pSkinTextures->m_FeetOutline : pSkinTextures->m_Feet;
 			}
+			Graphics()->TextureSet(FeetTexture);
 
 			Graphics()->RenderQuadContainerAsSprite(m_TeeQuadContainerIndex, QuadOffset, Position.x + pFoot->m_X * AnimScale, Position.y + pFoot->m_Y * AnimScale, w / 64.f, h / 32.f);
+
+			if(OutLine == 0 && VcSkinGradient::Enabled(IsLocal) && g_Config.m_FcSkinGradientFeet)
+			{
+				const bool MirroredFeet = QuadOffset >= 9;
+				VcSkinGradient::RenderTeeOverlayQuad(Graphics(), FeetTexture, vec2(Position.x + pFoot->m_X * AnimScale, Position.y + pFoot->m_Y * AnimScale), vec2(32.0f, 16.0f), vec2(w / 64.0f, h / 32.0f), TeeAnchor, TeeAnchorSize, pFoot->m_Angle * pi * 2 + FeetAngle, Alpha, MirroredFeet ? 1.0f : 0.0f, 0.0f, MirroredFeet ? 0.0f : 1.0f, 1.0f, false);
+			}
 		}
 	}
 }

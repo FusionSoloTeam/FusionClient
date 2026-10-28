@@ -2311,7 +2311,7 @@ void CMenus::OnShutdown()
 
 bool CMenus::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
 {
-	if(!m_MenuActive)
+	if(!m_MenuActive && !GameClient()->m_TClient.TeleportInfoActive())
 		return false;
 
 	Ui()->ConvertMouseMove(&x, &y, CursorType);
@@ -2323,7 +2323,7 @@ bool CMenus::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
 bool CMenus::OnInput(const IInput::CEvent &Event)
 {
 	// Escape key is always handled to activate/deactivate menu
-	if((Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_ESCAPE) || IsActive())
+	if((Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_ESCAPE) || IsActive() || GameClient()->m_TClient.TeleportInfoActive())
 	{
 		Ui()->OnInput(Event);
 		return true;
@@ -2389,6 +2389,12 @@ void CMenus::OnRender()
 		Client()->Disconnect();
 		SetActive(true);
 		PopupMessage(Localize("Disconnected"), Localize("The server is running a non-standard tuning on a pure game type."), Localize("Ok"));
+	}
+
+	if(!IsActive() && GameClient()->m_TClient.TeleportInfoActive())
+	{
+		GameClient()->m_TClient.RenderTeleportInfo();
+		return;
 	}
 
 	if(!IsActive())

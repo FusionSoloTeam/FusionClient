@@ -59,6 +59,7 @@ public:
 		m_LocPos(-1), m_LocTextureSampler(-1), m_LastTextureSampler(-1), m_LastIsTextured(-1)
 	{
 		m_LastScreenTL = m_LastScreenBR = vec2(-1, -1);
+		m_LastScreenRotation = -1000.0f;
 	}
 
 	int m_LocPos;
@@ -68,6 +69,7 @@ public:
 	int m_LastIsTextured;
 	vec2 m_LastScreenTL;
 	vec2 m_LastScreenBR;
+	float m_LastScreenRotation;
 };
 
 class CGLSLTextProgram : public CGLSLTWProgram

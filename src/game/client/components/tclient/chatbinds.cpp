@@ -231,7 +231,6 @@ void CChatBinds::TrackerClientIdRemove(int ClientId)
 	}
 }
 
-// Player Inspector
 void CChatBinds::ConFindPlayer(IConsole::IResult *pResult, void *pUserData)
 {
 	CChatBinds *pThis = static_cast<CChatBinds *>(pUserData);
@@ -333,7 +332,6 @@ void CChatBinds::ConBackupPlayerProfile(IConsole::IResult *pResult, void *pUserD
 	}
 }
 
-// Tracker
 void CChatBinds::ConTrackerAdd(IConsole::IResult *pResult, void *pUserData)
 {
 	CChatBinds *pThis = static_cast<CChatBinds *>(pUserData);
@@ -392,7 +390,6 @@ void CChatBinds::ConTrackerReset(IConsole::IResult *pResult, void *pUserData)
 	pThis->m_vPlayersInTracker.clear();
 }
 
-// Map Search
 void CChatBinds::ConGotoTeleCursor(IConsole::IResult *pResult, void *pUserData)
 {
 	CChatBinds *pSelf = static_cast<CChatBinds *>(pUserData);

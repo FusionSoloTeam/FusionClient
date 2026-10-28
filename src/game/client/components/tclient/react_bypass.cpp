@@ -91,7 +91,6 @@ void CReactBypass::ReactToRename(int ClientId, const char *pOld, const char *pNe
 	if(pOld[0] == '\0' || pNew[0] == '\0')
 		return;
 
-	// "vibecode" ahhhh
 	if(IsMuteName(pOld))
 	{
 		AddMuteName(pNew);

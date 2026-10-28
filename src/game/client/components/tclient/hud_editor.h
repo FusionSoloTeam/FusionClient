@@ -21,10 +21,6 @@ public:
 	bool IsActive() const { return m_Active; }
 
 private:
-	// Headroom above the modules currently wired (Score, Movement Info, Dummy Actions,
-	// Local Time, Spectator Count, Frozen HUD, Chat, Votes, Finish Prediction, Music
-	// Player, Keystrokes, Voice) so new modules can be added to CollectModuleVisuals
-	// without bumping this constant.
 	static constexpr int MAX_MODULE_VISUALS = 24;
 
 	struct SModuleVisual
@@ -39,9 +35,6 @@ private:
 		bool m_IsFallbackPreview = false;
 	};
 
-	// One module's in-flight "reset position"/"reset scale"/"reset all" animation - see
-	// RESET_KIND_* in hud_editor.cpp. Multiple can run at once (e.g. the top-left
-	// "Reset All" button animates every editable module simultaneously).
 	struct SResetAnim
 	{
 		HudLayout::EModule m_Module = HudLayout::MODULE_COUNT;
@@ -64,7 +57,6 @@ private:
 	HudLayout::EModule m_HoveredModule = HudLayout::MODULE_COUNT;
 	HudLayout::EModule m_SelectedModule = HudLayout::MODULE_COUNT;
 	HudLayout::EModule m_ResizingModule = HudLayout::MODULE_COUNT;
-	// -1 = none, else 0=TL, 1=TR, 2=BL, 3=BR; see the RESIZE_CORNER_* constants in hud_editor.cpp.
 	int m_ResizeCorner = -1;
 	CUIRect m_ResizeAnchorRect{};
 	int m_ResizeStartScale = 100;
@@ -77,8 +69,6 @@ private:
 	bool m_PopupClosing = false;
 	float m_PopupClosePhase = 0.0f;
 	CUIRect m_LastPopupOuterRect{};
-	// Grabbing a module manually cancels its own entry (see CancelResetAnimation() in
-	// OnRender()); an empty array just means nothing is mid-reset right now.
 	SResetAnim m_aResetAnims[MAX_MODULE_VISUALS];
 	int m_ResetAnimCount = 0;
 	CButtonContainer m_ResetAllButton;

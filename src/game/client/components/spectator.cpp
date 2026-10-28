@@ -10,6 +10,7 @@
 #include <engine/textrender.h>
 
 #include <generated/protocol.h>
+#include <game/client/custom_clients.h>
 
 #include <game/client/animstate.h>
 #include <game/client/gameclient.h>
@@ -538,6 +539,21 @@ void CSpectator::OnRender()
 			char aClientId[16];
 			GameClient()->FormatClientId(GameClient()->m_Snap.m_apInfoByDDTeamName[i]->m_ClientId, aClientId, EClientIdFormat::INDENT_AUTO);
 			TextRender()->TextEx(&NameCursor, aClientId);
+		}
+
+		const int SpectateClientId = GameClient()->m_Snap.m_apInfoByDDTeamName[i]->m_ClientId;
+		const int SpectateCustomClient = GameClient()->m_aClients[SpectateClientId].m_CustomClient;
+		if(g_Config.m_FcCustomClients && g_Config.m_FcCustomClientsScoreboard &&
+			SpectateCustomClient != CUSTOM_CLIENT_NONE &&
+			(g_Config.m_FcCustomClientsOwn || SpectateClientId != GameClient()->m_Snap.m_LocalClientId))
+		{
+			const IGraphics::CTextureHandle Icon = GameClient()->CustomClientIcons().Texture(SpectateCustomClient);
+			if(Icon.IsValid())
+			{
+				const float IconSize = std::min(CUSTOM_CLIENT_SCOREBOARD_ICON_SIZE * NameCursor.m_FontSize / CUSTOM_CLIENT_SCOREBOARD_FONT_SIZE, LineHeight * 0.9f);
+				CustomClientRenderIcon(Graphics(), Icon, vec2(NameCursor.m_X, NameCursor.m_Y + (NameCursor.m_FontSize - IconSize) / 2.0f), IconSize);
+				NameCursor.m_X += CustomClientIconWidth(IconSize);
+			}
 		}
 
 		// TClient

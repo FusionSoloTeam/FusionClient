@@ -217,11 +217,30 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 	MainView.HSplitTop(20.0f, &Button, &MainView);
 	if(DoButton_CheckBox(&g_Config.m_TcMotionBlur, Localize("Motion Blur"), g_Config.m_TcMotionBlur, &Button))
 		g_Config.m_TcMotionBlur ^= 1;
-	GameClient()->m_Tooltips.DoToolTip(&g_Config.m_TcMotionBlur, &Button, Localize("Blends the previous frame into the current one for a motion blur effect"));
+	GameClient()->m_Tooltips.DoToolTip(&g_Config.m_TcMotionBlur, &Button, Localize("Fast tees leave a soft smear of fading copies behind them"));
 	if(g_Config.m_TcMotionBlur)
 	{
 		MainView.HSplitTop(20.0f, &Button, &MainView);
-		Ui()->DoScrollbarOption(&g_Config.m_TcMotionBlurStrength, &g_Config.m_TcMotionBlurStrength, &Button, Localize("Motion Blur Strength"), 0, 95, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Ui()->DoScrollbarOption(&g_Config.m_TcMotionBlurStrength, &g_Config.m_TcMotionBlurStrength, &Button, Localize("Motion Blur Length"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		MainView.HSplitTop(20.0f, &Button, &MainView);
+		if(DoButton_CheckBox(&g_Config.m_TcMotionBlurSelf, Localize("Motion Blur Self"), g_Config.m_TcMotionBlurSelf, &Button))
+			g_Config.m_TcMotionBlurSelf ^= 1;
+		MainView.HSplitTop(20.0f, &Button, &MainView);
+		if(DoButton_CheckBox(&g_Config.m_TcMotionBlurDummy, Localize("Motion Blur Dummy"), g_Config.m_TcMotionBlurDummy, &Button))
+			g_Config.m_TcMotionBlurDummy ^= 1;
+		MainView.HSplitTop(20.0f, &Button, &MainView);
+		if(DoButton_CheckBox(&g_Config.m_TcMotionBlurOthers, Localize("Motion Blur Others"), g_Config.m_TcMotionBlurOthers, &Button))
+			g_Config.m_TcMotionBlurOthers ^= 1;
+	}
+
+	MainView.HSplitTop(20.0f, &Button, &MainView);
+	if(DoButton_CheckBox(&g_Config.m_TcCursorMotionBlur, Localize("Cursor Motion Blur"), g_Config.m_TcCursorMotionBlur, &Button))
+		g_Config.m_TcCursorMotionBlur ^= 1;
+	GameClient()->m_Tooltips.DoToolTip(&g_Config.m_TcCursorMotionBlur, &Button, Localize("The fast cursor leaves a soft smear of fading copies behind it"));
+	if(g_Config.m_TcCursorMotionBlur)
+	{
+		MainView.HSplitTop(20.0f, &Button, &MainView);
+		Ui()->DoScrollbarOption(&g_Config.m_TcCursorMotionBlurStrength, &g_Config.m_TcCursorMotionBlurStrength, &Button, Localize("Cursor Blur Length"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
 	}
 
 	MainView.HSplitTop(20.0f, &Button, &MainView);
@@ -321,7 +340,6 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 
 		if(OldSelectedBackend != -1)
 		{
-			// a listed backend is selected; no custom slot needed
 			BackendCount = CurCounter;
 		}
 		else

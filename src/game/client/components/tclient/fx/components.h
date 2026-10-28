@@ -3,6 +3,7 @@
 
 #include "fgf_actions.h"
 #include "fgf_ki.h"
+#include "fgf_motionblur.h"
 #include "fgf_weather.h"
 #include "hookblackhole.h"
 #include "hookfire.h"

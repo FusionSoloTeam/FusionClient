@@ -21,6 +21,8 @@ private:
 	bool m_Dirty;
 	std::array<std::optional<CBgDrawItem *>, NUM_DUMMIES> m_apActiveItems;
 	std::array<std::optional<vec2>, NUM_DUMMIES> m_aLastPos;
+	std::array<std::optional<vec2>, NUM_DUMMIES> m_aLastTimeCpPos;
+	std::array<int, NUM_DUMMIES> m_aTimeCpRaceTick = {};
 	std::list<CBgDrawItem> *m_pvItems;
 	static void ConBgDraw(IConsole::IResult *pResult, void *pUserData);
 	static void ConBgDrawErase(IConsole::IResult *pResult, void *pUserData);
@@ -33,6 +35,7 @@ private:
 	template<typename... T>
 	CBgDrawItem *AddItem(T &&...Args);
 	void MakeSpaceFor(int Count);
+	void UpdateTimeCps();
 
 public:
 	enum class InputMode

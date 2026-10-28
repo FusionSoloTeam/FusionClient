@@ -7,8 +7,6 @@
 class IConsole;
 class IConfigManager;
 
-// Shared position/scale/enabled storage for HUD modules that can be repositioned
-// with the HUD editor (see tclient/hud_editor.h).
 namespace HudLayout
 {
 
@@ -82,6 +80,6 @@ namespace HudLayout
 	int BackgroundCorners(int DefaultCorners, float RectX, float RectY, float RectW, float RectH, float CanvasWidth, float CanvasHeight);
 	void OnConsoleInit(IConsole *pConsole, IConfigManager *pConfigManager);
 
-} // namespace HudLayout
+}
 
 #endif

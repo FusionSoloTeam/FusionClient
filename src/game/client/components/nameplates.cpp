@@ -201,6 +201,60 @@ public:
 
 // Part Definitions
 
+class CNamePlatePartCustomClient : public CNamePlatePart
+{
+protected:
+	IGraphics::CTextureHandle m_Texture;
+	int m_CustomClient = CUSTOM_CLIENT_NONE;
+
+public:
+	CNamePlatePartCustomClient(CGameClient &This) :
+		CNamePlatePart(This)
+	{
+		m_ShiftOnInvis = true;
+		m_Padding = vec2(2.0f, 0.0f);
+	}
+
+	void Update(CGameClient &This, const CNamePlateData &Data) override
+	{
+		int CustomClient = CUSTOM_CLIENT_NONE;
+		if(g_Config.m_FcCustomClients && g_Config.m_FcCustomClientsNamePlates &&
+			Data.m_ClientId >= 0 && Data.m_ClientId < MAX_CLIENTS &&
+			(g_Config.m_FcCustomClientsOwn || !Data.m_Local))
+		{
+			CustomClient = This.m_aClients[Data.m_ClientId].m_CustomClient;
+		}
+
+		const float IconSize = CUSTOM_CLIENT_NAMEPLATE_ICON_SIZE * Data.m_FontSize / CUSTOM_CLIENT_NAMEPLATE_FONT_SIZE;
+		if(CustomClient == CUSTOM_CLIENT_NONE)
+		{
+			m_Visible = false;
+			m_Size = vec2(0.0f, 0.0f);
+			m_Texture = IGraphics::CTextureHandle();
+			m_CustomClient = CUSTOM_CLIENT_NONE;
+			return;
+		}
+
+		m_CustomClient = CustomClient;
+		m_Texture = This.CustomClientIcons().Texture(CustomClient);
+		m_Visible = m_Texture.IsValid();
+		m_Size = m_Visible ? vec2(IconSize, IconSize) : vec2(0.0f, 0.0f);
+	}
+
+	void Render(CGameClient &This, vec2 Pos) const override
+	{
+		if(!m_Visible || !m_Texture.IsValid())
+			return;
+
+		const IGraphics::CQuadItem QuadItem(Pos.x - Size().x / 2.0f, Pos.y - Size().y / 2.0f, Size().x, Size().y);
+		This.Graphics()->TextureSet(m_Texture);
+		This.Graphics()->QuadsBegin();
+		This.Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+		This.Graphics()->QuadsDrawTL(&QuadItem, 1);
+		This.Graphics()->QuadsEnd();
+	}
+};
+
 class CNamePlatePartNewLine : public CNamePlatePart
 {
 public:
@@ -379,7 +433,6 @@ protected:
 		str_copy(m_aText, Data.m_aName);
 		CTextCursor Cursor;
 		Cursor.m_FontSize = m_FontSize;
-		// TClient: animated skin-tone gradient on the name
 		if(g_Config.m_TcNameplateGradient && Data.m_ClientId >= 0 && !This.m_HeartList.IsFriend(Data.m_ClientId))
 		{
 			const float Phase = CBcGradient::AnimatePhase(This.Client()->GlobalTime());
@@ -417,7 +470,6 @@ protected:
 		str_copy(m_aText, Data.m_aClan);
 		CTextCursor Cursor;
 		Cursor.m_FontSize = m_FontSize;
-		// TClient: animated skin-tone gradient on the clan
 		if(g_Config.m_TcNameplateGradientClan && Data.m_ClientId >= 0)
 		{
 			const float Phase = CBcGradient::AnimatePhase(This.Client()->GlobalTime());
@@ -750,6 +802,7 @@ private:
 		AddPart<CNamePlatePartPing>(This); // TClient
 		AddPart<CNamePlatePartIgnoreMark>(This); // TClient
 		AddPart<CNamePlatePartFriendMark>(This);
+		AddPart<CNamePlatePartCustomClient>(This);
 		AddPart<CNamePlatePartClientId>(This, false);
 		AddPart<CNamePlatePartName>(This);
 		AddPart<CNamePlatePartNewLine>(This);
@@ -879,7 +932,6 @@ public:
 	CFlyingNamePlateState m_aFlyingNamePlateStates[MAX_CLIENTS];
 };
 
-// The "kite string" that connects the player to their flying name plate.
 static void RenderFlyingNamePlateLine(CGameClient &This, vec2 AnchorPos, vec2 NamePlatePos, ColorRGBA Color)
 {
 	if(distance(AnchorPos, NamePlatePos) < 4.0f)
@@ -894,7 +946,6 @@ static void RenderFlyingNamePlateLine(CGameClient &This, vec2 AnchorPos, vec2 Na
 	This.Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
-// Where the string attaches to the player (center of the tee).
 static vec2 FlyingNamePlateAnchorPos(vec2 TeePos)
 {
 	return TeePos;
@@ -1013,7 +1064,6 @@ void CNamePlates::RenderNamePlateGame(vec2 Position, const CNetObj_PlayerInfo *p
 	Data.m_ShowFriendMark = Data.m_ShowName && g_Config.m_ClNamePlatesFriendMark && GameClient()->m_aClients[pPlayerInfo->m_ClientId].m_Friend;
 	Data.m_ShowClientId = Data.m_ShowName && (g_Config.m_Debug || g_Config.m_ClNamePlatesIds);
 	Data.m_FontSize = 18.0f + 20.0f * g_Config.m_ClNamePlatesSize / 100.0f;
-
 	Data.m_ClientId = pPlayerInfo->m_ClientId;
 	Data.m_ClientIdSeparateLine = g_Config.m_ClNamePlatesIdsSeparateLine;
 	Data.m_FontSizeClientId = Data.m_ClientIdSeparateLine ? (18.0f + 20.0f * g_Config.m_ClNamePlatesIdsSize / 100.0f) : Data.m_FontSize;
@@ -1136,8 +1186,6 @@ void CNamePlates::RenderNamePlateGame(vec2 Position, const CNetObj_PlayerInfo *p
 	CNamePlate &NamePlate = m_pData->m_aNamePlates[pPlayerInfo->m_ClientId];
 	NamePlate.Update(*GameClient(), Data);
 
-	// Flying name plates (ported from BestClient): render at the smoothed "kite"
-	// position, with the connecting line drawn behind the plate.
 	UpdateFlyingNamePlateState(pPlayerInfo->m_ClientId, Position);
 	const vec2 FlyingPos = m_pData->m_aFlyingNamePlateStates[pPlayerInfo->m_ClientId].m_CurrentPos;
 	const vec2 RenderPos = g_Config.m_TcFlyingNamePlates ? FlyingPos : Position - vec2(0.0f, (float)g_Config.m_ClNamePlatesOffset);

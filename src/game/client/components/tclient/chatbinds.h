@@ -9,7 +9,6 @@
 
 class CChatBinds : public CComponent
 {
-	// Tracker state
 	struct STrackedPlayer
 	{
 		int m_ClientId;
@@ -17,7 +16,6 @@ class CChatBinds : public CComponent
 	};
 	std::vector<STrackedPlayer> m_vPlayersInTracker;
 
-	// Backup state for skin/color copy (used by .backupprofile)
 	char m_aPlayerSkinBefore[128] = "";
 	int m_PlayerUseCustomColorBefore = 0;
 	int m_PlayerBodyColorBefore = 0;
@@ -37,19 +35,16 @@ public:
 	void OnReset() override;
 	void OnRender() override;
 
-	// Player Inspector
 	static void ConFindPlayer(IConsole::IResult *pResult, void *pUserData);
 	static void ConFindSkin(IConsole::IResult *pResult, void *pUserData);
 	static void ConCopySkin(IConsole::IResult *pResult, void *pUserData);
 	static void ConCopyColor(IConsole::IResult *pResult, void *pUserData);
 	static void ConBackupPlayerProfile(IConsole::IResult *pResult, void *pUserData);
-	// Tracker
 	static void ConTrackerAdd(IConsole::IResult *pResult, void *pUserData);
 	static void ConTrackerRemove(IConsole::IResult *pResult, void *pUserData);
 	static void ConTrackerReset(IConsole::IResult *pResult, void *pUserData);
-	// Map Search
 	static void ConGotoTeleCursor(IConsole::IResult *pResult, void *pUserData);
 	static void ConGotoFinishCursor(IConsole::IResult *pResult, void *pUserData);
 };
 
-#endif // GAME_CLIENT_COMPONENTS_TCLIENT_CHATBINDS_H
+#endif

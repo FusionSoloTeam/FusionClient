@@ -80,6 +80,7 @@ public:
 				"assets/game",
 				"assets/hud",
 				"assets/particles",
+				"assets/skins",
 				"audio",
 				"communityicons",
 				"downloadedmaps",

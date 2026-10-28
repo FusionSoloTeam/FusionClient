@@ -183,6 +183,9 @@ private:
 
 	static bool IsSwitchActiveCb(unsigned char Number, void *pUser);
 	void HandleTiles(int Index);
+	void HandleSoloTiles();
+	bool HandleTeleportTiles(int MapIndex);
+	void ResetPickups();
 	void HandleSkippableTiles(int Index);
 	void DDRaceTick();
 	void DDRacePostCoreTick();

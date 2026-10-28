@@ -20,6 +20,7 @@
 #include <engine/storage.h>
 #include <engine/textrender.h>
 
+#include <game/client/components/tclient/animated_assets.h>
 #include <game/client/gameclient.h>
 #include <game/client/ui_listbox.h>
 #include <game/localization.h>
@@ -35,6 +36,11 @@ struct SMenuAssetScanUser
 	void *m_pUser;
 	TMenuAssetScanLoadedFunc m_LoadedFunc;
 };
+
+static const char *AssetCategoryFromName(const char *pName);
+
+template<typename TName>
+static bool AssetListContains(const std::vector<TName> &vAssetList, const char *pName);
 
 // IDs of the tabs in the Assets menu
 enum
@@ -80,6 +86,44 @@ void CMenus::LoadEntities(SCustomEntities *pEntitiesItem, void *pUser)
 				pEntitiesItem->m_RenderTexture = pEntitiesItem->m_aImages[i].m_Texture;
 		}
 	}
+
+	char aGifPath[IO_MAX_PATH_LENGTH];
+	if(!CVcAnimatedAssets::ResolveAnimationPath(pThis->Storage(), pEntitiesItem->m_aName, "entities", aGifPath, sizeof(aGifPath)))
+		return;
+
+	CGifAnimation Gif;
+	if(!CVcAnimatedAssets::LoadAnimationFile(pThis->Storage(), aGifPath, Gif, 1, 256, 256) || Gif.m_vFrames.empty())
+	{
+		Gif.Free();
+		return;
+	}
+
+	std::vector<IGraphics::CTextureHandle> vOldTextures;
+	for(int i = 0; i < MAP_IMAGE_MOD_TYPE_COUNT; ++i)
+	{
+		const IGraphics::CTextureHandle Old = pEntitiesItem->m_aImages[i].m_Texture;
+		if(Old.IsNullTexture())
+			continue;
+		const bool Known = std::any_of(vOldTextures.begin(), vOldTextures.end(), [&Old](const IGraphics::CTextureHandle &Handle) {
+			return Handle.Id() == Old.Id();
+		});
+		if(!Known)
+			vOldTextures.push_back(Old);
+	}
+	for(const IGraphics::CTextureHandle &Old : vOldTextures)
+	{
+		IGraphics::CTextureHandle Handle = Old;
+		pThis->Graphics()->UnloadTexture(&Handle);
+	}
+
+	for(int i = 0; i < MAP_IMAGE_MOD_TYPE_COUNT; ++i)
+		pEntitiesItem->m_aImages[i].m_Texture = pThis->Graphics()->LoadTextureRaw(Gif.m_vFrames[0].m_Image, pThis->Graphics()->TextureLoadFlags(), aGifPath);
+
+	pEntitiesItem->m_RenderTexture = pEntitiesItem->m_aImages[0].m_Texture;
+	pEntitiesItem->m_IsAnimated = true;
+	log_info("fusion", "animated asset available: entities '%s' from gif '%s'", pEntitiesItem->m_aName, aGifPath);
+
+	Gif.Free();
 }
 
 int CMenus::EntitiesScan(const char *pName, int IsDir, int DirType, void *pUser)
@@ -102,12 +146,25 @@ int CMenus::EntitiesScan(const char *pName, int IsDir, int DirType, void *pUser)
 	}
 	else
 	{
-		if(str_endswith(pName, ".png"))
+		const bool IsPng = str_endswith_nocase(pName, ".png");
+		const bool IsAnimation = CVcAnimatedAssets::IsAnimationFile(pName);
+		if(IsPng || IsAnimation)
 		{
 			char aName[IO_MAX_PATH_LENGTH];
-			str_truncate(aName, sizeof(aName), pName, str_length(pName) - 4);
+			const size_t ExtensionLength = IsAnimation ? str_length(CVcAnimatedAssets::AnimationExtension(pName)) : 4;
+			str_truncate(aName, sizeof(aName), pName, str_length(pName) - ExtensionLength);
 			// default is reserved
 			if(str_comp(aName, "default") == 0)
+				return 0;
+
+			if(IsAnimation)
+			{
+				const char *pOtherCategory = AssetCategoryFromName(aName);
+				if(pOtherCategory != nullptr && str_comp_nocase(pOtherCategory, "entities") != 0)
+					return 0;
+			}
+
+			if(AssetListContains(pThis->m_vEntitiesList, aName))
 				return 0;
 
 			SCustomEntities EntitiesItem;
@@ -123,7 +180,7 @@ int CMenus::EntitiesScan(const char *pName, int IsDir, int DirType, void *pUser)
 }
 
 template<typename TName>
-static void LoadAsset(TName *pAssetItem, const char *pAssetName, IGraphics *pGraphics)
+static void LoadAsset(TName *pAssetItem, const char *pAssetName, IGraphics *pGraphics, IStorage *pStorage)
 {
 	char aPath[IO_MAX_PATH_LENGTH];
 	if(str_comp(pAssetItem->m_aName, "default") == 0)
@@ -134,17 +191,52 @@ static void LoadAsset(TName *pAssetItem, const char *pAssetName, IGraphics *pGra
 	else
 	{
 		str_format(aPath, sizeof(aPath), "assets/%s/%s.png", pAssetName, pAssetItem->m_aName);
-		pAssetItem->m_RenderTexture = pGraphics->LoadTexture(aPath, IStorage::TYPE_ALL);
+		if(pStorage->FileExists(aPath, IStorage::TYPE_ALL))
+			pAssetItem->m_RenderTexture = pGraphics->LoadTexture(aPath, IStorage::TYPE_ALL);
 		if(pAssetItem->m_RenderTexture.IsNullTexture())
 		{
 			str_format(aPath, sizeof(aPath), "assets/%s/%s/%s.png", pAssetName, pAssetItem->m_aName, pAssetName);
-			pAssetItem->m_RenderTexture = pGraphics->LoadTexture(aPath, IStorage::TYPE_ALL);
+			if(pStorage->FileExists(aPath, IStorage::TYPE_ALL))
+				pAssetItem->m_RenderTexture = pGraphics->LoadTexture(aPath, IStorage::TYPE_ALL);
 		}
 	}
+
+	char aGifPath[IO_MAX_PATH_LENGTH];
+	if(!CVcAnimatedAssets::ResolveAnimationPath(pStorage, pAssetItem->m_aName, pAssetName, aGifPath, sizeof(aGifPath)))
+		return;
+
+	const IGraphics::CTextureHandle GifTexture = CVcAnimatedAssets::LoadAnimationTexture(pGraphics, pStorage, aGifPath);
+	if(GifTexture.IsNullTexture())
+		return;
+
+	if(!pAssetItem->m_RenderTexture.IsNullTexture())
+		pGraphics->UnloadTexture(&pAssetItem->m_RenderTexture);
+	pAssetItem->m_RenderTexture = GifTexture;
+	pAssetItem->m_IsAnimated = true;
+	log_info("fusion", "animated asset available: '%s' tab '%s' from gif '%s'", pAssetItem->m_aName, pAssetName, aGifPath);
+}
+
+static const char *AssetCategoryFromName(const char *pName)
+{
+	static const char *s_apCategories[] = {"entities", "game", "emoticons", "particles", "hud", "extras"};
+	for(const char *pCategory : s_apCategories)
+	{
+		if(str_comp_nocase(pName, pCategory) == 0)
+			return pCategory;
+	}
+	return nullptr;
 }
 
 template<typename TName>
-static int AssetScan(const char *pName, int IsDir, int DirType, std::vector<TName> &vAssetList, const char *pAssetName, IGraphics *pGraphics, void *pUser)
+static bool AssetListContains(const std::vector<TName> &vAssetList, const char *pName)
+{
+	return std::any_of(vAssetList.begin(), vAssetList.end(), [pName](const TName &Asset) {
+		return str_comp(Asset.m_aName, pName) == 0;
+	});
+}
+
+template<typename TName>
+static int AssetScan(const char *pName, int IsDir, int DirType, std::vector<TName> &vAssetList, const char *pAssetName, IGraphics *pGraphics, IStorage *pStorage, void *pUser)
 {
 	auto *pRealUser = (SMenuAssetScanUser *)pUser;
 	if(IsDir)
@@ -158,22 +250,36 @@ static int AssetScan(const char *pName, int IsDir, int DirType, std::vector<TNam
 
 		TName AssetItem;
 		str_copy(AssetItem.m_aName, pName);
-		LoadAsset(&AssetItem, pAssetName, pGraphics);
+		LoadAsset(&AssetItem, pAssetName, pGraphics, pStorage);
 		vAssetList.push_back(AssetItem);
 	}
 	else
 	{
-		if(str_endswith(pName, ".png"))
+		const bool IsPng = str_endswith_nocase(pName, ".png");
+		const bool IsAnimation = CVcAnimatedAssets::IsAnimationFile(pName);
+		if(IsPng || IsAnimation)
 		{
 			char aName[IO_MAX_PATH_LENGTH];
-			str_truncate(aName, sizeof(aName), pName, str_length(pName) - 4);
+			const size_t Length = str_length(pName);
+			const size_t ExtensionLength = IsAnimation ? str_length(CVcAnimatedAssets::AnimationExtension(pName)) : 4;
+			str_truncate(aName, sizeof(aName), pName, Length - ExtensionLength);
 			// default is reserved
 			if(str_comp(aName, "default") == 0)
 				return 0;
 
+			if(IsAnimation)
+			{
+				const char *pOtherCategory = AssetCategoryFromName(aName);
+				if(pOtherCategory != nullptr && str_comp_nocase(pOtherCategory, pAssetName) != 0)
+					return 0;
+			}
+
+			if(AssetListContains(vAssetList, aName))
+				return 0;
+
 			TName AssetItem;
 			str_copy(AssetItem.m_aName, aName);
-			LoadAsset(&AssetItem, pAssetName, pGraphics);
+			LoadAsset(&AssetItem, pAssetName, pGraphics, pStorage);
 			vAssetList.push_back(AssetItem);
 		}
 	}
@@ -188,7 +294,7 @@ int CMenus::GameScan(const char *pName, int IsDir, int DirType, void *pUser)
 	auto *pRealUser = (SMenuAssetScanUser *)pUser;
 	auto *pThis = (CMenus *)pRealUser->m_pUser;
 	IGraphics *pGraphics = pThis->Graphics();
-	return AssetScan(pName, IsDir, DirType, pThis->m_vGameList, "game", pGraphics, pUser);
+	return AssetScan(pName, IsDir, DirType, pThis->m_vGameList, "game", pGraphics, pThis->Storage(), pUser);
 }
 
 int CMenus::EmoticonsScan(const char *pName, int IsDir, int DirType, void *pUser)
@@ -196,7 +302,7 @@ int CMenus::EmoticonsScan(const char *pName, int IsDir, int DirType, void *pUser
 	auto *pRealUser = (SMenuAssetScanUser *)pUser;
 	auto *pThis = (CMenus *)pRealUser->m_pUser;
 	IGraphics *pGraphics = pThis->Graphics();
-	return AssetScan(pName, IsDir, DirType, pThis->m_vEmoticonList, "emoticons", pGraphics, pUser);
+	return AssetScan(pName, IsDir, DirType, pThis->m_vEmoticonList, "emoticons", pGraphics, pThis->Storage(), pUser);
 }
 
 int CMenus::ParticlesScan(const char *pName, int IsDir, int DirType, void *pUser)
@@ -204,7 +310,7 @@ int CMenus::ParticlesScan(const char *pName, int IsDir, int DirType, void *pUser
 	auto *pRealUser = (SMenuAssetScanUser *)pUser;
 	auto *pThis = (CMenus *)pRealUser->m_pUser;
 	IGraphics *pGraphics = pThis->Graphics();
-	return AssetScan(pName, IsDir, DirType, pThis->m_vParticlesList, "particles", pGraphics, pUser);
+	return AssetScan(pName, IsDir, DirType, pThis->m_vParticlesList, "particles", pGraphics, pThis->Storage(), pUser);
 }
 
 int CMenus::HudScan(const char *pName, int IsDir, int DirType, void *pUser)
@@ -212,7 +318,7 @@ int CMenus::HudScan(const char *pName, int IsDir, int DirType, void *pUser)
 	auto *pRealUser = (SMenuAssetScanUser *)pUser;
 	auto *pThis = (CMenus *)pRealUser->m_pUser;
 	IGraphics *pGraphics = pThis->Graphics();
-	return AssetScan(pName, IsDir, DirType, pThis->m_vHudList, "hud", pGraphics, pUser);
+	return AssetScan(pName, IsDir, DirType, pThis->m_vHudList, "hud", pGraphics, pThis->Storage(), pUser);
 }
 
 int CMenus::ExtrasScan(const char *pName, int IsDir, int DirType, void *pUser)
@@ -220,7 +326,7 @@ int CMenus::ExtrasScan(const char *pName, int IsDir, int DirType, void *pUser)
 	auto *pRealUser = (SMenuAssetScanUser *)pUser;
 	auto *pThis = (CMenus *)pRealUser->m_pUser;
 	IGraphics *pGraphics = pThis->Graphics();
-	return AssetScan(pName, IsDir, DirType, pThis->m_vExtrasList, "extras", pGraphics, pUser);
+	return AssetScan(pName, IsDir, DirType, pThis->m_vExtrasList, "extras", pGraphics, pThis->Storage(), pUser);
 }
 
 int CMenus::AudioScan(const char *pName, int IsDir, int DirType, void *pUser)
@@ -720,6 +826,16 @@ void CMenus::AssetsHandleDrop(const char *pPath)
 		return;
 	}
 
+	const char *pAnimationExtension = CVcAnimatedAssets::AnimationExtension(pPath);
+	if(pAnimationExtension != nullptr)
+	{
+		char aTarget[IO_MAX_PATH_LENGTH];
+		str_format(aTarget, sizeof(aTarget), "assets/skins/%s%s", aStem, pAnimationExtension);
+		if(CopyRawFileToStorage(Storage(), pPath, aTarget))
+			ClearCustomItems(s_CurCustomTab);
+		return;
+	}
+
 	if(str_endswith_nocase(pPath, ".png"))
 	{
 		char aInner[64];
@@ -740,11 +856,12 @@ static void InitAssetList(std::vector<TName> &vAssetList, const char *pAssetPath
 	{
 		TName AssetItem;
 		str_copy(AssetItem.m_aName, "default");
-		LoadAsset(&AssetItem, pAssetName, pGraphics);
+		LoadAsset(&AssetItem, pAssetName, pGraphics, pStorage);
 		vAssetList.push_back(AssetItem);
 
 		// load assets
 		pStorage->ListDirectory(IStorage::TYPE_ALL, pAssetPath, pfnCallback, Caller);
+		pStorage->ListDirectory(IStorage::TYPE_ALL, "assets/skins", pfnCallback, Caller);
 		std::sort(vAssetList.begin(), vAssetList.end());
 	}
 	if(vAssetList.size() != gs_aCustomListSize[s_CurCustomTab])
@@ -802,7 +919,7 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 
 	CUIRect DropHintRect;
 	MainView.HSplitTop(14.0f, &DropHintRect, &MainView);
-	Ui()->DoLabel(&DropHintRect, Localize("Drag & drop .png files or .zip packs here to upload"), 10.0f, TEXTALIGN_ML);
+	Ui()->DoLabel(&DropHintRect, Localize("Drag & drop .png, .gif files or .zip packs here to upload"), 10.0f, TEXTALIGN_ML);
 
 	auto LoadStartTime = time_get_nanoseconds();
 	SMenuAssetScanUser User;
@@ -822,6 +939,7 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 
 			// load entities
 			Storage()->ListDirectory(IStorage::TYPE_ALL, "assets/entities", EntitiesScan, &User);
+			Storage()->ListDirectory(IStorage::TYPE_ALL, "assets/skins", EntitiesScan, &User);
 			std::sort(m_vEntitiesList.begin(), m_vEntitiesList.end());
 		}
 		if(m_vEntitiesList.size() != gs_aCustomListSize[s_CurCustomTab])
@@ -1028,7 +1146,11 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 		CUIRect TextureRect;
 		ItemRect.HSplitTop(15, &ItemRect, &TextureRect);
 		TextureRect.HSplitTop(10, nullptr, &TextureRect);
-		Ui()->DoLabel(&ItemRect, pItem->m_aName, ItemRect.h - 2, TEXTALIGN_MC);
+		char aLabel[64];
+		str_copy(aLabel, pItem->m_aName, sizeof(aLabel));
+		if(pItem->m_IsAnimated)
+			str_append(aLabel, " [ANIM]", sizeof(aLabel));
+		Ui()->DoLabel(&ItemRect, aLabel, ItemRect.h - 2, TEXTALIGN_MC);
 		if(pItem->m_RenderTexture.IsValid())
 		{
 			Graphics()->WrapClamp();
@@ -1052,7 +1174,17 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 		if(Storage()->FolderExists(aDelFolder, IStorage::TYPE_SAVE))
 			Storage()->RemoveFolder(aDelFolder, IStorage::TYPE_SAVE);
 		else
+		{
 			Storage()->RemoveFile(aDelFile, IStorage::TYPE_SAVE);
+			for(const char *pExtension : CVcAnimatedAssets::AnimationExtensions())
+			{
+				char aPath[IO_MAX_PATH_LENGTH];
+				str_format(aPath, sizeof(aPath), "assets/%s/%s%s", pDelType, gs_aAssetsDeleteName, pExtension);
+				Storage()->RemoveFile(aPath, IStorage::TYPE_SAVE);
+				str_format(aPath, sizeof(aPath), "assets/skins/%s%s", gs_aAssetsDeleteName, pExtension);
+				Storage()->RemoveFile(aPath, IStorage::TYPE_SAVE);
+			}
+		}
 		ClearCustomItems(gs_AssetsDeleteTab);
 		gs_aAssetsDeleteName[0] = '\0';
 	}

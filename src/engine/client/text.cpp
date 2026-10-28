@@ -429,7 +429,6 @@ private:
 
 	FT_UInt GetCharGlyph(int Chr, FT_Face *pFace, bool AllowReplacementCharacter)
 	{
-		// TClient: 0xE0073 is '󠁳', which doesn't get rendered if Noto Emoji is used as fallback font
 		if(Chr == 0xe0073)
 			Chr = REPLACEMENT_CHARACTER;
 
@@ -1879,7 +1878,7 @@ public:
 						if(!EllipsisGlyphResolved)
 						{
 							EllipsisGlyphResolved = true;
-							pEllipsisGlyph = m_pGlyphMap->GetGlyph(0x2026, ActualSize); // …
+							pEllipsisGlyph = m_pGlyphMap->GetGlyph(0x2026, ActualSize);
 							if(pEllipsisGlyph == nullptr)
 							{
 								// no ellipsis char in font, just stop at end instead
@@ -2441,7 +2440,6 @@ public:
 		pMetrics->m_OffsetX = pGlyph->m_OffsetX;
 		pMetrics->m_OffsetY = pGlyph->m_OffsetY;
 		pMetrics->m_AdvanceX = pGlyph->m_AdvanceX;
-		// atlas pixels
 		mem_copy(pMetrics->m_aUVs, pGlyph->m_aUVs, sizeof(pMetrics->m_aUVs));
 		return true;
 	}

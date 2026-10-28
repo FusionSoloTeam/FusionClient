@@ -17,8 +17,6 @@ private:
 public:
 	void RenderNamePlateGame(vec2 Position, const CNetObj_PlayerInfo *pPlayerInfo, float Alpha);
 	void RenderNamePlatePreview(vec2 Position, int Dummy);
-	// Flying name plates (ported from BestClient): the plate floats like a kite
-	// attached to the player, trailing behind movement and catching up smoothly.
 	ColorRGBA FlyingNamePlateColorForPlayer(vec2 Position, const CNetObj_PlayerInfo *pPlayerInfo, float Alpha) const;
 	void UpdateFlyingNamePlateState(int ClientId, vec2 Position);
 	void ResetNamePlates();

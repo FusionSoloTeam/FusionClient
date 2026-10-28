@@ -86,6 +86,8 @@ public:
 
 		char m_aName[50];
 
+		bool m_IsAnimated = false;
+
 		bool operator<(const SCustomItem &Other) const { return str_comp(m_aName, Other.m_aName) < 0; }
 	};
 
@@ -585,8 +587,8 @@ protected:
 
 	// found in menus_settings.cpp
 	void RenderSettings(CUIRect MainView);
-	void RenderSettingsVClientSettings(CUIRect MainView);
-	void RenderSettingsVClientInfo(CUIRect MainView);
+	void RenderSettingsFusionSettings(CUIRect MainView);
+	void RenderSettingsFusionInfo(CUIRect MainView);
 	bool RenderHslaScrollbars(CUIRect *pRect, unsigned int *pColor, bool Alpha, float DarkestLight);
 
 	// found in menus_settings_assets.cpp
@@ -749,8 +751,8 @@ public:
 		SETTINGS_TCLIENT_CHATBINDS,
 		SETTINGS_TCLIENT_STATUSBAR,
 		SETTINGS_TCLIENT_INFO,
-		SETTINGS_VCLIENT, // VClient
-		SETTINGS_VCLIENT_INFO,
+		SETTINGS_FUSION,
+		SETTINGS_FUSION_INFO,
 		SETTINGS_PROFILES, // TClient
 		SETTINGS_CONFIGS, // TClient
 		SETTINGS_CREDITS,
@@ -761,13 +763,12 @@ public:
 	{
 		SETTINGS_GROUP_DDNET = 0,
 		SETTINGS_GROUP_TCLIENT,
-		SETTINGS_GROUP_VCLIENT,
+		SETTINGS_GROUP_FUSION,
 		SETTINGS_GROUP_LENGTH,
 	};
 
-	// sub-tab animation state for the collapsible settings groups
 	float m_aSettingsGroupExpand[SETTINGS_GROUP_LENGTH] = {};
-	int m_aSettingsGroupLastPage[SETTINGS_GROUP_LENGTH] = {SETTINGS_LANGUAGE, SETTINGS_TCLIENT, SETTINGS_VCLIENT};
+	int m_aSettingsGroupLastPage[SETTINGS_GROUP_LENGTH] = {SETTINGS_LANGUAGE, SETTINGS_TCLIENT, SETTINGS_FUSION};
 	int m_SettingsGroupCollapsedIndex = -1;
 	int SettingsGroupOfPage(int Page) const;
 	bool SettingsPageIsGroupHeader(int Page) const;
@@ -900,7 +901,6 @@ public:
 	void ShowQuitPopup();
 	void JoinTutorial();
 
-	// found in tclient/menus_assets_editor.cpp
 	enum
 	{
 		ASSETS_EDITOR_TYPE_GAME = 0,
@@ -969,7 +969,7 @@ private:
 	// TClient: found in menus_tclient.cpp
 	void RenderSettingsTClient(CUIRect MainView);
 	void RenderSettingsTClientSettings(CUIRect MainView);
-	void RenderTClientSettingsPage(CUIRect MainView, bool VClientPage);
+	void RenderTClientSettingsPage(CUIRect MainView, bool FusionPage);
 	void RenderSettingsTClientBindWheel(CUIRect MainView);
 	void RenderSettingsTClientChatBinds(CUIRect MainView);
 	void RenderSettingsTClientWarList(CUIRect MainView);
@@ -980,7 +980,6 @@ private:
 	void RenderSettingsTClientConfigs(CUIRect MainView);
 	void RenderTeeCute(const CAnimState *pAnim, const CTeeRenderInfo *pInfo, int Emote, vec2 Dir, vec2 Pos, bool CuteEyes, float Alpha = 1.0f);
 
-	// found in tclient/menus_assets_editor.cpp
 	struct SAssetsEditorState
 	{
 		bool m_VisualsEditorOpen = false;

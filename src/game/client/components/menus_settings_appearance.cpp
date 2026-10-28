@@ -36,7 +36,6 @@ enum
 	NUMBER_OF_APPEARANCE_TABS = 6,
 };
 
-// The chat preview is kept for reference; set to true to show it again.
 static constexpr bool CHAT_PREVIEW_ENABLED = false;
 
 void CMenus::RenderSettingsAppearance(CUIRect MainView)
@@ -222,7 +221,6 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		static CButtonContainer s_BackgroundColor;
 		DoLine_ColorPicker(&s_BackgroundColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Chat background color"), &g_Config.m_ClChatBackgroundColor, color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::ClChatBackgroundColor, true)), false, nullptr, true);
 
-		// TClient: chat scrolling
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcChatScroll, Localize("Scroll chat with mouse wheel"), &g_Config.m_TcChatScroll, &LeftView, LineSize);
 
 		// ***** Messages ***** //
@@ -246,7 +244,6 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		static CButtonContainer s_ClientMessageColor;
 		DoLine_ColorPicker(&s_ClientMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, aBuf, &g_Config.m_ClMessageClientColor, ColorRGBA(0.5f, 0.78f, 1.0f), true, &g_Config.m_TcShowChatClient); // TClient
 
-		// ***** Prefixes ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Prefixes"), HeadlineFontSize,
 			TEXTALIGN_ML, &RightView, HeadlineHeight);
 		RightView.HSplitTop(MarginSmall, nullptr, &RightView);
@@ -733,7 +730,6 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		DoLine_ColorPicker(&s_HookCollTeeCollResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("When a Tee is hookable", "Hook collision line color"), &g_Config.m_ClHookCollColorTeeColl, ColorRGBA(1.0f, 1.0f, 0.0f, 1.0f), false);
 		DoLine_ColorPicker(&s_HookCollTipColorResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Hook collision line tip", "Hook collision line color"), &g_Config.m_ClHookCollTipColor, ColorRGBA(1.0f, 1.0f, 0.0f, 0.5f), false, nullptr, true);
 
-		// TClient
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcHookCollOverlay, Localize("Hook collision overlay (draw over tiles)"), &g_Config.m_TcHookCollOverlay, &LeftView, LineSize);
 
 		// ***** Hook collisions preview ***** //

@@ -123,7 +123,6 @@ void CAboveBelowPlayer::OnRender()
 	const float FontSize = 14.0f;
 	const float Margin = 5.0f;
 	float LineHeight = 20 * m_LinesNum + 5 * (m_LinesNum - 1);
-	// Line screen/4 - w, 20px - h, Marign - 5px
 	CUIRect Line, CurLine;
 	Line.w = pScreen->w / 6.0f;
 	Line.h = LineHeight;

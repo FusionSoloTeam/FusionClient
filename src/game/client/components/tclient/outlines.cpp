@@ -106,6 +106,59 @@ public:
 // The order of this determines order of priority into the one map (tele + freeze = tele)
 static constexpr COutLineLayer OUTLINE_LAYERS[] = {{OutlineLayer::TELE}, {OutlineLayer::GAME}, {OutlineLayer::FRONT}};
 
+COutlines::~COutlines()
+{
+	delete[] m_pMapData;
+	DestroyLodPyramid();
+}
+
+void COutlines::DestroyLodPyramid()
+{
+	for(size_t i = 1; i < m_apLodData.size(); i++)
+		delete[] m_apLodData[i];
+	m_apLodData.clear();
+	m_aLodSizes.clear();
+}
+
+void COutlines::BuildLodPyramid()
+{
+	DestroyLodPyramid();
+	if(!m_pMapData)
+		return;
+	m_apLodData.push_back(m_pMapData);
+	m_aLodSizes.push_back(m_MapDataSize);
+	int Level = 0;
+	while(m_aLodSizes[Level].x > 1 && m_aLodSizes[Level].y > 1)
+	{
+		const ivec2 PrevSize = m_aLodSizes[Level];
+		const int *pPrev = m_apLodData[Level];
+		const ivec2 NewSize(PrevSize.x / 2, PrevSize.y / 2);
+		int *pNew = new int[NewSize.x * NewSize.y](OUTLINE_NONE);
+		for(int y = 0; y < NewSize.y; y++)
+		{
+			for(int x = 0; x < NewSize.x; x++)
+			{
+				int Best = OUTLINE_NONE;
+				for(int dy = 0; dy < 2; dy++)
+				{
+					for(int dx = 0; dx < 2; dx++)
+					{
+						const int SrcX = x * 2 + dx;
+						const int SrcY = y * 2 + dy;
+						if(SrcX >= PrevSize.x || SrcY >= PrevSize.y)
+							continue;
+						Best = std::max(Best, pPrev[SrcY * PrevSize.x + SrcX]);
+					}
+				}
+				pNew[y * NewSize.x + x] = Best;
+			}
+		}
+		Level++;
+		m_apLodData.push_back(pNew);
+		m_aLodSizes.push_back(NewSize);
+	}
+}
+
 void COutlines::OnMapLoad()
 {
 	if(m_pMapData)
@@ -113,6 +166,7 @@ void COutlines::OnMapLoad()
 		delete[] m_pMapData;
 		m_pMapData = nullptr;
 	}
+	DestroyLodPyramid();
 
 	// Find valid layers and size
 	std::vector<const COutLineLayer *> vValidOutlineLayers;
@@ -136,6 +190,8 @@ void COutlines::OnMapLoad()
 	{
 		pLayer->SetData(GameClient(), m_pMapData, m_MapDataSize);
 	}
+
+	BuildLodPyramid();
 }
 
 void COutlines::OnInit()
@@ -161,7 +217,21 @@ void COutlines::OnInit()
 	}
 }
 
-// для растяга <3
+float COutlines::GetTileAnimationProgress(int Type, int x, int y, int LodLevel) const
+{
+	const int Scale = 1 << LodLevel;
+	const int TileX = x * Scale;
+	const int TileY = y * Scale;
+	const auto *pLayers = GameClient()->Layers();
+	const CMapRenderer &Renderer = GameClient()->m_MapLayersForeground.m_MapRenderer;
+	if(Type == OUTLINE_TELE)
+		return Renderer.GetTileAnimationProgress(pLayers->TeleLayer(), TileX, TileY);
+
+	return std::min(
+		Renderer.GetTileAnimationProgress(pLayers->GameLayer(), TileX, TileY),
+		Renderer.GetTileAnimationProgress(pLayers->FrontLayer(), TileX, TileY));
+}
+
 void COutlines::OnRender()
 {
 	m_SystemAudio.SetEnabled(g_Config.m_TcOutlinePulsate || g_Config.m_TcLyricsBeat);
@@ -174,6 +244,9 @@ void COutlines::OnRender()
 	if(!g_Config.m_TcOutline)
 		return;
 
+	const bool AnimateFade = g_Config.m_FcTileAnimations && g_Config.m_FcTileAnimationMode == 1;
+	const bool AnimatePlacing = g_Config.m_FcTileAnimations && g_Config.m_FcTileAnimationMode == 2;
+
 	const float PulsateBonus = g_Config.m_TcOutlinePulsate ? m_SystemAudio.Level() * (g_Config.m_TcOutlinePulsateStrength / 100.0f) * 64.0f : 0.0f;
 	const float GradientOffset = g_Config.m_TcOutlineGradientSpeed > 0 ? (float)(time_get() / (double)time_freq()) * (g_Config.m_TcOutlineGradientSpeed / 100.0f) * 0.5f : 0.0f;
 
@@ -185,25 +258,28 @@ void COutlines::OnRender()
 	const float Scale = 32.0f;
 
 	const CScreenRect ScreenRect = Graphics()->GetScreen();
-	int StartY = std::clamp((int)std::floor(ScreenRect.m_TopLeft.y / Scale) - 1, 0, m_MapDataSize.y);
-	int StartX = std::clamp((int)std::floor(ScreenRect.m_TopLeft.x / Scale) - 1, 0, m_MapDataSize.x);
-	int EndY = std::clamp((int)std::ceil(ScreenRect.m_BottomRight.y / Scale) + 1, 0, m_MapDataSize.y);
-	int EndX = std::clamp((int)std::ceil(ScreenRect.m_BottomRight.x / Scale) + 1, 0, m_MapDataSize.x);
-	int MaxScale = 12;
-	if(EndX - StartX > Graphics()->ScreenWidth() / MaxScale || EndY - StartY > Graphics()->ScreenHeight() / MaxScale)
-	{
-		int EdgeX = (EndX - StartX) - (Graphics()->ScreenWidth() / MaxScale);
-		StartX += EdgeX / 2;
-		EndX -= EdgeX / 2;
-		int EdgeY = (EndY - StartY) - (Graphics()->ScreenHeight() / MaxScale);
-		StartY += EdgeY / 2;
-		EndY -= EdgeY / 2;
-	}
+
+	const float VisibleTilesX = (ScreenRect.m_BottomRight.x - ScreenRect.m_TopLeft.x) / Scale;
+	const float VisibleTilesY = (ScreenRect.m_BottomRight.y - ScreenRect.m_TopLeft.y) / Scale;
+	const float BudgetX = std::max(1.0f, (float)Graphics()->ScreenWidth() / 12.0f);
+	const float BudgetY = std::max(1.0f, (float)Graphics()->ScreenHeight() / 12.0f);
+	int LodLevel = 0;
+	while(LodLevel + 1 < (int)m_apLodData.size() &&
+		(VisibleTilesX / (float)(1 << (LodLevel + 1)) > BudgetX || VisibleTilesY / (float)(1 << (LodLevel + 1)) > BudgetY))
+		LodLevel++;
+	const float CellWorld = Scale * (1 << LodLevel);
+	const ivec2 LodSize = m_aLodSizes[LodLevel];
+	const int *pLodData = m_apLodData[LodLevel];
+
+	int StartY = std::clamp((int)std::floor(ScreenRect.m_TopLeft.y / CellWorld) - 1, 0, LodSize.y);
+	int StartX = std::clamp((int)std::floor(ScreenRect.m_TopLeft.x / CellWorld) - 1, 0, LodSize.x);
+	int EndY = std::clamp((int)std::ceil(ScreenRect.m_BottomRight.y / CellWorld) + 1, 0, LodSize.y);
+	int EndX = std::clamp((int)std::ceil(ScreenRect.m_BottomRight.x / CellWorld) + 1, 0, LodSize.x);
 
 	auto GetTile = [&](int x, int y) {
-		x = std::clamp(x, 0, m_MapDataSize.x - 1);
-		y = std::clamp(y, 0, m_MapDataSize.y - 1);
-		return m_pMapData[y * m_MapDataSize.x + x];
+		x = std::clamp(x, 0, LodSize.x - 1);
+		y = std::clamp(y, 0, LodSize.y - 1);
+		return pLodData[y * LodSize.x + x];
 	};
 
 	Graphics()->TextureClear();
@@ -241,6 +317,9 @@ void COutlines::OnRender()
 			if(!Config.m_Enable || Config.m_Width <= 0)
 				continue;
 			const float Width = Config.m_Width + PulsateBonus;
+			const float Progress = (AnimateFade || AnimatePlacing) ? GetTileAnimationProgress(Type, x, y, LodLevel) : 1.0f;
+			const float Eased = 1.0f - std::pow(1.0f - Progress, 3.0f);
+			const float YOffset = AnimatePlacing ? -(1.0f - Eased) * g_Config.m_FcTileAnimationPlacingDistance * 32.0f : 0.0f;
 			// Find neighbours
 			const bool aNeighbors[8] = {
 				GetTile(x - 1, y - 1) >= Type,
@@ -255,44 +334,49 @@ void COutlines::OnRender()
 			// Figure out edges
 			IGraphics::CQuadItem aQuads[8];
 			int NumQuads = 0;
+			const float TileX = x * CellWorld;
+			const float TileY = y * CellWorld + YOffset;
+			auto AddQuad = [&](float QX, float QY, float QW, float QH) {
+				aQuads[NumQuads++] = IGraphics::CQuadItem(QX, QY, QW, QH);
+			};
 			// Lone corners first
 			if(!aNeighbors[0] && aNeighbors[1] && aNeighbors[3])
-				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale, Width, Width);
+				AddQuad(TileX, TileY, Width, Width);
 			if(!aNeighbors[2] && aNeighbors[1] && aNeighbors[4])
-				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Width, y * Scale, Width, Width);
+				AddQuad(TileX + CellWorld - Width, TileY, Width, Width);
 			if(!aNeighbors[5] && aNeighbors[3] && aNeighbors[6])
-				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale + Scale - Width, Width, Width);
+				AddQuad(TileX, TileY + CellWorld - Width, Width, Width);
 			if(!aNeighbors[7] && aNeighbors[6] && aNeighbors[4])
-				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Width, y * Scale + Scale - Width, Width, Width);
+				AddQuad(TileX + CellWorld - Width, TileY + CellWorld - Width, Width, Width);
 			// Top
 			if(!aNeighbors[1])
-				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale, Scale, Width);
+				AddQuad(TileX, TileY, CellWorld, Width);
 			// Bottom
 			if(!aNeighbors[6])
-				aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale + Scale - Width, Scale, Width);
+				AddQuad(TileX, TileY + CellWorld - Width, CellWorld, Width);
 			// Left
 			if(!aNeighbors[3])
 			{
 				if(aNeighbors[1] && aNeighbors[6])
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale, Width, Scale);
+					AddQuad(TileX, TileY, Width, CellWorld);
 				else if(aNeighbors[6])
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale + Width, Width, Scale - Width);
+					AddQuad(TileX, TileY + Width, Width, CellWorld - Width);
 				else if(aNeighbors[1])
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale, Width, Scale - Width);
+					AddQuad(TileX, TileY, Width, CellWorld - Width);
 				else
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale, y * Scale + Width, Width, Scale - Width * 2.0f);
+					AddQuad(TileX, TileY + Width, Width, CellWorld - Width * 2.0f);
 			}
 			// Right
 			if(!aNeighbors[4])
 			{
 				if(aNeighbors[1] && aNeighbors[6])
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Width, y * Scale, Width, Scale);
+					AddQuad(TileX + CellWorld - Width, TileY, Width, CellWorld);
 				else if(aNeighbors[6])
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Width, y * Scale + Width, Width, Scale - Width);
+					AddQuad(TileX + CellWorld - Width, TileY + Width, Width, CellWorld - Width);
 				else if(aNeighbors[1])
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Width, y * Scale, Width, Scale - Width);
+					AddQuad(TileX + CellWorld - Width, TileY, Width, CellWorld - Width);
 				else
-					aQuads[NumQuads++] = IGraphics::CQuadItem(x * Scale + Scale - Width, y * Scale + Width, Width, Scale - Width * 2.0f);
+					AddQuad(TileX + CellWorld - Width, TileY + Width, Width, CellWorld - Width * 2.0f);
 			}
 			if(NumQuads <= 0)
 				continue;
@@ -304,6 +388,13 @@ void COutlines::OnRender()
 				const float Phase = std::fmod((x + y) * 0.03125f + GradientOffset, 1.0f);
 				const float Wave = Phase < 0.5f ? Phase * 2.0f : 2.0f - Phase * 2.0f;
 				OutlineColor = ColorRGBA(mix(GradientColor1.r, GradientColor2.r, Wave), mix(GradientColor1.g, GradientColor2.g, Wave), mix(GradientColor1.b, GradientColor2.b, Wave), mix(GradientColor1.a, GradientColor2.a, Wave));
+			}
+			if(AnimateFade)
+			{
+				const float SmoothProgress = Progress * Progress * (3.0f - 2.0f * Progress);
+				OutlineColor.a *= SmoothProgress;
+				if(OutlineColor.a <= 0.0f)
+					continue;
 			}
 			Graphics()->SetColor(OutlineColor);
 			Graphics()->QuadsDrawTL(aQuads, NumQuads);

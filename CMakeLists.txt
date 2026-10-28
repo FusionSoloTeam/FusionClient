@@ -2554,6 +2554,8 @@ list(APPEND ENGINE_EXTERNAL ${ENGINE_EXTERNAL_CHAISCRIPT})
 
 set_src(ENGINE_GFX GLOB src/engine/gfx
   # tidy-alphabetical-start
+  gif_loader.cpp
+  gif_loader.h
   image.cpp
   image_loader.cpp
   image_loader.h
@@ -2788,6 +2790,8 @@ if(CLIENT)
     components/controls.h
     components/countryflags.cpp
     components/countryflags.h
+    custom_clients.cpp
+    custom_clients.h
     components/damageind.cpp
     components/damageind.h
     components/debughud.cpp
@@ -2887,6 +2891,8 @@ if(CLIENT)
     components/tclient/custom_communities.cpp
     components/tclient/cursor_trail.cpp
     components/tclient/cursor_trail.h
+    components/tclient/tile_under_cursor.cpp
+    components/tclient/tile_under_cursor.h
     components/tclient/custom_communities.h
     components/tclient/data_version.h
     components/tclient/hover_notification.cpp
@@ -2909,6 +2915,8 @@ if(CLIENT)
     components/tclient/pet.h
     components/tclient/player_indicator.cpp
     components/tclient/player_indicator.h
+    components/tclient/practice_tags.cpp
+    components/tclient/practice_tags.h
     components/tclient/above_below_player.cpp
     components/tclient/above_below_player.h
     components/tclient/swaptimer.cpp
@@ -2917,6 +2925,12 @@ if(CLIENT)
     components/tclient/chatbinds.h
     components/tclient/gradient.cpp
     components/tclient/gradient.h
+    components/tclient/animated_assets.cpp
+    components/tclient/animated_assets.h
+    components/tclient/video_loader.cpp
+    components/tclient/video_loader.h
+    components/tclient/skin_gradient.cpp
+    components/tclient/skin_gradient.h
     components/tclient/rainbow.cpp
     components/tclient/rainbow.h
     components/tclient/scripting.cpp
@@ -2962,6 +2976,8 @@ if(CLIENT)
     components/tclient/fx/fgf_weather.h
     components/tclient/fx/fgf_actions.cpp
     components/tclient/fx/fgf_actions.h
+    components/tclient/fx/fgf_motionblur.cpp
+    components/tclient/fx/fgf_motionblur.h
     components/tclient/fx/fx_screen_rect.h
     components/tclient/fx/hookgrip.cpp
     components/tclient/fx/hookgrip.h

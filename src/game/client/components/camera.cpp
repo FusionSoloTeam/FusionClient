@@ -309,12 +309,15 @@ void CCamera::UpdateTClientCameras()
 	const bool CameraAllowed = GameClient()->IsCameraAllowedServer();
 	const bool Dynamic = g_Config.m_TcDynamicCamera != 0 && CameraAllowed;
 	const bool Drift = g_Config.m_TcDriftCamera != 0 && CameraAllowed;
-	const bool AnyEnabled = Dynamic || Drift;
+	const bool Tilt = g_Config.m_TcCameraTilt != 0 && CameraAllowed;
+	const bool AnyEnabled = Dynamic || Drift || Tilt;
 	const bool InGame = Client()->State() == IClient::STATE_ONLINE || Client()->State() == IClient::STATE_DEMOPLAYBACK;
 
 	if(!AnyEnabled || !InGame)
 	{
 		m_DriftOffset = vec2(0.0f, 0.0f);
+		m_TiltAngleCurrent = 0.0f;
+		m_TiltAngle = 0.0f;
 		return;
 	}
 
@@ -326,6 +329,12 @@ void CCamera::UpdateTClientCameras()
 		const float FrameTime = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.1f);
 		m_DriftOffsetCurrent += -m_DriftOffsetCurrent * minimum(FrameTime * TClientCameraSmoothSpeed(Smooth), 1.0f);
 		m_DriftOffset = m_DriftOffsetCurrent;
+		const int TiltSmooth = g_Config.m_TcCameraTiltSmooth;
+		if(TiltSmooth <= 0)
+			m_TiltAngleCurrent = 0.0f;
+		else
+			m_TiltAngleCurrent += -m_TiltAngleCurrent * minimum(FrameTime * TClientCameraSmoothSpeed(TiltSmooth), 1.0f);
+		m_TiltAngle = m_TiltAngleCurrent * (pi / 180.0f);
 		return;
 	}
 
@@ -386,7 +395,46 @@ void CCamera::UpdateTClientCameras()
 	else
 		m_DriftOffsetCurrent += (DriftTarget - m_DriftOffsetCurrent) * minimum(DeltaTime * TClientCameraSmoothSpeed(DriftSmooth), 1.0f);
 	m_DriftOffset = m_DriftOffsetCurrent;
+
+	float TiltTarget = 0.0f;
+	if(Tilt && Speed > 1.0f && (!Frozen || g_Config.m_TcCameraTiltFreeze) && (!Hooked || g_Config.m_TcCameraTiltHook) && (!Other || g_Config.m_TcCameraTiltOthers))
+	{
+		const float MaxAngle = g_Config.m_TcCameraTiltMaxAngle / 10.0f;
+		const float RefSpeed = maximum((float)g_Config.m_TcCameraTiltSpeedRef, 1.0f);
+		float T = std::clamp(Speed / RefSpeed, 0.0f, 1.0f);
+		if(g_Config.m_TcCameraTiltCurve == 1)
+			T = T * T * (3.0f - 2.0f * T);
+		else if(g_Config.m_TcCameraTiltCurve == 2)
+			T = T * T * T;
+		float Axis;
+		if(g_Config.m_TcCameraTiltMode == 1)
+			Axis = Vel.x >= 0.0f ? 1.0f : -1.0f;
+		else if(g_Config.m_TcCameraTiltMode == 2)
+			Axis = Vel.x >= 0.0f ? -1.0f : 1.0f;
+		else
+			Axis = std::clamp(Vel.x / RefSpeed, -1.0f, 1.0f);
+		TiltTarget = Axis * T * MaxAngle * g_Config.m_TcCameraTiltStrength / 100.0f;
+	}
+	const int TiltSmooth = g_Config.m_TcCameraTiltSmooth;
+	if(TiltSmooth <= 0)
+		m_TiltAngleCurrent = TiltTarget;
+	else
+		m_TiltAngleCurrent += (TiltTarget - m_TiltAngleCurrent) * minimum(DeltaTime * TClientCameraSmoothSpeed(TiltSmooth), 1.0f);
+	m_TiltAngle = m_TiltAngleCurrent * (pi / 180.0f);
+
+	if(g_Config.m_TcCameraTiltFit && Tilt)
+	{
+		const float AbsAngle = absolute(m_TiltAngle);
+		if(AbsAngle > 0.0001f)
+		{
+			const float Aspect = maximum(Graphics()->WorldAspect(), 0.01f);
+			const float Cover = cosf(AbsAngle) + sinf(AbsAngle) * maximum(Aspect, 1.0f / Aspect);
+			m_RenderZoom = std::clamp(m_RenderZoom / Cover, MinZoomLevel(), MaxZoomLevel());
+		}
+	}
 }
+
+static constexpr float SMOOTH_CAM_SPEED_SCALE = 1.75f;
 
 void CCamera::UpdateSmoothCamera()
 {
@@ -418,12 +466,12 @@ void CCamera::UpdateSmoothCamera()
 		if(Speed <= 0.0f)
 			return;
 
+		Speed *= SMOOTH_CAM_SPEED_SCALE;
+
 		m_SmoothCamActive = true;
 		m_SmoothCamTime = 0.0f;
 		m_SmoothCamSpeed = Speed;
 		m_SmoothCamStart = m_PrevCenter;
-		// fixed duration derived from the configured speed, so the flight always lands exactly
-		// on the live camera position instead of chasing it and popping at the end
 		m_SmoothCamDuration = std::clamp(10.0f / Speed, 0.6f, 3.0f);
 	}
 

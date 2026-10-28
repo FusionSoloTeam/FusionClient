@@ -115,7 +115,7 @@ void CGameClient::OnConsoleInit()
 	m_pFriends = Kernel()->RequestInterface<IFriends>();
 	m_pFoes = Client()->Foes();
 	m_pDiscord = Kernel()->RequestInterface<IDiscord>();
-	m_pDiscord->SetClientInfo(VCLIENT_NAME, VCLIENT_VERSION);
+	m_pDiscord->SetClientInfo(FUSION_NAME, FUSION_VERSION);
 #if defined(CONF_AUTOUPDATE)
 	m_pUpdater = Kernel()->RequestInterface<IUpdater>();
 #endif
@@ -127,6 +127,7 @@ void CGameClient::OnConsoleInit()
 					      &m_Skins7,
 					      &m_CountryFlags,
 					      &m_MapImages,
+				      &m_AnimatedAssets,
 					      &m_Effects, // doesn't render anything, just updates effects
 					      &m_SkinProfiles, // TClient
 					      &m_Binds,
@@ -143,6 +144,7 @@ void CGameClient::OnConsoleInit()
 					      &m_Background, // render instead of m_MapLayersBackground when g_Config.m_ClOverlayEntities == 100
 					      &m_MapLayersBackground, // first to render
 					      &m_BgDraw, // TClient
+					      &m_PracticeTags, // TClient
 					      &m_CursorTrailBackground, // TClient
 					      &m_Particles.m_RenderTrail,
 					      &m_Particles.m_RenderTrailExtra,
@@ -151,6 +153,7 @@ void CGameClient::OnConsoleInit()
 					      &m_Translate, // TClient
 					      &m_Ghost,
 					      &m_TClient, // TClient (Must be before chat and players)
+					      &m_FgfMotionBlur,
 					      &m_Players,
 						  &m_MovingTilesBackground, // TClient
 						  &m_MapLayersForeground,
@@ -188,6 +191,7 @@ void CGameClient::OnConsoleInit()
 					      &m_Mod, // TClient
 					      &m_CustomCommunities, // TClient
 					      &m_Vignette, // TClient
+					      &m_TileUnderCursor, // TClient
 					      &m_Hud,
 					      &m_Spectator,
 					      &m_Emoticon,
@@ -484,6 +488,9 @@ void CGameClient::OnInit()
 		m_Menus.RenderLoading(pLoadingDDNetCaption, pLoadingMessageAssets, 1);
 	}
 
+	m_CustomClientIcons.Init(Graphics());
+	m_AnimatedAssets.Refresh();
+
 	m_GameWorld.Init(Collision(), m_aTuningList, &m_MapBugs);
 	OnReset();
 
@@ -514,6 +521,45 @@ void CGameClient::OnInit()
 void CGameClient::OnUpdate()
 {
 	HandleLanguageChanged();
+
+	if(m_LastCustomClientsShare != g_Config.m_FcCustomClientsShare || m_LastCustomClientsDetect != g_Config.m_FcCustomClientsDetect)
+	{
+		const bool ShareChanged = m_LastCustomClientsShare != g_Config.m_FcCustomClientsShare;
+		m_LastCustomClientsShare = g_Config.m_FcCustomClientsShare;
+		m_LastCustomClientsDetect = g_Config.m_FcCustomClientsDetect;
+		if(ShareChanged && Client()->State() == IClient::STATE_ONLINE)
+		{
+			SendInfo(false);
+			if(Client()->DummyConnected())
+				SendDummyInfo(false);
+			m_ShareAnnounceTries = CUSTOM_CLIENT_ANNOUNCE_TRIES;
+			m_ShareAnnounceTick = 0;
+		}
+		else
+		{
+			m_ShareAnnounceTries = 0;
+		}
+		RefreshCustomClients();
+	}
+
+	if(m_ShareAnnounceTries > 0 && Client()->State() == IClient::STATE_ONLINE)
+	{
+		const int Local = m_Snap.m_LocalClientId;
+		const bool Announced = Local >= 0 && Local < MAX_CLIENTS &&
+					       (g_Config.m_FcCustomClientsShare ? m_aClients[Local].m_CustomClient == CUSTOM_CLIENT_ID_FUSION : m_aClients[Local].m_CustomClient == CUSTOM_CLIENT_NONE);
+		if(Announced)
+		{
+			m_ShareAnnounceTries = 0;
+		}
+		else if(m_ShareAnnounceTick <= Client()->GameTick(0))
+		{
+			SendInfo(false);
+			if(Client()->DummyConnected())
+				SendDummyInfo(false);
+			m_ShareAnnounceTries--;
+			m_ShareAnnounceTick = Client()->GameTick(0) + Client()->GameTickSpeed() * 2;
+		}
+	}
 
 	CUIElementBase::Init(Ui()); // update static pointer because game and editor use separate UI
 
@@ -878,8 +924,14 @@ void CGameClient::OnRender()
 	UpdateSpectatorCursor();
 
 	// render all systems
+	Graphics()->SetScreenRotation(m_Camera.TiltAngle());
 	for(auto &pComponent : m_vpAll)
+	{
+		if(pComponent == &m_AboveBelowPlayer || pComponent == &m_Hud)
+			Graphics()->SetScreenRotation(0.0f);
 		pComponent->OnRender();
+	}
+	Graphics()->SetScreenRotation(0.0f);
 
 	m_TClient.RenderInfoOverlay();
 
@@ -1068,6 +1120,11 @@ bool CGameClient::AntiPingGunfire() const
 	       g_Config.m_ClAntiPingGunfire;
 }
 
+bool CGameClient::PredictOwnWeapons() const
+{
+	return g_Config.m_TcPredictGuns && Predict();
+}
+
 bool CGameClient::Predict() const
 {
 	return g_Config.m_ClPredict &&
@@ -1093,7 +1150,6 @@ ColorRGBA CGameClient::GetDDTeamColor(int DDTeam, float Lightness) const
 		return color_cast<ColorRGBA>(ColorHSLA(DDTeam / 64.0f, 1.0f, Lightness));
 
 	// Use golden angle to generate unique colors with distinct adjacent colors.
-	// The first DDTeam (team 1) gets angle 0°, i.e. red hue.
 	const float Hue = std::fmod((DDTeam - 1) * normalized_golden_angle, 1.0f);
 	return color_cast<ColorRGBA>(ColorHSLA(Hue, 1.0f, Lightness));
 }
@@ -1842,6 +1898,8 @@ void CGameClient::OnNewSnapshot(bool DummySwapped)
 
 	m_NewTick = true;
 
+	CustomClientUpdateBestClient(Client(), Http(), g_Config.m_FcCustomClients && g_Config.m_FcCustomClientsBestClient);
+
 	ProcessEvents();
 
 	if(g_Config.m_DbgStress)
@@ -1900,6 +1958,8 @@ void CGameClient::OnNewSnapshot(bool DummySwapped)
 					}
 
 					IntsToStr(pInfo->m_aSkin, std::size(pInfo->m_aSkin), pClient->m_aSkinName, std::size(pClient->m_aSkinName));
+					char aRawSkin[MAX_SKIN_LENGTH];
+					str_copy(aRawSkin, pClient->m_aSkinName);
 					if(!CSkin::IsValidName(pClient->m_aSkinName) ||
 						(!m_GameInfo.m_AllowXSkins && CSkins::IsSpecialSkin(pClient->m_aSkinName)))
 					{
@@ -1907,8 +1967,19 @@ void CGameClient::OnNewSnapshot(bool DummySwapped)
 					}
 
 					pClient->m_UseCustomColor = pInfo->m_UseCustomColor;
-					pClient->m_ColorBody = pInfo->m_ColorBody;
-					pClient->m_ColorFeet = pInfo->m_ColorFeet;
+					pClient->m_ColorBodyRaw = pInfo->m_ColorBody;
+					pClient->m_ColorFeetRaw = pInfo->m_ColorFeet;
+					pClient->m_CustomClient = g_Config.m_FcCustomClients && g_Config.m_FcCustomClientsDetect
+						? CustomClientDetect(pInfo->m_ColorBody, pInfo->m_ColorFeet, aRawSkin)
+						: CUSTOM_CLIENT_NONE;
+
+
+					if(pClient->m_CustomClient == CUSTOM_CLIENT_NONE && g_Config.m_FcCustomClients && g_Config.m_FcCustomClientsDetect && CustomClientIsBestClient(ClientId))
+					{
+						pClient->m_CustomClient = CUSTOM_CLIENT_ID_BESTCLIENT;
+					}
+					pClient->m_ColorBody = pInfo->m_ColorBody & 0xFFFFFF;
+					pClient->m_ColorFeet = pInfo->m_ColorFeet & 0xFFFFFF;
 				}
 			}
 			else if(Item.m_Type == NETOBJTYPE_PLAYERINFO)
@@ -3504,6 +3575,9 @@ void CGameClient::CClientData::Reset()
 	m_UseCustomColor = 0;
 	m_ColorBody = 0;
 	m_ColorFeet = 0;
+	m_CustomClient = CUSTOM_CLIENT_NONE;
+	m_ColorBodyRaw = 0;
+	m_ColorFeetRaw = 0;
 
 	m_aName[0] = '\0';
 	m_aClan[0] = '\0';
@@ -3708,6 +3782,21 @@ bool CGameClient::GotWantedSkin7(bool Dummy)
 	return true;
 }
 
+void CGameClient::RefreshCustomClients()
+{
+	for(int i = 0; i < MAX_CLIENTS; i++)
+	{
+		CClientData &Client = m_aClients[i];
+		if(!Client.m_Active)
+			continue;
+		Client.m_CustomClient = g_Config.m_FcCustomClients && g_Config.m_FcCustomClientsDetect
+			? CustomClientDetect(Client.m_ColorBodyRaw, Client.m_ColorFeetRaw, Client.m_aSkinName)
+			: CUSTOM_CLIENT_NONE;
+		if(Client.m_CustomClient == CUSTOM_CLIENT_NONE && g_Config.m_FcCustomClients && g_Config.m_FcCustomClientsDetect && CustomClientIsBestClient(i))
+			Client.m_CustomClient = CUSTOM_CLIENT_ID_BESTCLIENT;
+	}
+}
+
 void CGameClient::SendInfo(bool Start)
 {
 	if(m_pClient->IsSixup())
@@ -3718,6 +3807,12 @@ void CGameClient::SendInfo(bool Start)
 			SendSkinChange7(false);
 		return;
 	}
+	int ColorBody = g_Config.m_ClPlayerColorBody;
+	int ColorFeet = g_Config.m_ClPlayerColorFeet;
+	if(g_Config.m_FcCustomClients && g_Config.m_FcCustomClientsShare)
+		MACRO_INSERT_CCID_INTO_SKIN_COLOR(ColorBody, ColorFeet, CCID_COLOR_BODY_FUSION, CCID_COLOR_FEET_FUSION);
+
+
 	if(Start)
 	{
 		CNetMsg_Cl_StartInfo Msg;
@@ -3726,8 +3821,8 @@ void CGameClient::SendInfo(bool Start)
 		Msg.m_Country = g_Config.m_PlayerCountry;
 		Msg.m_pSkin = g_Config.m_ClPlayerSkin;
 		Msg.m_UseCustomColor = g_Config.m_ClPlayerUseCustomColor;
-		Msg.m_ColorBody = g_Config.m_ClPlayerColorBody;
-		Msg.m_ColorFeet = g_Config.m_ClPlayerColorFeet;
+		Msg.m_ColorBody = ColorBody;
+		Msg.m_ColorFeet = ColorFeet;
 		CMsgPacker Packer(&Msg);
 		Msg.Pack(&Packer);
 		Client()->SendMsg(IClient::CONN_MAIN, &Packer, MSGFLAG_VITAL | MSGFLAG_FLUSH);
@@ -3741,8 +3836,8 @@ void CGameClient::SendInfo(bool Start)
 		Msg.m_Country = g_Config.m_PlayerCountry;
 		Msg.m_pSkin = g_Config.m_ClPlayerSkin;
 		Msg.m_UseCustomColor = g_Config.m_ClPlayerUseCustomColor;
-		Msg.m_ColorBody = g_Config.m_ClPlayerColorBody;
-		Msg.m_ColorFeet = g_Config.m_ClPlayerColorFeet;
+		Msg.m_ColorBody = ColorBody;
+		Msg.m_ColorFeet = ColorFeet;
 		CMsgPacker Packer(&Msg);
 		Msg.Pack(&Packer);
 		Client()->SendMsg(IClient::CONN_MAIN, &Packer, MSGFLAG_VITAL);
@@ -3760,6 +3855,11 @@ void CGameClient::SendDummyInfo(bool Start)
 			SendSkinChange7(true);
 		return;
 	}
+	int ColorBody = g_Config.m_ClDummyColorBody;
+	int ColorFeet = g_Config.m_ClDummyColorFeet;
+	if(g_Config.m_FcCustomClients && g_Config.m_FcCustomClientsShare)
+		MACRO_INSERT_CCID_INTO_SKIN_COLOR(ColorBody, ColorFeet, CCID_COLOR_BODY_FUSION, CCID_COLOR_FEET_FUSION);
+
 	if(Start)
 	{
 		CNetMsg_Cl_StartInfo Msg;
@@ -3768,8 +3868,8 @@ void CGameClient::SendDummyInfo(bool Start)
 		Msg.m_Country = g_Config.m_ClDummyCountry;
 		Msg.m_pSkin = g_Config.m_ClDummySkin;
 		Msg.m_UseCustomColor = g_Config.m_ClDummyUseCustomColor;
-		Msg.m_ColorBody = g_Config.m_ClDummyColorBody;
-		Msg.m_ColorFeet = g_Config.m_ClDummyColorFeet;
+		Msg.m_ColorBody = ColorBody;
+		Msg.m_ColorFeet = ColorFeet;
 		CMsgPacker Packer(&Msg);
 		Msg.Pack(&Packer);
 		Client()->SendMsg(IClient::CONN_DUMMY, &Packer, MSGFLAG_VITAL);
@@ -3783,8 +3883,8 @@ void CGameClient::SendDummyInfo(bool Start)
 		Msg.m_Country = g_Config.m_ClDummyCountry;
 		Msg.m_pSkin = g_Config.m_ClDummySkin;
 		Msg.m_UseCustomColor = g_Config.m_ClDummyUseCustomColor;
-		Msg.m_ColorBody = g_Config.m_ClDummyColorBody;
-		Msg.m_ColorFeet = g_Config.m_ClDummyColorFeet;
+		Msg.m_ColorBody = ColorBody;
+		Msg.m_ColorFeet = ColorFeet;
 		CMsgPacker Packer(&Msg);
 		Msg.Pack(&Packer);
 		Client()->SendMsg(IClient::CONN_DUMMY, &Packer, MSGFLAG_VITAL);
@@ -3879,6 +3979,13 @@ int CGameClient::IntersectCharacter(vec2 HookPos, vec2 NewPos, vec2 &NewPos2, in
 
 	const CClientData &OwnClientData = m_aClients[OwnId];
 
+	bool OwnSolo = OwnClientData.m_Solo;
+	if(g_Config.m_TcPredictSoloTiles && Predict())
+	{
+		if(const CCharacter *pOwnChar = m_PredictedWorld.GetCharacterById(OwnId))
+			OwnSolo = pOwnChar->Core()->m_Solo;
+	}
+
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
 		if(i == OwnId)
@@ -3895,7 +4002,7 @@ int CGameClient::IntersectCharacter(vec2 HookPos, vec2 NewPos, vec2 &NewPos2, in
 		vec2 Position = mix(vec2(Prev.m_X, Prev.m_Y), vec2(Player.m_X, Player.m_Y), Client()->IntraGameTick(g_Config.m_ClDummy));
 
 		bool IsOneSuper = Data.m_Super || OwnClientData.m_Super;
-		bool IsOneSolo = Data.m_Solo || OwnClientData.m_Solo;
+		bool IsOneSolo = Data.m_Solo || OwnSolo;
 
 		if(!IsOneSuper && (!m_Teams.SameTeam(i, OwnId) || IsOneSolo || OwnClientData.m_HookHitDisabled))
 			continue;
@@ -4011,7 +4118,7 @@ void CGameClient::UpdatePrediction()
 	m_GameWorld.m_WorldConfig.m_PredictDDRace = m_GameInfo.m_PredictDDRace;
 	m_GameWorld.m_WorldConfig.m_PredictTiles = m_GameInfo.m_PredictDDRace && m_GameInfo.m_PredictDDRaceTiles;
 	m_GameWorld.m_WorldConfig.m_PredictFreeze = g_Config.m_ClPredictFreeze;
-	m_GameWorld.m_WorldConfig.m_PredictWeapons = AntiPingWeapons();
+	m_GameWorld.m_WorldConfig.m_PredictWeapons = AntiPingWeapons() || PredictOwnWeapons();
 	m_GameWorld.m_WorldConfig.m_PredictLights = g_Config.m_TcPredictLasers;
 	m_GameWorld.m_WorldConfig.m_BugDDRaceInput = m_GameInfo.m_BugDDRaceInput;
 	m_GameWorld.m_WorldConfig.m_NoWeakHookAndBounce = m_GameInfo.m_NoWeakHookAndBounce;
@@ -4332,7 +4439,7 @@ void CGameClient::UpdateRenderedCharacters()
 			if(i == m_Snap.m_LocalClientId || IsDummy)
 			{
 				m_aClients[i].m_IsPredictedLocal = true;
-				if(AntiPingGunfire() && ((pChar->m_NinjaJetpack && pChar->m_FreezeTime == 0) || m_Snap.m_aCharacters[i].m_Cur.m_Weapon != WEAPON_NINJA || m_Snap.m_aCharacters[i].m_Cur.m_Weapon == m_aClients[i].m_Predicted.m_ActiveWeapon))
+				if((AntiPingGunfire() || PredictOwnWeapons()) && ((pChar->m_NinjaJetpack && pChar->m_FreezeTime == 0) || m_Snap.m_aCharacters[i].m_Cur.m_Weapon != WEAPON_NINJA || m_Snap.m_aCharacters[i].m_Cur.m_Weapon == m_aClients[i].m_Predicted.m_ActiveWeapon))
 				{
 					m_aClients[i].m_RenderCur.m_AttackTick = pChar->GetAttackTick();
 					if(m_Snap.m_aCharacters[i].m_Cur.m_Weapon != WEAPON_NINJA && !(pChar->m_NinjaJetpack && pChar->Core()->m_ActiveWeapon == WEAPON_GUN))
@@ -4677,7 +4784,7 @@ bool CGameClient::IsOtherTeam(int ClientId) const
 	else
 	{
 		bool LocalSolo = m_aClients[m_Snap.m_LocalClientId].m_Solo;
-		if(g_Config.m_TcPredictTpTiles && Predict())
+		if((g_Config.m_TcPredictSoloTiles || g_Config.m_TcPredictTpTiles) && Predict())
 			LocalSolo = m_PredictedWorld.Teams()->GetSolo(m_Snap.m_LocalClientId);
 		if((LocalSolo || m_aClients[ClientId].m_Solo) && !Local)
 			return true;
@@ -4724,7 +4831,41 @@ CGameClient::CImageAsset CGameClient::LoadAssetFromPath(const char *pPath, bool 
 		str_format(LoadedAsset.m_aPath, sizeof(LoadedAsset.m_aPath), "assets/%s/%s.png", pDirectory, pPath);
 	}
 
-	Graphics()->LoadPng(LoadedAsset.m_ImageInfo, LoadedAsset.m_aPath, IStorage::TYPE_ALL);
+	if(LoadedAsset.m_IsDefault || Storage()->FileExists(LoadedAsset.m_aPath, IStorage::TYPE_ALL))
+		Graphics()->LoadPng(LoadedAsset.m_ImageInfo, LoadedAsset.m_aPath, IStorage::TYPE_ALL);
+
+	char aGifPath[IO_MAX_PATH_LENGTH];
+	if(CVcAnimatedAssets::ResolveAnimationPath(Storage(), pPath, pDirectory, aGifPath, sizeof(aGifPath)))
+	{
+		str_copy(LoadedAsset.m_aGifPath, aGifPath, sizeof(LoadedAsset.m_aGifPath));
+
+		size_t TargetWidth = 0;
+		size_t TargetHeight = 0;
+		const char *pExtension = CVcAnimatedAssets::AnimationExtension(aGifPath);
+		if(pExtension != nullptr && str_comp_nocase(pExtension, ".gif") != 0)
+		{
+			CImageInfo DefaultInfo;
+			if(Graphics()->LoadPng(DefaultInfo, g_pData->m_aImages[AssetId].m_pFilename, IStorage::TYPE_ALL))
+			{
+				TargetWidth = DefaultInfo.m_Width;
+				TargetHeight = DefaultInfo.m_Height;
+				DefaultInfo.Free();
+			}
+		}
+
+		CGifAnimation Gif;
+		if(CVcAnimatedAssets::LoadAnimationFile(Storage(), LoadedAsset.m_aGifPath, Gif, 1, TargetWidth, TargetHeight) && !Gif.m_vFrames.empty())
+		{
+			const CImageInfo &Frame = Gif.m_vFrames[0].m_Image;
+			LoadedAsset.m_ImageInfo.Free();
+			LoadedAsset.m_ImageInfo.m_Width = Frame.m_Width;
+			LoadedAsset.m_ImageInfo.m_Height = Frame.m_Height;
+			LoadedAsset.m_ImageInfo.m_Format = Frame.m_Format;
+			LoadedAsset.m_ImageInfo.Allocate();
+			mem_copy(LoadedAsset.m_ImageInfo.m_pData, Frame.m_pData, Frame.DataSize());
+		}
+		Gif.Free();
+	}
 
 	if(!LoadedAsset.m_IsDefault && LoadedAsset.IsLoaded())
 	{
@@ -4854,6 +4995,7 @@ void CGameClient::LoadGameSkin(const char *pPath, bool AsDir)
 	}
 	else if(LoadedAsset.IsLoaded() && Graphics()->CheckImageDivisibility(LoadedAsset.m_aPath, ImgInfo, g_pData->m_aSprites[SPRITE_HEALTH_FULL].m_pSet->m_Gridx, g_pData->m_aSprites[SPRITE_HEALTH_FULL].m_pSet->m_Gridy, true) && Graphics()->IsImageFormatRgba(LoadedAsset.m_aPath, ImgInfo))
 	{
+		m_AnimatedAssets.BeginRecording();
 		m_GameSkin.m_SpriteHealthFull = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_HEALTH_FULL]);
 		m_GameSkin.m_SpriteHealthEmpty = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_HEALTH_EMPTY]);
 		m_GameSkin.m_SpriteArmorFull = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_ARMOR_FULL]);
@@ -4975,6 +5117,7 @@ void CGameClient::LoadGameSkin(const char *pPath, bool AsDir)
 			m_GameSkin.m_SpriteNinjaBarEmptyRight = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &client_data7::g_pData->m_aSprites[client_data7::SPRITE_NINJA_BAR_EMPTY_RIGHT]);
 		}
 
+		m_AnimatedAssets.EndRecording("game", LoadedAsset.m_aGifPath, ImgInfo.m_Width, ImgInfo.m_Height);
 		m_GameSkinLoaded = true;
 	}
 	ImgInfo.Free();
@@ -5004,9 +5147,11 @@ void CGameClient::LoadEmoticonsSkin(const char *pPath, bool AsDir)
 	}
 	else if(LoadedAsset.IsLoaded() && Graphics()->CheckImageDivisibility(LoadedAsset.m_aPath, ImgInfo, g_pData->m_aSprites[SPRITE_OOP].m_pSet->m_Gridx, g_pData->m_aSprites[SPRITE_OOP].m_pSet->m_Gridy, true) && Graphics()->IsImageFormatRgba(LoadedAsset.m_aPath, ImgInfo))
 	{
+		m_AnimatedAssets.BeginRecording();
 		for(int i = 0; i < 16; ++i)
 			m_EmoticonsSkin.m_aSpriteEmoticons[i] = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_OOP + i]);
 
+		m_AnimatedAssets.EndRecording("emoticons", LoadedAsset.m_aGifPath, ImgInfo.m_Width, ImgInfo.m_Height);
 		m_EmoticonsSkinLoaded = true;
 	}
 	ImgInfo.Free();
@@ -5046,6 +5191,7 @@ void CGameClient::LoadParticlesSkin(const char *pPath, bool AsDir)
 	}
 	else if(LoadedAsset.IsLoaded() && Graphics()->CheckImageDivisibility(LoadedAsset.m_aPath, ImgInfo, g_pData->m_aSprites[SPRITE_PART_SLICE].m_pSet->m_Gridx, g_pData->m_aSprites[SPRITE_PART_SLICE].m_pSet->m_Gridy, true) && Graphics()->IsImageFormatRgba(LoadedAsset.m_aPath, ImgInfo))
 	{
+		m_AnimatedAssets.BeginRecording();
 		m_ParticlesSkin.m_SpriteParticleSlice = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_PART_SLICE]);
 		m_ParticlesSkin.m_SpriteParticleBall = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_PART_BALL]);
 		for(int i = 0; i < 3; ++i)
@@ -5066,6 +5212,7 @@ void CGameClient::LoadParticlesSkin(const char *pPath, bool AsDir)
 		m_ParticlesSkin.m_aSpriteParticles[8] = m_ParticlesSkin.m_SpriteParticleAirJump;
 		m_ParticlesSkin.m_aSpriteParticles[9] = m_ParticlesSkin.m_SpriteParticleHit;
 
+		m_AnimatedAssets.EndRecording("particles", LoadedAsset.m_aGifPath, ImgInfo.m_Width, ImgInfo.m_Height);
 		m_ParticlesSkinLoaded = true;
 	}
 	ImgInfo.Free();
@@ -5123,6 +5270,7 @@ void CGameClient::LoadHudSkin(const char *pPath, bool AsDir)
 	}
 	else if(LoadedAsset.IsLoaded() && Graphics()->CheckImageDivisibility(LoadedAsset.m_aPath, ImgInfo, g_pData->m_aSprites[SPRITE_HUD_AIRJUMP].m_pSet->m_Gridx, g_pData->m_aSprites[SPRITE_HUD_AIRJUMP].m_pSet->m_Gridy, true) && Graphics()->IsImageFormatRgba(LoadedAsset.m_aPath, ImgInfo))
 	{
+		m_AnimatedAssets.BeginRecording();
 		m_HudSkin.m_SpriteHudAirjump = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_HUD_AIRJUMP]);
 		m_HudSkin.m_SpriteHudAirjumpEmpty = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_HUD_AIRJUMP_EMPTY]);
 		m_HudSkin.m_SpriteHudSolo = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_HUD_SOLO]);
@@ -5155,6 +5303,7 @@ void CGameClient::LoadHudSkin(const char *pPath, bool AsDir)
 		m_HudSkin.m_SpriteHudDummyHammer = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_HUD_DUMMY_HAMMER]);
 		m_HudSkin.m_SpriteHudDummyCopy = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_HUD_DUMMY_COPY]);
 
+		m_AnimatedAssets.EndRecording("hud", LoadedAsset.m_aGifPath, ImgInfo.m_Width, ImgInfo.m_Height);
 		m_HudSkinLoaded = true;
 	}
 	ImgInfo.Free();
@@ -5213,6 +5362,7 @@ void CGameClient::LoadExtrasSkin(const char *pPath, bool AsDir)
 	}
 	else if(LoadedAsset.IsLoaded() && Graphics()->CheckImageDivisibility(LoadedAsset.m_aPath, ImgInfo, g_pData->m_aSprites[SPRITE_PART_SNOWFLAKE].m_pSet->m_Gridx, g_pData->m_aSprites[SPRITE_PART_SNOWFLAKE].m_pSet->m_Gridy, true) && Graphics()->IsImageFormatRgba(LoadedAsset.m_aPath, ImgInfo))
 	{
+		m_AnimatedAssets.BeginRecording();
 		m_ExtrasSkin.m_SpriteParticleSnowflake = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_PART_SNOWFLAKE]);
 		m_ExtrasSkin.m_SpriteParticleSparkle = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_PART_SPARKLE]);
 		m_ExtrasSkin.m_SpritePulley = Graphics()->LoadSpriteTexture(ImgInfo, FallbackImgInfo, &g_pData->m_aSprites[SPRITE_PART_PULLEY]);
@@ -5223,6 +5373,7 @@ void CGameClient::LoadExtrasSkin(const char *pPath, bool AsDir)
 		m_ExtrasSkin.m_aSpriteParticles[2] = m_ExtrasSkin.m_SpritePulley;
 		m_ExtrasSkin.m_aSpriteParticles[3] = m_ExtrasSkin.m_SpriteHectagon;
 
+		m_AnimatedAssets.EndRecording("extras", LoadedAsset.m_aGifPath, ImgInfo.m_Width, ImgInfo.m_Height);
 		m_ExtrasSkinLoaded = true;
 	}
 	ImgInfo.Free();

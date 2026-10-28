@@ -95,7 +95,6 @@ bool CHttpRequestCurl::ConfigureHandle(CURL *pHandle)
 		curl_easy_setopt(pHandle, CURLOPT_TIMECONDITION, CURL_TIMECOND_IFMODSINCE);
 	}
 
-	// ‘CURLOPT_PROTOCOLS’ is deprecated: since 7.85.0. Use CURLOPT_PROTOCOLS_STR
 	// Wait until all platforms have 7.85.0
 #ifdef __GNUC__
 #pragma GCC diagnostic push
@@ -122,7 +121,6 @@ bool CHttpRequestCurl::ConfigureHandle(CURL *pHandle)
 	curl_easy_setopt(pHandle, CURLOPT_WRITEFUNCTION, WriteCallback);
 	curl_easy_setopt(pHandle, CURLOPT_NOPROGRESS, 0L);
 	curl_easy_setopt(pHandle, CURLOPT_PROGRESSDATA, this);
-	// ‘CURLOPT_PROGRESSFUNCTION’ is deprecated: since 7.32.0. Use CURLOPT_XFERINFOFUNCTION
 	// See problems with curl_off_t type in header file in https://github.com/ddnet/ddnet/pull/6185/
 #ifdef __GNUC__
 #pragma GCC diagnostic push
@@ -148,6 +146,12 @@ bool CHttpRequestCurl::ConfigureHandle(CURL *pHandle)
 #ifdef CONF_PLATFORM_ANDROID
 	curl_easy_setopt(pHandle, CURLOPT_CAPATH, "/system/etc/security/cacerts");
 #endif
+
+	if(m_InsecureSsl)
+	{
+		curl_easy_setopt(pHandle, CURLOPT_SSL_VERIFYPEER, 0L);
+		curl_easy_setopt(pHandle, CURLOPT_SSL_VERIFYHOST, 0L);
+	}
 
 	switch(m_Type)
 	{

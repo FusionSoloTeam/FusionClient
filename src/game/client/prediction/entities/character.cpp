@@ -5,6 +5,8 @@
 #include "laser.h"
 #include "projectile.h"
 
+#include <base/dbg.h>
+
 #include <engine/shared/config.h>
 
 #include <generated/client_data.h>
@@ -776,6 +778,134 @@ bool CCharacter::IsSwitchActiveCb(unsigned char Number, void *pUser)
 	return !aSwitchers.empty() && pThis->Team() != pThis->TeamsCore()->TeamSuper() && aSwitchers[Number].m_aStatus[pThis->Team()];
 }
 
+void CCharacter::HandleSoloTiles()
+{
+	if(((m_TileIndex == TILE_SOLO_ENABLE) || (m_TileFIndex == TILE_SOLO_ENABLE)) && !TeamsCore()->GetSolo(GetCid()))
+	{
+		SetSolo(true);
+	}
+	else if(((m_TileIndex == TILE_SOLO_DISABLE) || (m_TileFIndex == TILE_SOLO_DISABLE)) && TeamsCore()->GetSolo(GetCid()))
+	{
+		SetSolo(false);
+	}
+}
+
+bool CCharacter::HandleTeleportTiles(int MapIndex)
+{
+	int z = Collision()->IsTeleport(MapIndex);
+	if(z && !Collision()->TeleOuts(z - 1).empty())
+	{
+		if(m_Core.m_Super || m_Core.m_Invincible)
+			return true;
+		if(!g_Config.m_TcPredictTpTiles || Collision()->TeleOuts(z - 1).size() > 1)
+		{
+			if(g_Config.m_Debug)
+				dbg_msg("tc-tele", "not predicting teleport %d, %d outs", z, (int)Collision()->TeleOuts(z - 1).size());
+			return true;
+		}
+		m_Core.m_Pos = Collision()->TeleOuts(z - 1)[0];
+		if(g_Config.m_Debug)
+			dbg_msg("tc-tele", "predicted teleport %d to (%.0f, %.0f)", z, m_Core.m_Pos.x, m_Core.m_Pos.y);
+		if(!g_Config.m_SvTeleportHoldHook && !g_Config.m_SvOldTeleportHook)
+		{
+			ResetHook();
+			GameWorld()->ReleaseHooked(m_Id);
+		}
+		if(g_Config.m_SvTeleportLoseWeapons)
+			ResetPickups();
+		return true;
+	}
+	int evilz = Collision()->IsEvilTeleport(MapIndex);
+	if(evilz && !Collision()->TeleOuts(evilz - 1).empty())
+	{
+		if(m_Core.m_Super || m_Core.m_Invincible)
+			return true;
+		if(!g_Config.m_TcPredictTpTiles || Collision()->TeleOuts(evilz - 1).size() > 1)
+		{
+			if(g_Config.m_Debug)
+				dbg_msg("tc-tele", "not predicting evil teleport %d, %d outs", evilz, (int)Collision()->TeleOuts(evilz - 1).size());
+			return true;
+		}
+		m_Core.m_Pos = Collision()->TeleOuts(evilz - 1)[0];
+		if(g_Config.m_Debug)
+			dbg_msg("tc-tele", "predicted evil teleport %d to (%.0f, %.0f)", evilz, m_Core.m_Pos.x, m_Core.m_Pos.y);
+		if(!g_Config.m_SvOldTeleportWeapons)
+		{
+			m_Core.m_Vel = vec2(0, 0);
+
+			if(!g_Config.m_SvTeleportHoldHook)
+			{
+				ResetHook();
+				GameWorld()->ReleaseHooked(m_Id);
+			}
+			if(g_Config.m_SvTeleportLoseWeapons)
+				ResetPickups();
+		}
+		return true;
+	}
+	if(Collision()->IsCheckEvilTeleport(MapIndex))
+	{
+		if(m_Core.m_Super || m_Core.m_Invincible)
+			return true;
+		for(int k = m_TeleCheckpoint - 1; k >= 0; k--)
+		{
+			if(!Collision()->TeleCheckOuts(k).empty())
+			{
+				if(!g_Config.m_TcPredictTpTiles || Collision()->TeleCheckOuts(k).size() > 1)
+					return true;
+				m_Core.m_Pos = Collision()->TeleCheckOuts(k)[0];
+				m_Core.m_Vel = vec2(0, 0);
+
+				if(!g_Config.m_SvTeleportHoldHook)
+				{
+					ResetHook();
+					GameWorld()->ReleaseHooked(m_Id);
+				}
+				if(g_Config.m_SvTeleportLoseWeapons)
+					ResetPickups();
+
+				return true;
+			}
+		}
+		return true;
+	}
+	if(Collision()->IsCheckTeleport(MapIndex))
+	{
+		if(m_Core.m_Super || m_Core.m_Invincible)
+			return true;
+		for(int k = m_TeleCheckpoint - 1; k >= 0; k--)
+		{
+			if(!Collision()->TeleCheckOuts(k).empty())
+			{
+				if(!g_Config.m_TcPredictTpTiles || Collision()->TeleCheckOuts(k).size() > 1)
+					return true;
+				m_Core.m_Pos = Collision()->TeleCheckOuts(k)[0];
+
+				if(!g_Config.m_SvTeleportHoldHook)
+				{
+					ResetHook();
+				}
+				if(g_Config.m_SvTeleportLoseWeapons)
+					ResetPickups();
+
+				return true;
+			}
+		}
+		return true;
+	}
+	return false;
+}
+
+void CCharacter::ResetPickups()
+{
+	for(int i = WEAPON_SHOTGUN; i < NUM_WEAPONS - 1; i++)
+	{
+		m_Core.m_aWeapons[i].m_Got = false;
+		if(m_Core.m_ActiveWeapon == i)
+			m_Core.m_ActiveWeapon = WEAPON_GUN;
+	}
+}
+
 void CCharacter::HandleTiles(int Index)
 {
 	int MapIndex = Index;
@@ -784,7 +914,15 @@ void CCharacter::HandleTiles(int Index)
 	m_MoveRestrictions = Collision()->GetMoveRestrictions(IsSwitchActiveCb, this, m_Pos, 18.0f, MapIndex);
 
 	if(!GameWorld()->m_WorldConfig.m_PredictTiles)
+	{
+		if(Index < 0)
+			return;
+		if(g_Config.m_TcPredictSoloTiles)
+			HandleSoloTiles();
+		if(g_Config.m_TcPredictTpTiles)
+			HandleTeleportTiles(MapIndex);
 		return;
+	}
 
 	if(Index < 0)
 	{
@@ -904,125 +1042,11 @@ void CCharacter::HandleTiles(int Index)
 	}
 
 	// solo part
-	if(((m_TileIndex == TILE_SOLO_ENABLE) || (m_TileFIndex == TILE_SOLO_ENABLE)) && !TeamsCore()->GetSolo(GetCid()))
-	{
-		SetSolo(true);
-	}
-	else if(((m_TileIndex == TILE_SOLO_DISABLE) || (m_TileFIndex == TILE_SOLO_DISABLE)) && TeamsCore()->GetSolo(GetCid()))
-	{
-		SetSolo(false);
-	}
+	if(g_Config.m_TcPredictSoloTiles)
+		HandleSoloTiles();
 
-	// predict teleport tiles
-	int z = Collision()->IsTeleport(MapIndex);
-	if(!g_Config.m_SvOldTeleportHook && !g_Config.m_SvOldTeleportWeapons && z && !Collision()->TeleOuts(z - 1).empty())
-	{
-		if(m_Core.m_Super || m_Core.m_Invincible)
-			return;
-		if(!g_Config.m_TcPredictTpTiles || Collision()->TeleOuts(z - 1).size() > 1)
-			return;
-		if(g_Config.m_TcPredictTpTiles)
-			m_Core.m_Pos = Collision()->TeleOuts(z - 1)[0];
-		/*if(g_Config.m_SvTeleportLoseWeapons)
-			ResetPickups();*/
+	if(HandleTeleportTiles(MapIndex))
 		return;
-	}
-	int evilz = Collision()->IsEvilTeleport(MapIndex);
-	if(evilz && !Collision()->TeleOuts(evilz - 1).empty())
-	{
-		if(m_Core.m_Super || m_Core.m_Invincible)
-			return;
-		if(!g_Config.m_TcPredictTpTiles || Collision()->TeleOuts(evilz - 1).size() > 1)
-			return;
-		m_Core.m_Pos = Collision()->TeleOuts(evilz - 1)[0];
-		if(!g_Config.m_SvOldTeleportHook && !g_Config.m_SvOldTeleportWeapons)
-		{
-			m_Core.m_Vel = vec2(0, 0);
-
-			if(!g_Config.m_SvTeleportHoldHook)
-			{
-				ResetHook();
-				GameWorld()->ReleaseHooked(m_Id);
-			}
-			/*if(g_Config.m_SvTeleportLoseWeapons)
-			{
-				ResetPickups();
-			}*/
-		}
-		return;
-	}
-	if(Collision()->IsCheckEvilTeleport(MapIndex))
-	{
-		if(m_Core.m_Super || m_Core.m_Invincible)
-			return;
-		// first check if there is a TeleCheckOut for the current recorded checkpoint, if not check previous checkpoints
-		for(int k = m_TeleCheckpoint - 1; k >= 0; k--)
-		{
-			if(!Collision()->TeleCheckOuts(k).empty())
-			{
-				if(!g_Config.m_TcPredictTpTiles || Collision()->TeleCheckOuts(k).size() > 1)
-					return;
-				m_Core.m_Pos = Collision()->TeleCheckOuts(k)[0];
-				m_Core.m_Vel = vec2(0, 0);
-
-				if(!g_Config.m_SvTeleportHoldHook)
-				{
-					ResetHook();
-					GameWorld()->ReleaseHooked(m_Id);
-				}
-
-				return;
-			}
-		}
-		// if no checkpointout have been found (or if there no recorded checkpoint), teleport to start
-		/*vec2 SpawnPos;
-		if(GameServer()->m_pController->CanSpawn(m_pPlayer->GetTeam(), &SpawnPos, GameServer()->GetDDRaceTeam(GetPlayer()->GetCid())))
-		{
-			m_Core.m_Pos = SpawnPos;
-			m_Core.m_Vel = vec2(0, 0);
-
-			if(!g_Config.m_SvTeleportHoldHook)
-			{
-				ResetHook();
-				GameWorld()->ReleaseHooked(GetPlayer()->GetCid());
-			}
-		}*/
-		return;
-	}
-	if(Collision()->IsCheckTeleport(MapIndex))
-	{
-		if(m_Core.m_Super || m_Core.m_Invincible)
-			return;
-		// first check if there is a TeleCheckOut for the current recorded checkpoint, if not check previous checkpoints
-		for(int k = m_TeleCheckpoint - 1; k >= 0; k--)
-		{
-			if(!Collision()->TeleCheckOuts(k).empty())
-			{
-				if(!g_Config.m_TcPredictTpTiles || Collision()->TeleCheckOuts(k).size() > 1)
-					return;
-				m_Core.m_Pos = Collision()->TeleCheckOuts(k)[0];
-
-				if(!g_Config.m_SvTeleportHoldHook)
-				{
-					ResetHook();
-				}
-
-				return;
-			}
-		}
-		// if no checkpointout have been found (or if there no recorded checkpoint), teleport to start
-		/*vec2 SpawnPos;
-		if(GameServer()->m_pController->CanSpawn(m_pPlayer->GetTeam(), &SpawnPos, GameServer()->GetDDRaceTeam(GetPlayer()->GetCid())))
-		{
-			m_Core.m_Pos = SpawnPos;
-
-			if(!g_Config.m_SvTeleportHoldHook)
-			{
-				ResetHook();
-			}
-		}*/
-		return;
-	}
 
 	// refill jumps
 	if(((m_TileIndex == TILE_REFILL_JUMPS) || (m_TileFIndex == TILE_REFILL_JUMPS)) && !m_LastRefillJumps)
@@ -1255,7 +1279,18 @@ void CCharacter::DDRaceTick()
 void CCharacter::DDRacePostCoreTick()
 {
 	if(!GameWorld()->m_WorldConfig.m_PredictDDRace)
+	{
+		if(g_Config.m_TcPredictSoloTiles || g_Config.m_TcPredictTpTiles)
+		{
+			std::vector<int> vIndices = Collision()->GetMapIndices(m_PrevPos, m_Pos);
+			if(vIndices.empty())
+				HandleTiles(Collision()->GetMapIndex(m_Pos));
+			else
+				for(const int Index : vIndices)
+					HandleTiles(Index);
+		}
 		return;
+	}
 
 	if(m_Core.m_EndlessHook)
 		m_Core.m_HookTick = 0;

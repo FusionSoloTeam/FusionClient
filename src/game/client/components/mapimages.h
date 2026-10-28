@@ -82,8 +82,12 @@ public:
 	int GetTextureScale() const;
 
 	void ChangeEntitiesPath(const char *pPath);
+	bool ApplyEntitiesFrame(const CImageInfo &Sheet);
+	bool GetEntitiesSheetSize(size_t &Width, size_t &Height) const;
 
 private:
+	size_t m_EntitiesSheetWidth = 0;
+	size_t m_EntitiesSheetHeight = 0;
 	bool m_aEntitiesIsLoaded[MAP_IMAGE_MOD_TYPE_COUNT * 2];
 	bool m_SpeedupArrowIsLoaded;
 	bool m_TuneColorsIsLoaded;

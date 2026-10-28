@@ -403,6 +403,7 @@ void CScoreboard::RenderSpectators(CUIRect Spectators)
 			TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClAuthedPlayerColor)));
 		}
 
+
 		TextRender()->TextEx(&Cursor, GameClient()->m_aClients[pInfo->m_ClientId].m_aName);
 		TextRender()->TextColor(TextRender()->DefaultTextColor());
 
@@ -814,6 +815,24 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 				}
 				// TClient
 				float NameTextOffset = NameOffset;
+
+				if(g_Config.m_FcCustomClients && g_Config.m_FcCustomClientsScoreboard &&
+					pInfo->m_ClientId >= 0 && pInfo->m_ClientId < MAX_CLIENTS)
+				{
+					const int CustomClient = GameClient()->m_aClients[pInfo->m_ClientId].m_CustomClient;
+					if(CustomClient != CUSTOM_CLIENT_NONE &&
+						(g_Config.m_FcCustomClientsOwn || pInfo->m_ClientId != GameClient()->m_Snap.m_LocalClientId))
+					{
+						const IGraphics::CTextureHandle Icon = GameClient()->CustomClientIcons().Texture(CustomClient);
+						if(Icon.IsValid())
+						{
+							const float IconSize = std::min(CUSTOM_CLIENT_SCOREBOARD_ICON_SIZE * FontSize / CUSTOM_CLIENT_SCOREBOARD_FONT_SIZE, LineHeight - Spacing);
+							const float IconY = Row.y + (Row.h - IconSize) / 2.0f;
+							CustomClientRenderIcon(Graphics(), Icon, vec2(NameTextOffset, IconY), IconSize, TextColor.a);
+							NameTextOffset += CustomClientIconWidth(IconSize);
+						}
+					}
+				}
 				const bool Muted = pInfo->m_ClientId >= 0 && (GameClient()->m_aClients[pInfo->m_ClientId].m_Foe || GameClient()->m_aClients[pInfo->m_ClientId].m_ChatIgnore);
 				if(Muted)
 				{
@@ -875,7 +894,6 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 				Cursor.m_Flags |= TEXTFLAG_ELLIPSIS_AT_END;
 				Cursor.m_LineWidth = ClanLength;
 
-				// TClient: gradient clan (only when not overridden by warlist color)
 				if(pInfo->m_ClientId >= 0 && g_Config.m_TcNameplateGradientClan)
 				{
 					const bool WarColored = g_Config.m_TcWarList && g_Config.m_TcWarListScoreboard && GameClient()->m_WarList.GetAnyWar(pInfo->m_ClientId);

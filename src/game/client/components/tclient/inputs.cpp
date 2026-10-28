@@ -60,7 +60,7 @@ namespace
 			return 0.0f;
 		return g_Config.m_TcFInputAmount / 1000.0f;
 	}
-} // namespace
+}
 
 float TcInputs::EffectiveOffsetTicks()
 {

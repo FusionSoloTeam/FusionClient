@@ -18,25 +18,23 @@ namespace HudLayout
 	namespace
 	{
 
-		// Default layout per module, indexed by EModule. Positions are on the
-		// CANVAS_WIDTH x CANVAS_HEIGHT canvas unless HasDynamicDefault() applies.
 		static const SModuleLayout gs_aModuleLayouts[MODULE_COUNT] = {
-			{460.0f, 229.0f, 100, 0, true, true, 0x40000000U}, // SCORE
-			{470.0f, 199.0f, 100, 0, true, true, 0x66000000U}, // MOVEMENT_INFO
-			{233.0f, 2.0f, 100, 0, true, false, 0x66000000U}, // GAME_TIMER
-			{5.0f, 5.0f, 100, 0, true, false, 0x40000000U}, // HEALTH_ARMOR_AMMO
-			{5.0f, 53.0f, 100, 0, true, false, 0x40000000U}, // PLAYER_STATE
-			{483.0f, 181.0f, 100, 0, true, true, 0x66000000U}, // SPECTATOR_COUNT
-			{484.0f, 166.0f, 100, 0, true, true, 0x66000000U}, // DUMMY_ACTIONS
-			{202.0f, 0.0f, 100, 0, true, true, 0x66000000U}, // LOCAL_TIME
-			{473.0f, 5.0f, 100, 0, true, false, 0x40000000U}, // FPS_PING
-			{225.0f, 12.0f, 100, 0, true, false, 0x40000000U}, // FROZEN_TEXT
-			{400.0f, 50.0f, 100, 0, true, true, 0x66000000U}, // SWAP_TIMER
-			{233.0f, 0.0f, 100, 0, true, false, 0x40000000U}, // FROZEN_HUD
-			{5.0f, 250.0f, 100, 0, true, true, 0x40000000U}, // KEYSTROKES
-			{200.0f, 129.0f, 100, 0, true, true, 0x66000000U}, // FINISH_PREDICTION
-			{0.0f, 30.0f, 100, 0, true, true, 0x40000000U}, // VOTE
-			{2.1f, 8.3f, 100, 0, true, false, 0x40000000U}, // VRAM_INFO
+			{460.0f, 229.0f, 100, 0, true, true, 0x40000000U},
+			{470.0f, 199.0f, 100, 0, true, true, 0x66000000U},
+			{233.0f, 2.0f, 100, 0, true, false, 0x66000000U},
+			{5.0f, 5.0f, 100, 0, true, false, 0x40000000U},
+			{5.0f, 53.0f, 100, 0, true, false, 0x40000000U},
+			{500.0f, 181.0f, 100, 0, true, true, 0x66000000U},
+			{484.0f, 166.0f, 100, 0, true, true, 0x66000000U},
+			{202.0f, 0.0f, 100, 0, true, true, 0x66000000U},
+			{473.0f, 5.0f, 100, 0, true, false, 0x40000000U},
+			{225.0f, 12.0f, 100, 0, true, false, 0x40000000U},
+			{400.0f, 50.0f, 100, 0, true, true, 0x66000000U},
+			{233.0f, 0.0f, 100, 0, true, false, 0x40000000U},
+			{5.0f, 250.0f, 100, 0, true, true, 0x40000000U},
+			{200.0f, 129.0f, 100, 0, true, true, 0x66000000U},
+			{0.0f, 30.0f, 100, 0, true, true, 0x40000000U},
+			{2.1f, 8.3f, 100, 0, true, false, 0x40000000U},
 		};
 
 		static const char *gs_apModuleNames[MODULE_COUNT] = {
@@ -86,9 +84,6 @@ namespace HudLayout
 			       Runtime.m_BackgroundColor != Default.m_BackgroundColor;
 		}
 
-		// Modules whose default position is computed directly in HUD-pixel space (as
-		// opposed to a fixed canvas coordinate that scales with aspect ratio via
-		// CanvasXToHud()) until the user drags them for the first time.
 		bool HasDynamicDefault(EModule Module)
 		{
 			switch(Module)
@@ -114,10 +109,6 @@ namespace HudLayout
 			}
 		}
 
-		// The default layout for a module at a given HUD size, as if it had never been
-		// overridden - used both by ResolveBaseLayout() below and by the public GetDefault()
-		// (see hud_layout.h), which the HUD editor uses as the animation target for
-		// "reset position"/"reset scale".
 		SModuleLayout DynamicDefaultLayout(EModule Module, float HudWidth, float HudHeight)
 		{
 			SModuleLayout Layout = gs_aModuleLayouts[Module];
@@ -144,7 +135,7 @@ namespace HudLayout
 				Layout.m_Y = 53.0f;
 				break;
 			case MODULE_SPECTATOR_COUNT:
-				Layout.m_X = (float)round_to_int(HudWidth - 17.0f);
+				Layout.m_X = (float)round_to_int(HudWidth);
 				Layout.m_Y = 181.0f;
 				break;
 			case MODULE_DUMMY_ACTIONS:
@@ -245,7 +236,7 @@ namespace HudLayout
 			}
 		}
 
-	} // namespace
+	}
 
 	SModuleLayout Get(EModule Module, float HudWidth, float HudHeight)
 	{
@@ -402,4 +393,4 @@ namespace HudLayout
 		}
 	}
 
-} // namespace HudLayout
+}

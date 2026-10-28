@@ -68,6 +68,13 @@ class CHud : public CComponent
 	STextContainerIndex m_aPlayerPositionContainers[2];
 	float m_aPlayerPrevPosition[2];
 
+	static constexpr int MAX_CPS_SAMPLES = 32;
+	float m_aaClickTimes[2][MAX_CPS_SAMPLES];
+	int m_aClickCount[2];
+	float m_aClickWindowStart[2];
+
+	int CountCps(int Button) const;
+
 	void RenderCursor();
 
 	void RenderTextInfo();
@@ -81,6 +88,7 @@ class CHud : public CComponent
 	void RenderPlayerState(int ClientId);
 
 	int m_LastSpectatorCountTick;
+	int GetSpectatorCount() const;
 	void RenderSpectatorCount();
 	void RenderDummyActions();
 	void RenderMovementInformation();
@@ -126,6 +134,7 @@ public:
 	// DDRace
 
 	void OnMessage(int MsgType, void *pRawMsg) override;
+	void OnClientTimeCp(float Diff);
 	float GetMovementInformationBoxWidth() const;
 	CUIRect GetMovementInformationHudEditorRect() const;
 	CUIRect GetHealthAmmoHudEditorRect() const;
@@ -154,7 +163,6 @@ private:
 	int m_TimeCpLastReceivedTick;
 	bool m_ShowFinishTime;
 
-	// TClient: showpred tracking
 	int m_LastPreds[SERVER_TICK_SPEED * 5];
 	int m_LastPredTick;
 	int m_LastPredLength;
@@ -173,7 +181,6 @@ private:
 	inline int GetDigitsIndex(int Value, int Max);
 
 	// Quad Offsets
-	// TClient: finish prediction path data
 	void EnsureFinishPredictionData();
 	std::vector<int> m_vFinishPredictionDistances;
 	int m_FinishPredictionMapWidth = 0;

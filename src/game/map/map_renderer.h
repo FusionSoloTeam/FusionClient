@@ -17,6 +17,7 @@ public:
 	void Clear();
 	void Load(ERenderType Type, CLayers *pLayers, IMapImages *pMapImages, const IEnvelopeEval *pEnvelopeEval, std::optional<FCallbackMapRendererInit> CallbackMapRendererInitOptional);
 	void Render(const CRenderLayerParams &Params);
+	float GetTileAnimationProgress(const CMapItemLayerTilemap *pLayerTilemap, int x, int y) const;
 
 private:
 	int GetLayerType(const CMapItemLayer *pLayer) const;

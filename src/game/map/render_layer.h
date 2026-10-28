@@ -17,6 +17,7 @@ using offset_ptr32 = unsigned int;
 #include <game/mapitems.h>
 #include <game/mapitems_ex.h>
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -72,6 +73,7 @@ public:
 	virtual bool DoRender(const CRenderLayerParams &Params) = 0;
 	virtual bool IsValid() const { return true; }
 	virtual bool IsGroup() const { return false; }
+	virtual float GetTileAnimationProgress(const CMapItemLayerTilemap *pLayerTilemap, int x, int y) const { return 1.0f; }
 	virtual void Unload() = 0;
 
 	bool IsVisibleInClipRegion(const std::optional<CClipRegion> &ClipRegion) const;
@@ -128,6 +130,7 @@ public:
 	virtual int GetDataIndex() const;
 	bool IsValid() const override { return GetRawData() != nullptr; }
 	void Unload() override;
+	float GetTileAnimationProgress(const CMapItemLayerTilemap *pLayerTilemap, int x, int y) const override;
 
 protected:
 	virtual void *GetRawData() const;
@@ -218,6 +221,11 @@ protected:
 
 	virtual void RenderTileLayerWithTileBuffer(const ColorRGBA &Color, const CRenderLayerParams &Params);
 	virtual void RenderTileLayerNoTileBuffer(const ColorRGBA &Color, const CRenderLayerParams &Params);
+	virtual bool IsEntityLayer() const { return false; }
+	bool ShouldAnimateTiles(const CRenderLayerParams &Params) const;
+	void RenderAnimatedTileLayer(const ColorRGBA &Color, const CRenderLayerParams &Params);
+	virtual void RenderAnimatedTileLayerOverlays(const ColorRGBA &Color, const CRenderLayerParams &Params);
+	void ResetTileAnimations();
 
 	void RenderTileLayer(const ColorRGBA &Color, const CRenderLayerParams &Params, CTileLayerVisuals *pTileLayerVisuals = nullptr);
 	void RenderTileBorder(const ColorRGBA &Color, int BorderX0, int BorderY0, int BorderX1, int BorderY1, CTileLayerVisuals *pTileLayerVisuals);
@@ -226,6 +234,8 @@ protected:
 	std::optional<CRenderLayerTile::CTileLayerVisuals> m_VisualTiles;
 	CMapItemLayerTilemap *m_pLayerTilemap;
 	ColorRGBA m_Color;
+	std::vector<int64_t> m_vTileAnimationStarts;
+	std::optional<std::array<int, 4>> m_PreviousAnimationBounds;
 };
 
 class CRenderLayerQuads : public CRenderLayer
@@ -291,6 +301,7 @@ public:
 	bool DoRender(const CRenderLayerParams &Params) override;
 
 protected:
+	bool IsEntityLayer() const override { return true; }
 	ColorRGBA GetRenderColor(const CRenderLayerParams &Params) const override { return ColorRGBA(1.0f, 1.0f, 1.0f, Params.m_EntityOverlayVal / 100.0f); }
 	IGraphics::CTextureHandle GetTexture() const override;
 };
@@ -304,6 +315,7 @@ public:
 protected:
 	void RenderTileLayerWithTileBuffer(const ColorRGBA &Color, const CRenderLayerParams &Params) override;
 	void RenderTileLayerNoTileBuffer(const ColorRGBA &Color, const CRenderLayerParams &Params) override;
+	void RenderAnimatedTileLayerOverlays(const ColorRGBA &Color, const CRenderLayerParams &Params) override;
 
 private:
 	ColorRGBA GetDeathBorderColor() const;
@@ -328,6 +340,7 @@ public:
 protected:
 	void RenderTileLayerWithTileBuffer(const ColorRGBA &Color, const CRenderLayerParams &Params) override;
 	void RenderTileLayerNoTileBuffer(const ColorRGBA &Color, const CRenderLayerParams &Params) override;
+	void RenderAnimatedTileLayerOverlays(const ColorRGBA &Color, const CRenderLayerParams &Params) override;
 	void GetTileData(unsigned char *pIndex, unsigned char *pFlags, int *pAngleRotate, unsigned int x, unsigned int y, int CurOverlay) const override;
 
 private:
@@ -347,6 +360,7 @@ public:
 protected:
 	void RenderTileLayerWithTileBuffer(const ColorRGBA &Color, const CRenderLayerParams &Params) override;
 	void RenderTileLayerNoTileBuffer(const ColorRGBA &Color, const CRenderLayerParams &Params) override;
+	void RenderAnimatedTileLayerOverlays(const ColorRGBA &Color, const CRenderLayerParams &Params) override;
 	void GetTileData(unsigned char *pIndex, unsigned char *pFlags, int *pAngleRotate, unsigned int x, unsigned int y, int CurOverlay) const override;
 	IGraphics::CTextureHandle GetTexture() const override;
 
@@ -368,6 +382,7 @@ public:
 protected:
 	void RenderTileLayerWithTileBuffer(const ColorRGBA &Color, const CRenderLayerParams &Params) override;
 	void RenderTileLayerNoTileBuffer(const ColorRGBA &Color, const CRenderLayerParams &Params) override;
+	void RenderAnimatedTileLayerOverlays(const ColorRGBA &Color, const CRenderLayerParams &Params) override;
 	void GetTileData(unsigned char *pIndex, unsigned char *pFlags, int *pAngleRotate, unsigned int x, unsigned int y, int CurOverlay) const override;
 	IGraphics::CTextureHandle GetTexture() const override;
 

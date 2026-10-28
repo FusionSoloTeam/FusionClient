@@ -11,7 +11,6 @@
 
 class CGameClient;
 
-// Hook invoked by the UI label renderer when "everything" gradient is enabled.
 extern void (*BCGradient_ApplyEverythingHook)(CTextCursor *pCursor, const char *pText, int Length);
 
 class CBcGradient : public CComponent

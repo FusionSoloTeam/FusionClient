@@ -334,6 +334,8 @@ IGraphics::CTextureHandle CMapImages::GetEntities(EMapImageEntityLayerType Entit
 
 		if(ImgInfo.m_pData != nullptr)
 		{
+			m_EntitiesSheetWidth = ImgInfo.m_Width;
+			m_EntitiesSheetHeight = ImgInfo.m_Height;
 			CImageInfo BuildImageInfo;
 			BuildImageInfo.m_Width = ImgInfo.m_Width;
 			BuildImageInfo.m_Height = ImgInfo.m_Height;
@@ -403,6 +405,84 @@ IGraphics::CTextureHandle CMapImages::GetEntities(EMapImageEntityLayerType Entit
 	}
 
 	return m_aaEntitiesTextures[(EntitiesModType * 2) + (int)EntitiesAreMasked][EntityLayerType];
+}
+
+bool CMapImages::GetEntitiesSheetSize(size_t &Width, size_t &Height) const
+{
+	if(m_EntitiesSheetWidth == 0 || m_EntitiesSheetHeight == 0)
+		return false;
+
+	Width = m_EntitiesSheetWidth;
+	Height = m_EntitiesSheetHeight;
+	return true;
+}
+
+bool CMapImages::ApplyEntitiesFrame(const CImageInfo &Sheet)
+{
+	if(Sheet.m_pData == nullptr || Sheet.m_Format != CImageInfo::FORMAT_RGBA)
+		return false;
+
+	if(Sheet.m_Width < 16 || Sheet.m_Height < 16)
+		return false;
+
+	const bool EntitiesAreMasked = !GameClient()->m_GameInfo.m_DontMaskEntities;
+	const EMapImageModType EntitiesModType = GetEntitiesModType(GameClient()->m_GameInfo);
+	const int Combo = (EntitiesModType * 2) + (int)EntitiesAreMasked;
+
+	for(int LayerType = 0; LayerType < MAP_IMAGE_ENTITY_LAYER_TYPE_COUNT; ++LayerType)
+	{
+		if(!m_aaEntitiesTextures[Combo][LayerType].IsValid())
+			return false;
+	}
+
+	int TextureLoadFlag = 0;
+	if(Graphics()->HasTextureArraysSupport())
+		TextureLoadFlag = Graphics()->TextureLoadFlags() | IGraphics::TEXLOAD_NO_2D_TEXTURE;
+
+	CImageInfo ImgInfo;
+	ImgInfo.m_Width = Sheet.m_Width;
+	ImgInfo.m_Height = Sheet.m_Height;
+	ImgInfo.m_Format = Sheet.m_Format;
+	ImgInfo.Allocate();
+	mem_copy(ImgInfo.m_pData, Sheet.m_pData, Sheet.DataSize());
+
+	const size_t CopyWidth = ImgInfo.m_Width / 16;
+	const size_t CopyHeight = ImgInfo.m_Height / 16;
+
+	const size_t TuneTileX = static_cast<size_t>(TILE_TUNE % 16) * CopyWidth;
+	const size_t TuneTileY = static_cast<size_t>(TILE_TUNE / 16) * CopyHeight;
+	ConvertToGrayscaleRect(ImgInfo, TuneTileX, TuneTileY, CopyWidth, CopyHeight);
+
+	CImageInfo BuildImageInfo;
+	BuildImageInfo.m_Width = ImgInfo.m_Width;
+	BuildImageInfo.m_Height = ImgInfo.m_Height;
+	BuildImageInfo.m_Format = ImgInfo.m_Format;
+	BuildImageInfo.Allocate();
+
+	for(int LayerType = 0; LayerType < MAP_IMAGE_ENTITY_LAYER_TYPE_COUNT; ++LayerType)
+	{
+		mem_zero(BuildImageInfo.m_pData, BuildImageInfo.DataSize());
+
+		for(int i = 0; i < 256; ++i)
+		{
+			int TileIndex = i;
+			if(IsValidTile(LayerType, EntitiesAreMasked, EntitiesModType, TileIndex))
+			{
+				if(LayerType == MAP_IMAGE_ENTITY_LAYER_TYPE_SWITCH && TileIndex == TILE_SWITCHTIMEDOPEN)
+					TileIndex = 8;
+
+				const size_t OffsetX = (size_t)(TileIndex % 16) * CopyWidth;
+				const size_t OffsetY = (size_t)(TileIndex / 16) * CopyHeight;
+				BuildImageInfo.CopyRectFrom(ImgInfo, OffsetX, OffsetY, CopyWidth, CopyHeight, OffsetX, OffsetY);
+			}
+		}
+
+		Graphics()->ReloadTexture(m_aaEntitiesTextures[Combo][LayerType], BuildImageInfo, "entities", TextureLoadFlag);
+	}
+
+	BuildImageInfo.Free();
+	ImgInfo.Free();
+	return true;
 }
 
 IGraphics::CTextureHandle CMapImages::GetSpeedupArrow()

@@ -10,7 +10,6 @@ void CHeartList::OnNewSnapshot()
 {
 	UpdateFriendPlayers();
 
-	// Rebuild chat containers once we're in-game (safe from config-load time)
 	if(m_NeedsChatRebuild)
 	{
 		m_NeedsChatRebuild = false;
@@ -27,12 +26,10 @@ void CHeartList::OnConsoleInit()
 	Console()->Register("update_heart_type", "i[type_index] s[name] i[color] i[prioritized]", CFGFLAG_CLIENT, ConUpsertHeartType, this, "Update or add a specific heart type");
 	Console()->Register("add_heart_entry", "s[type] s[name]", CFGFLAG_CLIENT, ConAddHeartEntry, this, "Adds a specific friend entry");
 
-	// In-game commands
 	Console()->Register("friend", "s[nick] s[heart]", CFGFLAG_CLIENT, ConFriend, this, "Add a friend with a custom heart");
 	Console()->Register("unfriend", "s[nick]", CFGFLAG_CLIENT, ConUnfriend, this, "Remove a friend and their heart");
 }
 
-// In-game commands
 void CHeartList::ConFriend(IConsole::IResult *pResult, void *pUserData)
 {
 	const char *pName = pResult->GetString(0);
@@ -46,8 +43,6 @@ void CHeartList::ConFriend(IConsole::IResult *pResult, void *pUserData)
 	}
 
 	pThis->AddFriend(pName, pHeart);
-	// Echo to in-game chat. Safe here: this command is only reachable in-game
-	// (the config file uses add_heart_entry instead), so chat is initialized.
 	char aBuf[128];
 	CHeartType *pType = pThis->FindHeartType(pHeart);
 	str_format(aBuf, sizeof(aBuf), "Added friend '%s' with heart '%s'", pName, pType ? pType->m_aName : pHeart);
@@ -65,7 +60,6 @@ void CHeartList::ConUnfriend(IConsole::IResult *pResult, void *pUserData)
 		return;
 	}
 
-	// Fail if the name isn't actually a friend
 	bool Found = false;
 	for(const CHeartEntry &Entry : pThis->m_vHeartEntries)
 	{
@@ -84,13 +78,11 @@ void CHeartList::ConUnfriend(IConsole::IResult *pResult, void *pUserData)
 	}
 
 	pThis->RemoveFriend(pName);
-	// Echo to in-game chat (safe, same reasoning as ConFriend)
 	char aBuf[128];
 	str_format(aBuf, sizeof(aBuf), "Removed friend '%s'", pName);
 	pThis->GameClient()->Echo(aBuf);
 }
 
-// Backend commands for config file
 void CHeartList::ConAddHeartEntry(IConsole::IResult *pResult, void *pUserData)
 {
 	const char *pType = pResult->GetString(0);
@@ -118,16 +110,13 @@ void CHeartList::AddFriend(const char *pName, const char *pHeart)
 	CHeartType *pHeartType = FindHeartType(pHeart);
 	if(pHeartType == m_pHeartTypeDefault && str_comp(pHeart, "default") != 0)
 	{
-		// Unknown heart (that isn't the default), create a new one with a default red color
 		AddHeartType(pHeart, ColorRGBA(1.0f, 0.2f, 0.2f, 1.0f));
 		pHeartType = FindHeartType(pHeart);
 	}
 
-	// Bind to DDNet friends as well (guard: Friends() may be uninitialized during early config load)
 	IFriends *pFriends = GameClient()->Friends();
 	if(pFriends)
 		pFriends->AddFriend(pName, "");
-	// No duplicates: remove any existing entry for this name
 	for(auto It = m_vHeartEntries.begin(); It != m_vHeartEntries.end();)
 	{
 		if(str_comp(It->m_aName, pName) == 0)
@@ -138,8 +127,6 @@ void CHeartList::AddFriend(const char *pName, const char *pHeart)
 
 	m_vHeartEntries.emplace_back(pHeartType, pName);
 
-	// Update the friend-color cache immediately and rebuild chat containers
-	// so existing/pending lines pick up the custom heart color.
 	UpdateFriendPlayers();
 	m_NeedsChatRebuild = true;
 
@@ -204,7 +191,6 @@ bool CHeartList::OnChatInput(const char *pMessage)
 
 	const char *pMsg = str_utf8_skip_whitespaces(pMessage);
 
-	// .friend / /friend <nick> <heart>
 	{
 		const char *pArgs = nullptr;
 		const char *apCmds[] = { ".friend", "/friend" };
@@ -247,7 +233,6 @@ bool CHeartList::OnChatInput(const char *pMessage)
 		}
 	}
 
-	// .unfriend / /unfriend <nick>
 	{
 		const char *pArgs = nullptr;
 		const char *apCmds[] = { ".unfriend", "/unfriend" };
@@ -323,11 +308,8 @@ void CHeartList::RemoveHeartType(const char *pName)
 	CHeartType Type(pName);
 	for(auto It = m_HeartTypes.begin(); It != m_HeartTypes.end(); ++It)
 	{
-		// Only remove a removable type; this skips the protected "default" type 0
-		// even if a removable duplicate happens to share its name.
 		if(**It == Type && (*It)->m_Removable)
 		{
-			// Reassign entries using this heart to the default
 			for(CHeartEntry &Entry : m_vHeartEntries)
 			{
 				if(*Entry.m_pHeartType == **It)

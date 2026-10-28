@@ -125,6 +125,11 @@ static bool AddTile(std::vector<CGraphicTile> &vTmpTiles, std::vector<CGraphicTi
 	return true;
 }
 
+static double TileAnimationDuration()
+{
+	return std::max(0.05, 0.65 * 100.0 / (double)g_Config.m_FcTileAnimationSpeed);
+}
+
 class CTmpQuadVertexTextured
 {
 public:
@@ -554,17 +559,275 @@ ColorRGBA CRenderLayerTile::GetRenderColor(const CRenderLayerParams &Params) con
 	return Color;
 }
 
+bool CRenderLayerTile::ShouldAnimateTiles(const CRenderLayerParams &Params) const
+{
+	if(!g_Config.m_FcTileAnimations)
+		return false;
+
+	if(Params.m_RenderType != ERenderType::RENDERTYPE_BACKGROUND && Params.m_RenderType != ERenderType::RENDERTYPE_FOREGROUND)
+		return false;
+
+	return g_Config.m_FcTileAnimationMode != 0 || IsEntityLayer();
+}
+
+void CRenderLayerTile::ResetTileAnimations()
+{
+	m_vTileAnimationStarts.clear();
+	m_PreviousAnimationBounds.reset();
+}
+
+float CRenderLayerTile::GetTileAnimationProgress(const CMapItemLayerTilemap *pLayerTilemap, int x, int y) const
+{
+	if(!g_Config.m_FcTileAnimations || pLayerTilemap != m_pLayerTilemap || m_pLayerTilemap == nullptr)
+		return 1.0f;
+
+	const int Width = m_pLayerTilemap->m_Width;
+	const int Height = m_pLayerTilemap->m_Height;
+	if(x < 0 || y < 0 || x >= Width || y >= Height)
+		return 1.0f;
+
+	const size_t TileIndex = (size_t)y * Width + x;
+	if(TileIndex >= m_vTileAnimationStarts.size())
+		return 1.0f;
+
+	const int64_t Start = m_vTileAnimationStarts[TileIndex];
+	if(Start < 0)
+		return 1.0f;
+
+	const double Elapsed = (time_get() - Start) / (double)time_freq();
+	return std::clamp((float)(Elapsed / TileAnimationDuration()), 0.0f, 1.0f);
+}
+
+void CRenderLayerTile::RenderAnimatedTileLayer(const ColorRGBA &Color, const CRenderLayerParams &Params)
+{
+	if(!IsVisibleInClipRegion(m_LayerClip))
+	{
+		m_vTileAnimationStarts.clear();
+		m_PreviousAnimationBounds.reset();
+		return;
+	}
+
+	const int Width = m_pLayerTilemap->m_Width;
+	const int Height = m_pLayerTilemap->m_Height;
+	if(Width <= 0 || Height <= 0)
+		return;
+
+	if(m_vTileAnimationStarts.size() != (size_t)Width * Height)
+	{
+		m_vTileAnimationStarts.assign((size_t)Width * Height, -1);
+		m_PreviousAnimationBounds.reset();
+	}
+
+	const CScreenRect ScreenRect = Graphics()->GetScreen();
+	const int StartX = std::clamp((int)std::floor(ScreenRect.m_TopLeft.x / 32.0f), 0, Width);
+	const int StartY = std::clamp((int)std::floor(ScreenRect.m_TopLeft.y / 32.0f), 0, Height);
+	const int EndX = std::clamp((int)std::ceil(ScreenRect.m_BottomRight.x / 32.0f), 0, Width);
+	const int EndY = std::clamp((int)std::ceil(ScreenRect.m_BottomRight.y / 32.0f), 0, Height);
+
+	if(m_PreviousAnimationBounds.has_value())
+	{
+		const auto &aPrevious = m_PreviousAnimationBounds.value();
+		for(int y = aPrevious[1]; y < aPrevious[3]; ++y)
+		{
+			for(int x = aPrevious[0]; x < aPrevious[2]; ++x)
+			{
+				if(x < StartX || x >= EndX || y < StartY || y >= EndY)
+					m_vTileAnimationStarts[(size_t)y * Width + x] = -1;
+			}
+		}
+	}
+	m_PreviousAnimationBounds = std::array<int, 4>{StartX, StartY, EndX, EndY};
+
+	const int64_t Now = time_get();
+	const double Duration = TileAnimationDuration();
+	const double GlitchInterval = std::max(0.01, g_Config.m_FcTileAnimationGlitchInterval / 1000.0);
+	const bool Glitched = g_Config.m_FcTileAnimationMode == 0;
+	const bool Placing = g_Config.m_FcTileAnimationMode == 2;
+
+	const float TilePixelSize = 1024 / 32.0f;
+	const float FinalTileSize = 32.0f / ScreenRect.Width() * Graphics()->ScreenWidth();
+	const float FinalTilesetScale = FinalTileSize / TilePixelSize;
+	const float TexSize = 1024.0f;
+	const float Frac = (1.25f / TexSize) * (1 / FinalTilesetScale);
+	const float Nudge = (0.5f / TexSize) * (1 / FinalTilesetScale);
+	const bool TextureArrays = Graphics()->HasTextureArraysSupport();
+
+	if(TextureArrays)
+		Graphics()->QuadsTex3DBegin();
+	else
+		Graphics()->QuadsBegin();
+	Graphics()->BlendNormal();
+
+	for(int y = StartY; y < EndY; ++y)
+	{
+		for(int x = StartX; x < EndX; ++x)
+		{
+			unsigned char Index = 0;
+			unsigned char Flags = 0;
+			int AngleRotate = -1;
+			GetTileData(&Index, &Flags, &AngleRotate, x, y, 0);
+
+			const size_t TileIndex = (size_t)y * Width + x;
+			if(Index == 0)
+			{
+				m_vTileAnimationStarts[TileIndex] = -1;
+				continue;
+			}
+
+			int64_t &Start = m_vTileAnimationStarts[TileIndex];
+			if(Start < 0)
+				Start = Now;
+
+			const double Elapsed = (Now - Start) / (double)time_freq();
+			const float Progress = std::clamp((float)(Elapsed / Duration), 0.0f, 1.0f);
+			const float SmoothProgress = Progress * Progress * (3.0f - 2.0f * Progress);
+
+			ColorRGBA TileColor = Color;
+			float YOffset = 0.0f;
+			if(Glitched && Progress < 0.82f)
+			{
+				uint32_t Hash = (uint32_t)(x + 1) * 374761393u + (uint32_t)(y + 1) * 668265263u;
+				Hash += (uint32_t)(Elapsed / GlitchInterval) * 2246822519u;
+				Hash = (Hash ^ (Hash >> 13)) * 1274126177u;
+				Hash ^= Hash >> 16;
+
+				if(AngleRotate >= 0)
+					AngleRotate = (int)(Hash % 360);
+				else
+					Index = (unsigned char)(1 + Hash % 34);
+			}
+			else if(!Glitched && !Placing)
+			{
+				TileColor.a *= SmoothProgress;
+				if(TileColor.a <= 0.0f)
+					continue;
+			}
+			else if(Placing)
+			{
+				const float Eased = 1.0f - std::pow(1.0f - Progress, 3.0f);
+				YOffset = -(1.0f - Eased) * g_Config.m_FcTileAnimationPlacingDistance * 32.0f;
+			}
+
+			if(AngleRotate >= 0)
+			{
+				const int Angle = AngleRotate % 360;
+				Index = (unsigned char)(AngleRotate % 90);
+				Flags = Angle >= 270 ? ROTATION_270 : (Angle >= 180 ? ROTATION_180 : (Angle >= 90 ? ROTATION_90 : 0));
+			}
+
+			const int tx = Index % 16;
+			const int ty = Index / 16;
+			const int Px0 = tx * (1024 / 16);
+			const int Py0 = ty * (1024 / 16);
+			const int Px1 = Px0 + (1024 / 16) - 1;
+			const int Py1 = Py0 + (1024 / 16) - 1;
+
+			float x0 = Nudge + Px0 / TexSize + Frac;
+			float y0 = Nudge + Py0 / TexSize + Frac;
+			float x1 = Nudge + Px1 / TexSize - Frac;
+			float y1 = Nudge + Py0 / TexSize + Frac;
+			float x2 = Nudge + Px1 / TexSize - Frac;
+			float y2 = Nudge + Py1 / TexSize - Frac;
+			float x3 = Nudge + Px0 / TexSize + Frac;
+			float y3 = Nudge + Py1 / TexSize - Frac;
+
+			if(TextureArrays)
+			{
+				x0 = 0;
+				y0 = 0;
+				x1 = 1;
+				y1 = 0;
+				x2 = 1;
+				y2 = 1;
+				x3 = 0;
+				y3 = 1;
+			}
+
+			if(Flags & TILEFLAG_XFLIP)
+			{
+				x0 = x2;
+				x1 = x3;
+				x2 = x3;
+				x3 = x0;
+			}
+			if(Flags & TILEFLAG_YFLIP)
+			{
+				y0 = y3;
+				y2 = y1;
+				y3 = y1;
+				y1 = y0;
+			}
+			if(Flags & TILEFLAG_ROTATE)
+			{
+				float Tmp = x0;
+				x0 = x3;
+				x3 = x2;
+				x2 = x1;
+				x1 = Tmp;
+				Tmp = y0;
+				y0 = y3;
+				y3 = y2;
+				y2 = y1;
+				y1 = Tmp;
+			}
+
+			Graphics()->SetColor(TileColor);
+			if(TextureArrays)
+			{
+				Graphics()->QuadsSetSubsetFree(x0, y0, x1, y1, x2, y2, x3, y3, Index);
+				IGraphics::CQuadItem QuadItem(x * 32.0f, y * 32.0f + YOffset, 32.0f, 32.0f);
+				Graphics()->QuadsTex3DDrawTL(&QuadItem, 1);
+			}
+			else
+			{
+				Graphics()->QuadsSetSubsetFree(x0, y0, x1, y1, x2, y2, x3, y3);
+				IGraphics::CQuadItem QuadItem(x * 32.0f, y * 32.0f + YOffset, 32.0f, 32.0f);
+				Graphics()->QuadsDrawTL(&QuadItem, 1);
+			}
+		}
+	}
+
+	if(TextureArrays)
+		Graphics()->QuadsTex3DEnd();
+	else
+		Graphics()->QuadsEnd();
+	Graphics()->MapScreen(ScreenRect);
+}
+
+void CRenderLayerTile::RenderAnimatedTileLayerOverlays(const ColorRGBA &Color, const CRenderLayerParams &Params)
+{
+	if(!Params.m_RenderTileBorder || !m_VisualTiles.has_value() || m_VisualTiles->m_BufferContainerIndex == -1)
+		return;
+
+	const CScreenRect ScreenRect = Graphics()->GetScreen();
+	const int ScreenRectY0 = std::floor(ScreenRect.m_TopLeft.y / 32);
+	const int ScreenRectX0 = std::floor(ScreenRect.m_TopLeft.x / 32);
+	const int ScreenRectY1 = std::ceil(ScreenRect.m_BottomRight.y / 32);
+	const int ScreenRectX1 = std::ceil(ScreenRect.m_BottomRight.x / 32);
+	if(ScreenRectX1 > (int)m_VisualTiles->m_Width || ScreenRectY1 > (int)m_VisualTiles->m_Height || ScreenRectX0 < 0 || ScreenRectY0 < 0)
+		RenderTileBorder(Color, ScreenRectX0, ScreenRectY0, ScreenRectX1, ScreenRectY1, &m_VisualTiles.value());
+}
+
 void CRenderLayerTile::Render(const CRenderLayerParams &Params)
 {
 	UseTexture(GetTexture());
 	ColorRGBA Color = GetRenderColor(Params);
-	if(Graphics()->IsTileBufferingEnabled() && Params.m_TileAndQuadBuffering)
+	if(ShouldAnimateTiles(Params))
 	{
-		RenderTileLayerWithTileBuffer(Color, Params);
+		RenderAnimatedTileLayer(Color, Params);
+		RenderAnimatedTileLayerOverlays(Color, Params);
 	}
 	else
 	{
-		RenderTileLayerNoTileBuffer(Color, Params);
+		ResetTileAnimations();
+		if(Graphics()->IsTileBufferingEnabled() && Params.m_TileAndQuadBuffering)
+		{
+			RenderTileLayerWithTileBuffer(Color, Params);
+		}
+		else
+		{
+			RenderTileLayerNoTileBuffer(Color, Params);
+		}
 	}
 
 	if(Params.m_DebugRenderTileClips && m_LayerClip.has_value())
@@ -1521,6 +1784,13 @@ void CRenderLayerEntityGame::RenderTileLayerNoTileBuffer(const ColorRGBA &Color,
 	RenderMap()->RenderTilemap(m_pTiles, m_pLayerTilemap->m_Width, m_pLayerTilemap->m_Height, 32.0f, Color, (Params.m_RenderTileBorder ? TILERENDERFLAG_EXTEND : 0) | LAYERRENDERFLAG_TRANSPARENT);
 }
 
+void CRenderLayerEntityGame::RenderAnimatedTileLayerOverlays(const ColorRGBA &Color, const CRenderLayerParams &Params)
+{
+	CRenderLayerTile::RenderAnimatedTileLayerOverlays(Color, Params);
+	if(Params.m_RenderTileBorder && m_VisualTiles.has_value() && m_VisualTiles->m_BufferContainerIndex != -1)
+		RenderKillTileBorder(Color.Multiply(GetDeathBorderColor()));
+}
+
 ColorRGBA CRenderLayerEntityGame::GetDeathBorderColor() const
 {
 	// draw kill tiles outside the entity clipping rectangle
@@ -1587,6 +1857,13 @@ void CRenderLayerEntityTele::RenderTileLayerNoTileBuffer(const ColorRGBA &Color,
 	Graphics()->BlendNormal();
 	RenderMap()->RenderTelemap(m_pTeleTiles, m_pLayerTilemap->m_Width, m_pLayerTilemap->m_Height, 32.0f, Color, (Params.m_RenderTileBorder ? TILERENDERFLAG_EXTEND : 0) | LAYERRENDERFLAG_TRANSPARENT);
 	int OverlayRenderFlags = (Params.m_RenderText ? OVERLAYRENDERFLAG_TEXT : 0) | (Params.m_RenderInvalidTiles ? OVERLAYRENDERFLAG_EDITOR : 0);
+	RenderMap()->RenderTeleOverlay(m_pTeleTiles, m_pLayerTilemap->m_Width, m_pLayerTilemap->m_Height, 32.0f, OverlayRenderFlags, Color.a);
+}
+
+void CRenderLayerEntityTele::RenderAnimatedTileLayerOverlays(const ColorRGBA &Color, const CRenderLayerParams &Params)
+{
+	CRenderLayerTile::RenderAnimatedTileLayerOverlays(Color, Params);
+	const int OverlayRenderFlags = (Params.m_RenderText ? OVERLAYRENDERFLAG_TEXT : 0) | (Params.m_RenderInvalidTiles ? OVERLAYRENDERFLAG_EDITOR : 0);
 	RenderMap()->RenderTeleOverlay(m_pTeleTiles, m_pLayerTilemap->m_Width, m_pLayerTilemap->m_Height, 32.0f, OverlayRenderFlags, Color.a);
 }
 
@@ -1683,6 +1960,13 @@ void CRenderLayerEntitySpeedup::RenderTileLayerNoTileBuffer(const ColorRGBA &Col
 	RenderMap()->RenderSpeedupOverlay(m_pSpeedupTiles, m_pLayerTilemap->m_Width, m_pLayerTilemap->m_Height, 32.0f, OverlayRenderFlags, Color.a);
 }
 
+void CRenderLayerEntitySpeedup::RenderAnimatedTileLayerOverlays(const ColorRGBA &Color, const CRenderLayerParams &Params)
+{
+	CRenderLayerTile::RenderAnimatedTileLayerOverlays(Color, Params);
+	const int OverlayRenderFlags = (Params.m_RenderText ? OVERLAYRENDERFLAG_TEXT : 0) | (Params.m_RenderInvalidTiles ? OVERLAYRENDERFLAG_EDITOR : 0) | OVERLAYRENDERFLAG_NO_SPRITE;
+	RenderMap()->RenderSpeedupOverlay(m_pSpeedupTiles, m_pLayerTilemap->m_Width, m_pLayerTilemap->m_Height, 32.0f, OverlayRenderFlags, Color.a);
+}
+
 // SWITCH
 CRenderLayerEntitySwitch::CRenderLayerEntitySwitch(int GroupId, int LayerId, int Flags, CMapItemLayerTilemap *pLayerTilemap) :
 	CRenderLayerEntityBase(GroupId, LayerId, Flags, pLayerTilemap) {}
@@ -1723,6 +2007,13 @@ void CRenderLayerEntitySwitch::Unload()
 		m_VisualSwitchNumberBottom->Unload();
 		m_VisualSwitchNumberBottom = std::nullopt;
 	}
+}
+
+void CRenderLayerEntitySwitch::RenderAnimatedTileLayerOverlays(const ColorRGBA &Color, const CRenderLayerParams &Params)
+{
+	CRenderLayerTile::RenderAnimatedTileLayerOverlays(Color, Params);
+	const int OverlayRenderFlags = (Params.m_RenderText ? OVERLAYRENDERFLAG_TEXT : 0) | (Params.m_RenderInvalidTiles ? OVERLAYRENDERFLAG_EDITOR : 0);
+	RenderMap()->RenderSwitchOverlay(m_pSwitchTiles, m_pLayerTilemap->m_Width, m_pLayerTilemap->m_Height, 32.0f, OverlayRenderFlags, Color.a);
 }
 
 void CRenderLayerEntitySwitch::GetTileData(unsigned char *pIndex, unsigned char *pFlags, int *pAngleRotate, unsigned int x, unsigned int y, int CurOverlay) const

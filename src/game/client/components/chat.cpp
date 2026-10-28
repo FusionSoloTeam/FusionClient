@@ -284,45 +284,44 @@ void CChat::Echo(const char *pString)
 	AddLine(CLIENT_MSG, 0, pString);
 }
 
-// commands layout fix
 static const char *ChatLayoutFixChar(int Code)
 {
 	switch(Code)
 	{
 	case '.': return "/";
-	case 0x430: return "f"; // а
-	case 0x431: return ","; // б
-	case 0x432: return "d"; // в
-	case 0x433: return "u"; // г
-	case 0x434: return "l"; // д
-	case 0x435: return "t"; // е
-	case 0x451: return "`"; // ё
-	case 0x436: return ";"; // ж
-	case 0x437: return "p"; // з
-	case 0x438: return "b"; // и
-	case 0x439: return "q"; // й
-	case 0x43A: return "r"; // к
-	case 0x43B: return "k"; // л
-	case 0x43C: return "v"; // м
-	case 0x43D: return "y"; // н
-	case 0x43E: return "j"; // о
-	case 0x43F: return "g"; // п
-	case 0x440: return "h"; // р
-	case 0x441: return "c"; // с
-	case 0x442: return "n"; // т
-	case 0x443: return "e"; // у
-	case 0x444: return "a"; // ф
-	case 0x445: return "["; // х
-	case 0x446: return "w"; // ц
-	case 0x447: return "x"; // ч
-	case 0x448: return "i"; // ш
-	case 0x449: return "o"; // щ
-	case 0x44A: return "]"; // ъ
-	case 0x44B: return "s"; // ы
-	case 0x44C: return "m"; // ь
-	case 0x44D: return "'"; // э
-	case 0x44E: return "."; // ю
-	case 0x44F: return "z"; // я
+	case 0x430: return "f";
+	case 0x431: return ",";
+	case 0x432: return "d";
+	case 0x433: return "u";
+	case 0x434: return "l";
+	case 0x435: return "t";
+	case 0x451: return "`";
+	case 0x436: return ";";
+	case 0x437: return "p";
+	case 0x438: return "b";
+	case 0x439: return "q";
+	case 0x43A: return "r";
+	case 0x43B: return "k";
+	case 0x43C: return "v";
+	case 0x43D: return "y";
+	case 0x43E: return "j";
+	case 0x43F: return "g";
+	case 0x440: return "h";
+	case 0x441: return "c";
+	case 0x442: return "n";
+	case 0x443: return "e";
+	case 0x444: return "a";
+	case 0x445: return "[";
+	case 0x446: return "w";
+	case 0x447: return "x";
+	case 0x448: return "i";
+	case 0x449: return "o";
+	case 0x44A: return "]";
+	case 0x44B: return "s";
+	case 0x44C: return "m";
+	case 0x44D: return "'";
+	case 0x44E: return ".";
+	case 0x44F: return "z";
 	case 0x410: return "F";
 	case 0x411: return "<";
 	case 0x412: return "D";
@@ -477,7 +476,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		else if(GameClient()->m_TClient.ChatDoSpecId(m_Input.GetString()))
 			; // Do nothing as specid was executed
 		else if(GameClient()->m_HeartList.OnChatInput(m_Input.GetString()))
-			; // Do nothing as friendlist was executed
+			;
 		else if(GameClient()->m_Translate.ChatDoTranslateOutgoing(m_Mode == MODE_TEAM ? 1 : 0, m_Input.GetString()))
 			; // Do nothing as outgoing translate was queued
 		else
@@ -2368,6 +2367,8 @@ void CChat::SendChat(int Team, const char *pLine)
 
 	if((!str_comp(pLine, "/spec") || !str_comp(pLine, "/pause")) && GameClient()->m_TClient.AntiUnSpec())
 		return;
+
+	GameClient()->m_PracticeTags.OnChatCommand(pLine);
 
 	m_LastChatSend = time();
 

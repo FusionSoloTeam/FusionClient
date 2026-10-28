@@ -78,7 +78,6 @@ class CChat : public CComponent
 	CLine m_aLines[MAX_LINES];
 	int m_CurrentLine;
 
-	// TClient: chat history scrolling
 	int m_HistoryScrollOffset = 0;
 
 	struct SSmoothGhost
@@ -259,8 +258,6 @@ public:
 	// It uses team or public chat depending on m_Mode.
 	void SendChatQueued(const char *pLine);
 
-	// ----- TClient -----
-	// почему тут написано тклиент и я пишу сюда свою залупу
 	void StartSmoothSend(const char *pText);
 	void AddSmoothGhost(int CharIndex, float FontSize, float LineWidth, float Now);
 	STextBoundingBox RenderSmoothInput(const CUIRect *pRect, float FontSize, float LineWidth, float ScrollOffset);

@@ -823,7 +823,6 @@ void CEditor::DoToolbarLayers(CUIRect ToolBar)
 			ToolbarBottom.VSplitLeft(5.0f, &Button, &ToolbarBottom);
 		}
 
-		// fill mode button
 		{
 			ToolbarBottom.VSplitLeft(40.0f, &Button, &ToolbarBottom);
 			static int s_FillButton = 0;
@@ -4617,13 +4616,11 @@ void CEditor::Render()
 
 	UpdateBrushPicker();
 	m_ShowPicker = Input()->KeyIsPressed(KEY_SPACE) && m_Dialog == DIALOG_NONE && CLineInput::GetActiveInput() == nullptr && Map()->m_vSelectedLayers.size() == 1;
-	CUIRect MapTabBar;
 
 	CUIRect MenuBar, ModeBar, ToolBar, StatusBar, ExtraEditor, ToolBox;
 	if(m_GuiActive)
 	{
 		View.HSplitTop(16.0f, &MenuBar, &View);
-		View.HSplitTop(14.0f, &MapTabBar, &View);
 		View.HSplitTop(53.0f, &ToolBar, &View);
 		View.VSplitLeft(m_ToolBoxWidth, &ToolBox, &View);
 
@@ -4646,12 +4643,6 @@ void CEditor::Render()
 
 	if(m_Dialog == DIALOG_NONE && CLineInput::GetActiveInput() == nullptr)
 	{
-		if(Input()->KeyPress(KEY_TAB) && Input()->ModifierIsPressed() && m_vMapTabs.size() > 1)
-		{
-			const int Count = (int)m_vMapTabs.size();
-			const int Step = Input()->ShiftIsPressed() ? Count - 1 : 1;
-			SwitchMapTab((m_ActiveMapTab + Step) % Count);
-		}
 		// handle undo/redo hotkeys
 		if(Ui()->CheckActiveItem(nullptr))
 		{
@@ -4792,7 +4783,6 @@ void CEditor::Render()
 	if(m_GuiActive)
 	{
 		RenderMenubar(MenuBar);
-		RenderMapTabs(MapTabBar);
 		RenderModebar(ModeBar);
 		if(!m_ShowPicker)
 		{
@@ -5913,200 +5903,6 @@ bool CEditor::Save(const char *pFilename)
 		log_error("editor/save", "%s", pErrorMessage);
 	};
 	return Map()->Save(pFilename, ErrorHandler);
-}
-
-
-static void MapTabName(const char *pFilename, char *pOut, size_t OutSize)
-{
-	char aName[IO_MAX_PATH_LENGTH];
-	if(pFilename[0] == '\0')
-		str_copy(aName, "unnamed");
-	else
-		fs_split_file_extension(fs_filename(pFilename), aName, sizeof(aName));
-	str_format(pOut, OutSize, "%s", aName);
-}
-
-void CEditor::SyncActiveMapTab()
-{
-	if(m_vMapTabs.empty() || m_ActiveMapTab < 0 || m_ActiveMapTab >= (int)m_vMapTabs.size())
-		return;
-	SMapTabInfo &Tab = m_vMapTabs[m_ActiveMapTab];
-	str_copy(Tab.m_aSaveFile, Map()->m_aFilename);
-	Tab.m_ValidSaveFile = Map()->m_ValidSaveFilename;
-	Tab.m_Modified = Map()->m_Modified;
-	Tab.m_WorldOffset = MapView()->GetWorldOffset();
-	Tab.m_Zoom = MapView()->Zoom()->GetValue();
-}
-
-bool CEditor::SaveActiveMapTab()
-{
-	if(m_vMapTabs.empty() || m_ActiveMapTab < 0 || m_ActiveMapTab >= (int)m_vMapTabs.size())
-		return false;
-	SMapTabInfo &Tab = m_vMapTabs[m_ActiveMapTab];
-	if(Tab.m_aTempFile[0] == '\0')
-		str_format(Tab.m_aTempFile, sizeof(Tab.m_aTempFile), "editor_tabs/tab_%d.map", m_MapTabFileCounter++);
-	Storage()->CreateFolder("editor_tabs", IStorage::TYPE_SAVE);
-	const auto &&ErrorHandler = [](const char *pErrorMessage) {
-		log_error("editor/tabs", "%s", pErrorMessage);
-	};
-	if(!Map()->Save(Tab.m_aTempFile, ErrorHandler, true))
-	{
-		log_error("editor/tabs", "Failed to store map tab content to '%s'", Tab.m_aTempFile);
-		return false;
-	}
-	Tab.m_Used = true;
-	return true;
-}
-
-
-void CEditor::ApplyMapTab(int TabIndex)
-{
-	if(TabIndex < 0 || TabIndex >= (int)m_vMapTabs.size())
-		return;
-	m_ActiveMapTab = TabIndex;
-	SMapTabInfo &Tab = m_vMapTabs[TabIndex];
-	if(Tab.m_Used)
-	{
-		if(!Load(Tab.m_aTempFile, IStorage::TYPE_SAVE))
-		{
-			log_error("editor/tabs", "Failed to load map tab content from '%s'", Tab.m_aTempFile);
-			Tab.m_Used = false;
-			Reset();
-		}
-	}
-	else
-	{
-		Reset();
-	}
-	str_copy(Map()->m_aFilename, Tab.m_aSaveFile);
-	Map()->m_ValidSaveFilename = Tab.m_ValidSaveFile;
-	Map()->m_Modified = Tab.m_Modified;
-	MapView()->SetWorldOffset(Tab.m_WorldOffset);
-	if(Tab.m_Zoom > 0.0f)
-		MapView()->Zoom()->SetValueInstant(Tab.m_Zoom);
-}
-
-void CEditor::SwitchMapTab(int TabIndex)
-{
-	if(TabIndex == m_ActiveMapTab || TabIndex < 0 || TabIndex >= (int)m_vMapTabs.size())
-		return;
-	SyncActiveMapTab();
-	if(!SaveActiveMapTab())
-	{
-		ShowFileDialogError("Failed to store the current map tab. See local console for details.");
-		return;
-	}
-	ApplyMapTab(TabIndex);
-}
-
-
-void CEditor::AddMapTab()
-{
-	if((int)m_vMapTabs.size() >= MAX_MAP_TABS)
-	{
-		ShowFileDialogError("The maximum amount of map tabs (%d) is already open.", MAX_MAP_TABS);
-		return;
-	}
-	if(!m_vMapTabs.empty())
-	{
-		SyncActiveMapTab();
-		if(!SaveActiveMapTab())
-		{
-			ShowFileDialogError("Failed to store the current map tab. See local console for details.");
-			return;
-		}
-	}
-	m_vMapTabs.push_back(SMapTabInfo{});
-	ApplyMapTab((int)m_vMapTabs.size() - 1);
-}
-
-void CEditor::CloseMapTab(int TabIndex)
-{
-	if(TabIndex < 0 || TabIndex >= (int)m_vMapTabs.size())
-		return;
-	if(m_vMapTabs.size() <= 1)
-	{
-		ShowFileDialogError("At least one map tab must stay open.");
-		return;
-	}
-	const bool Active = TabIndex == m_ActiveMapTab;
-	if(Active)
-		SyncActiveMapTab();
-	if(m_vMapTabs[TabIndex].m_Modified)
-	{
-		ShowFileDialogError("This map tab has unsaved changes. Save the map before closing the tab.");
-		return;
-	}
-	if(m_vMapTabs[TabIndex].m_Used && m_vMapTabs[TabIndex].m_aTempFile[0] != '\0')
-		Storage()->RemoveFile(m_vMapTabs[TabIndex].m_aTempFile, IStorage::TYPE_SAVE);
-	m_vMapTabs.erase(m_vMapTabs.begin() + TabIndex);
-	if(!Active)
-	{
-		if(TabIndex < m_ActiveMapTab)
-			--m_ActiveMapTab;
-		return;
-	}
-	const int NewTab = TabIndex > 0 ? TabIndex - 1 : 0;
-	m_ActiveMapTab = -1;
-	ApplyMapTab(NewTab);
-}
-
-
-void CEditor::RenderMapTabs(CUIRect TabBar)
-{
-	if(m_vMapTabs.empty())
-		m_vMapTabs.push_back(SMapTabInfo{});
-
-	RenderBackground(TabBar, IGraphics::CTextureHandle(), 80.0f, 0.0f);
-	TabBar.Margin(2.0f, &TabBar);
-
-	static int s_aTabButtons[MAX_MAP_TABS];
-	static int s_aTabCloseButtons[MAX_MAP_TABS];
-	static int s_AddTabButton = 0;
-	static int s_TabCountButton = 0;
-
-	CUIRect Button;
-	{
-		char aCount[32];
-		str_format(aCount, sizeof(aCount), "%d/%d", (int)m_vMapTabs.size(), MAX_MAP_TABS);
-		TabBar.VSplitLeft(34.0f, &Button, &TabBar);
-		DoButton_Ex(&s_TabCountButton, aCount, 0, &Button, BUTTONFLAG_LEFT, "Map tabs: each tab keeps its own map.", IGraphics::CORNER_ALL, EditorFontSizes::MENU);
-		TabBar.VSplitLeft(3.0f, nullptr, &TabBar);
-	}
-
-	for(int i = 0; i < (int)m_vMapTabs.size(); i++)
-	{
-		if(TabBar.w <= 30.0f)
-			break;
-		const float TabWidth = minimum(140.0f, TabBar.w - 26.0f);
-		TabBar.VSplitLeft(TabWidth, &Button, &TabBar);
-		CUIRect TabButton, CloseButton;
-		Button.VSplitRight(13.0f, &TabButton, &CloseButton);
-
-		const bool Active = i == m_ActiveMapTab;
-		char aName[64];
-		MapTabName(Active ? Map()->m_aFilename : m_vMapTabs[i].m_aSaveFile, aName, sizeof(aName));
-		const bool Modified = Active ? Map()->m_Modified : m_vMapTabs[i].m_Modified;
-		char aLabel[96];
-		str_format(aLabel, sizeof(aLabel), "%s%s", aName, Modified ? "*" : "");
-
-		if(DoButton_Ex(&s_aTabButtons[i], aLabel, Active ? 1 : 0, &TabButton, BUTTONFLAG_LEFT, "Switch to this map tab.", IGraphics::CORNER_L, EditorFontSizes::MENU, TEXTALIGN_ML))
-			SwitchMapTab(i);
-
-		if(DoButton_Ex(&s_aTabCloseButtons[i], "x", 0, &CloseButton, BUTTONFLAG_LEFT, "Close this map tab.", IGraphics::CORNER_R))
-		{
-			CloseMapTab(i);
-			return;
-		}
-		TabBar.VSplitLeft(3.0f, nullptr, &TabBar);
-	}
-
-	if(TabBar.w >= 18.0f)
-	{
-		TabBar.VSplitLeft(18.0f, &Button, &TabBar);
-		if(DoButton_Ex(&s_AddTabButton, "+", 0, &Button, BUTTONFLAG_LEFT, "Add a new map tab with an empty map.", IGraphics::CORNER_ALL))
-			AddMapTab();
-	}
 }
 
 bool CEditor::HandleMapDrop(const char *pFilename, int StorageType)
