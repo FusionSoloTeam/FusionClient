@@ -111,9 +111,10 @@ jobs:
         shell: pwsh
         run: |
           if (-not (Test-Path build.log)) { Write-Host 'no build.log produced'; return }
-          Select-String -Path build.log -Pattern 'error [A-Z]+[0-9]{3,4}|CMake Error|fatal error' |
-            Select-Object -First 10 |
-            ForEach-Object { Write-Host ('::error::[windows] ' + ($_.Line.Trim() -replace '%', '%25')) }
+          $emit = { param($lines) foreach ($line in $lines) { Write-Host ('::error::[windows] ' + ($line -replace '%', '%25')) } }
+          & $emit (Select-String -Path build.log -Pattern 'error [A-Z]+[0-9]{3,4}|CMake Error|fatal error' |
+            Select-Object -First 5 | ForEach-Object { $_.Line.Trim() })
+          & $emit (Get-Content build.log -Tail 5)
 
       - name: Package
         shell: pwsh
@@ -138,7 +139,9 @@ jobs:
   linux:
     name: Linux (x86_64)
     needs: meta
-    runs-on: ubuntu-22.04
+    # ffmpeg >= 5 is required: video_loader.cpp passes `const AVCodec **` to
+    # av_find_best_stream, which only matches the newer avformat headers.
+    runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -192,8 +195,9 @@ jobs:
         if: failure()
         run: |
           [ -f build.log ] || exit 0
-          grep -E 'error:|Error [0-9]+|undefined reference|CMake Error' build.log | head -n 10 |
-            sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::[linux] ${line}"; done
+          emit() { sed 's/%/%25/g; s/\r//g' | while IFS= read -r line; do echo "::error::[linux] ${line}"; done; }
+          grep -E 'error:|Error [0-9]+|undefined reference|CMake Error' build.log | head -n 5 | emit
+          tail -n 5 build.log | emit
           exit 0
 
       - name: Package
@@ -247,6 +251,12 @@ jobs:
           rustup target add x86_64-linux-android
           scripts/android/download_android_sdk.sh "$HOME"
 
+      - name: Install Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.3.296.0
+          cache: true
+
       - name: Build APK
         env:
           TW_KEY_NAME: ${{ runner.temp }}/DDNet.jks
@@ -270,8 +280,9 @@ jobs:
         if: failure()
         run: |
           [ -f build-android.log ] || exit 0
-          grep -E 'FAILURE:|error:|Error [0-9]+|What went wrong|CMake Error' build-android.log | head -n 10 |
-            sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::[android] ${line}"; done
+          emit() { sed 's/%/%25/g; s/\r//g' | while IFS= read -r line; do echo "::error::[android] ${line}"; done; }
+          grep -E 'FAILURE:|error:|Error [0-9]+|What went wrong|CMake Error' build-android.log | head -n 5 | emit
+          tail -n 5 build-android.log | emit
           exit 0
 
       - name: Upload artifact
