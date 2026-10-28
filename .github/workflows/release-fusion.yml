@@ -95,11 +95,25 @@ jobs:
           -DDISCORD=OFF
           -DTOOLS=OFF
           -DAUTOUPDATE=OFF
+          -DDOWNLOAD_GTEST=OFF
           -DCMAKE_RUST_COMPILER_TARGET=${{ matrix.rust-target }}
           -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=.
 
       - name: Build
-        run: cmake --build build --config Release --target game-client game-server
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target game-client game-server 2>&1 |
+            Tee-Object -FilePath build.log
+          exit $LASTEXITCODE
+
+      - name: Report build errors
+        if: failure()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path build.log)) { Write-Host 'no build.log produced'; return }
+          Select-String -Path build.log -Pattern 'error [A-Z]+[0-9]{3,4}|CMake Error|fatal error' |
+            Select-Object -First 10 |
+            ForEach-Object { Write-Host ('::error::[windows] ' + ($_.Line.Trim() -replace '%', '%25')) }
 
       - name: Package
         shell: pwsh
@@ -167,9 +181,20 @@ jobs:
           -DDISCORD=OFF
           -DTOOLS=OFF
           -DAUTOUPDATE=OFF
+          -DDOWNLOAD_GTEST=OFF
 
       - name: Build
-        run: cmake --build build --target game-client game-server
+        run: |
+          set -o pipefail
+          cmake --build build --target game-client game-server 2>&1 | tee build.log
+
+      - name: Report build errors
+        if: failure()
+        run: |
+          [ -f build.log ] || exit 0
+          grep -E 'error:|Error [0-9]+|undefined reference|CMake Error' build.log | head -n 10 |
+            sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::[linux] ${line}"; done
+          exit 0
 
       - name: Package
         run: |
@@ -209,6 +234,7 @@ jobs:
       - name: Install dependencies
         run: |
           set -euo pipefail
+          chmod +x scripts/android/cmake_android.sh scripts/android/download_android_sdk.sh
           sudo apt-get update -y
           sudo apt-get install -y ninja-build openjdk-21-jdk openssl
           curl -LO https://github.com/Kitware/CMake/releases/download/v3.22.1/cmake-3.22.1-Linux-x86_64.tar.gz
@@ -222,16 +248,31 @@ jobs:
           scripts/android/download_android_sdk.sh "$HOME"
 
       - name: Build APK
+        env:
+          TW_KEY_NAME: ${{ runner.temp }}/DDNet.jks
+          TW_KEY_ALIAS: DDNet-Key
         run: |
           set -euo pipefail
+          export TW_KEY_PW="$(openssl rand -base64 32)"
+          keytool -genkey -v -keystore "$TW_KEY_NAME" -keyalg RSA -keysize 2048 -validity 10000 \
+            -alias "$TW_KEY_ALIAS" -storepass "$TW_KEY_PW" -dname "CN=Fusion CI, OU=Fusion, O=Fusion"
           export ANDROID_HOME="$HOME/Android/Sdk"
           unset ANDROID_SDK_ROOT
           export PATH="$HOME/cmake/bin:$PATH"
           export TW_VERSION_NAME="${{ needs.meta.outputs.version }}"
-          scripts/android/cmake_android.sh arm64 DDNet org.ddnet.client Release build-android
+          scripts/android/cmake_android.sh arm64 DDNet org.ddnet.client Release build-android 2>&1 |
+            tee build-android.log
           mkdir -p dist
           cp build-android/DDNet.apk "dist/${{ needs.meta.outputs.folder }}-android.apk"
           ls -l dist
+
+      - name: Report build errors
+        if: failure()
+        run: |
+          [ -f build-android.log ] || exit 0
+          grep -E 'FAILURE:|error:|Error [0-9]+|What went wrong|CMake Error' build-android.log | head -n 10 |
+            sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::[android] ${line}"; done
+          exit 0
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
