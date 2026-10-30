@@ -750,7 +750,7 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcCustomClients, TCLocalize("Identify custom clients"), &g_Config.m_FcCustomClients, &Column, LineSize);
 	Column.HSplitTop(LineSize, &Button, &Column);
-	Ui()->DoLabel(&Button, TCLocalize("Show which client other players use"), FontSize, TEXTALIGN_ML);
+		Ui()->DoLabel(&Button, TCLocalize("Show which client other players use"), FontSize, TEXTALIGN_ML);
 
 	if(g_Config.m_FcCustomClients)
 	{
@@ -778,8 +778,7 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 	Column.HSplitTop(MarginSmall, nullptr, &Column);
 
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcSkinGradient, TCLocalize("Animated glowing gradient on skins"), &g_Config.m_FcSkinGradient, &Column, LineSize);
-	Column.HSplitTop(LineSize, &Button, &Column);
-	Ui()->DoLabel(&Button, TCLocalize("Colour sweep with a moving glint, like enchantments"), FontSize, TEXTALIGN_ML);
+	Column.HSplitTop(LineSize, &Button, &Column);	
 
 	if(g_Config.m_FcSkinGradient)
 	{
@@ -1309,6 +1308,7 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcNotifyWhenAbovePosPlayer, TCLocalize("Notify when above player"), &g_Config.m_TcNotifyWhenAbovePosPlayer, &Column, LineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcNotifyWhenSamePosPlayer, TCLocalize("Notify when same pos as player"), &g_Config.m_TcNotifyWhenSamePosPlayer, &Column, LineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcNotifyWhenBelowPosPlayer, TCLocalize("Notify when below player"), &g_Config.m_TcNotifyWhenBelowPosPlayer, &Column, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcAboveBelowWallCheck, TCLocalize("Only when no wall between you"), &g_Config.m_FcAboveBelowWallCheck, &Column, LineSize);
 	Column.HSplitTop(LineSize, &Button, &Column);
 	{
 		CUIRect EditLabel, EditBox;
@@ -1327,6 +1327,29 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 	Ui()->DoScrollbarOption(&g_Config.m_TcNotifyWhenPosPlayerPosX, &g_Config.m_TcNotifyWhenPosPlayerPosX, &Button, TCLocalize("Text pos x"), 0, 100, &CUi::ms_LinearScrollbarScale, 0);
 	Column.HSplitTop(LineSize, &Button, &Column);
 	Ui()->DoScrollbarOption(&g_Config.m_TcNotifyWhenPosPlayerPosY, &g_Config.m_TcNotifyWhenPosPlayerPosY, &Button, TCLocalize("Text pos y"), 0, 100, &CUi::ms_LinearScrollbarScale, 0);
+
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+
+	}
+	// ***** Scoreboard ***** //
+	if(SectionEnabled(true, pSettingsSearch, {"scoreboard", "gradient", "sort", "friends", "war", "notes"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Scoreboard"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcScoreboardGradientTeams, TCLocalize("Gradient team colors"), &g_Config.m_FcScoreboardGradientTeams, &Column, LineSize);
+	{
+		static std::vector<CButtonContainer> s_vSortButtonContainers = {{}, {}, {}};
+		DoLine_RadioMenu(Column, TCLocalize("Sort players"), s_vSortButtonContainers,
+			{Localize("Off"), Localize("Friends"), Localize("Friends + war")},
+			{0, 1, 2}, g_Config.m_FcScoreboardSort);
+	}
+	Column.HSplitTop(LineSize, &Button, &Column);
+	Ui()->DoLabel(&Button, TCLocalize("Right-click a player to edit a note"), FontSize, TEXTALIGN_ML);
 
 	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
 	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
@@ -2092,7 +2115,7 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 
 	}
 	// ***** Tile Outlines ***** //
-	if(SectionEnabled(false, pSettingsSearch, {"outline", "tile", "pulsate", "audio", "discord"}))
+	if(SectionEnabled(false, pSettingsSearch, {"outline", "tile", "pulsate", "audio", "discord", "transparency", "alpha", "opacity"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2133,6 +2156,9 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 		Column.HSplitTop(MarginSmall, nullptr, &Column);
 		Column.HSplitTop(LineSize, &Button, &Column);
 		Ui()->DoScrollbarOption(&g_Config.m_TcOutlineGradientSpeed, &g_Config.m_TcOutlineGradientSpeed, &Button, TCLocalize("Gradient scroll speed"), 0, 100);
+		Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcOutlineAlpha, &g_Config.m_TcOutlineAlpha, &Button, TCLocalize("Outline transparency"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
 		Column.HSplitTop(ColorPickerLineSpacing, nullptr, &Column);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcOutlinePulsate, TCLocalize("Outline pulsation (system sound)"), &g_Config.m_TcOutlinePulsate, &Column, LineSize);
 		if(g_Config.m_TcOutlinePulsate)
@@ -2346,6 +2372,54 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 		s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
 		Column.HSplitTop(MarginSmall, nullptr, &Column);
 	}
+	// ***** Shared positions ***** //
+	if(SectionEnabled(true, pSettingsSearch, {"sendpos", "position", "share", "hours", "playtime", "ddnet"}))
+	{
+		Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+		s_SectionBoxes.push_back(Column);
+		Column.HSplitTop(HeadlineHeight, &Label, &Column);
+		Ui()->DoLabel(&Label, TCLocalize("Shared positions"), HeadlineFontSize, TEXTALIGN_ML);
+		Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcSendPosMarkers, TCLocalize("Show positions shared with !sendpos"), &g_Config.m_FcSendPosMarkers, &Column, LineSize);
+		if(g_Config.m_FcSendPosMarkers)
+		{
+			Column.HSplitTop(LineSize * 2.0f, &Button, &Column);
+			Ui()->DoScrollbarOption(&g_Config.m_FcSendPosTime, &g_Config.m_FcSendPosTime, &Button, TCLocalize("Marker duration"), 1, 60, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_MULTILINE, TCLocalize(" seconds"));
+		}
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoLabel(&Button, TCLocalize("Type !sendpos in chat to share your position"), FontSize, TEXTALIGN_ML);
+		Column.HSplitTop(LineSize, &Button, &Column);;
+
+		s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+		Column.HSplitTop(MarginSmall, nullptr, &Column);
+	}
+	// ***** Death tracker ***** //
+	if(SectionEnabled(true, pSettingsSearch, {"death", "tracker", "marker", "kill"}))
+	{
+		Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+		s_SectionBoxes.push_back(Column);
+		Column.HSplitTop(HeadlineHeight, &Label, &Column);
+		Ui()->DoLabel(&Label, TCLocalize("Death tracker"), HeadlineFontSize, TEXTALIGN_ML);
+		Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcDeathTracker, TCLocalize("Show where tees died on the map"), &g_Config.m_FcDeathTracker, &Column, LineSize);
+		if(g_Config.m_FcDeathTracker)
+		{
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcDeathTrackerOthers, TCLocalize("Also mark the deaths of other players"), &g_Config.m_FcDeathTrackerOthers, &Column, LineSize);
+
+			static CButtonContainer s_DeathTrackerColor;
+			DoLine_ColorPicker(&s_DeathTrackerColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &Column, TCLocalize("Color"), &g_Config.m_FcDeathTrackerColor, ColorRGBA(1.0f, 0.0f, 0.0f), false);
+
+			Column.HSplitTop(LineSize * 2.0f, &Button, &Column);
+			Ui()->DoScrollbarOption(&g_Config.m_FcDeathTrackerTime, &g_Config.m_FcDeathTrackerTime, &Button, TCLocalize("Marker duration"), 1, 600, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_MULTILINE, TCLocalize(" seconds"));
+			Column.HSplitTop(LineSize, &Button, &Column);
+			Ui()->DoScrollbarOption(&g_Config.m_FcDeathTrackerMax, &g_Config.m_FcDeathTrackerMax, &Button, TCLocalize("Maximum markers on map"), 1, 128);
+		}
+
+		s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+		Column.HSplitTop(MarginSmall, nullptr, &Column);
+	}
 	// ***** Finish Name ***** //
 	if(SectionEnabled(false, pSettingsSearch, {"finish", "name", "message"}))
 	{
@@ -2527,7 +2601,7 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 
 	}
 
-	if(SectionEnabled(true, pSettingsSearch, {"better chat", "smooth chat", "typing", "caret", "chat animation", "chat input"}))
+	if(SectionEnabled(true, pSettingsSearch, {"better chat", "smooth chat", "typing", "caret", "chat animation", "chat input", "chat log", "log"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2539,6 +2613,7 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcSmoothChatSend, TCLocalize("Smooth send"), &g_Config.m_TcSmoothChatSend, &Column, LineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcSmoothChatCaret, TCLocalize("Smooth caret"), &g_Config.m_TcSmoothChatCaret, &Column, LineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcBetterChatNoInputGap, TCLocalize("Hide the empty chat input space"), &g_Config.m_TcBetterChatNoInputGap, &Column, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcChatLog, TCLocalize("Save chat to chatlog/ (logs older than a week are deleted)"), &g_Config.m_FcChatLog, &Column, LineSize);
 
 	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
 	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
@@ -2632,6 +2707,8 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 		Ui()->DoScrollbarOption(&g_Config.m_TcVignetteSmoothness, &g_Config.m_TcVignetteSmoothness, &Button, TCLocalize("Smoothness"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
 		Column.HSplitTop(LineSize, &Button, &Column);
 		Ui()->DoScrollbarOption(&g_Config.m_TcVignetteDarken, &g_Config.m_TcVignetteDarken, &Button, TCLocalize("Darken zones"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_TcVignetteBlur, &g_Config.m_TcVignetteBlur, &Button, TCLocalize("Blur zones"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
 
 		static CButtonContainer s_VignetteColorId;
 		DoLine_ColorPicker(&s_VignetteColorId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &Column, TCLocalize("Zone color"), &g_Config.m_TcVignetteColor, ColorRGBA(0.0f, 0.0f, 0.0f), false);
@@ -4555,10 +4632,10 @@ void CMenus::RenderSettingsFusionInfo(CUIRect MainView)
 	{
 		RightView.HSplitTop(CardSize, &DevCardRect, &RightView);
 		DevCardRect.VSplitLeft(CardSize, &TeeRect, &Label);
-		Label.VSplitLeft(TextRender()->TextWidth(LineSize, "Arm1g3d0n"), &Label, &Button);
+		Label.VSplitLeft(TextRender()->TextWidth(LineSize, "Hydrogen"), &Label, &Button);
 		Button.VSplitLeft(MarginSmall, nullptr, &Button);
 		Button.w = LineSize, Button.h = LineSize, Button.y = Label.y + (Label.h / 2.0f - Button.h / 2.0f);
-		Ui()->DoLabel(&Label, "Arm1g3d0n", LineSize, TEXTALIGN_ML);
+		Ui()->DoLabel(&Label, "Hydrogen", LineSize, TEXTALIGN_ML);
 		if(Ui()->DoButton_FontIcon(&s_DevLinkButton, FontIcon::ARROW_UP_RIGHT_FROM_SQUARE, 0, &Button, IGraphics::CORNER_ALL))
 			Client()->ViewLink("https://github.com/FusionSoloTeam");
 		RenderDevSkin(TeeRect.Center(), 50.0f, "eptrnanami", "default", false, 0, 0, 0, false, true);

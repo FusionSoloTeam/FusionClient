@@ -72,6 +72,7 @@
 #include "components/tclient/bindchat.h"
 #include "components/tclient/bindwheel.h"
 #include "components/tclient/chatbinds.h"
+#include "components/tclient/death_tracker.h"
 #include "components/tclient/gradient.h"
 #include "components/tclient/custom_communities.h"
 #include "components/tclient/mod.h"
@@ -104,6 +105,7 @@
 #include "components/tclient/afk_aura.h"
 #include "components/tclient/animated_assets.h"
 #include "components/tclient/hover_notification.h"
+#include "components/tclient/fast_practice.h"
 #include "components/tooltips.h"
 #include "components/touch_controls.h"
 #include "components/voting.h"
@@ -191,6 +193,7 @@ class CGameClient : public IGameClient
 {
 public:
 	friend class CTClient;
+	friend class CFastPractice;
 
 	// all components
 	CInfoMessages m_InfoMessages;
@@ -261,6 +264,8 @@ public:
 	CAboveBelowPlayer m_AboveBelowPlayer;
 	CSwapTimer m_SwapTimer;
 	CChatBinds m_ChatBinds;
+	CDeathTracker m_DeathTracker;
+	CFastPractice m_FastPractice;
 	CBcGradient m_BcGradient;
 	CPlayerIndicator m_PlayerIndicator;
 	COutlines m_Outlines;
@@ -745,6 +750,7 @@ public:
 	void OnActivateEditor() override;
 	void OnDummySwap() override;
 	int OnSnapInput(int *pData, bool Dummy, bool Force) override;
+	void PrepareInputForSend(int *pData, int Size, bool Dummy) override;
 	void OnShutdown() override;
 	void OnEnterGame() override;
 	void OnRconType(bool UsernameReq) override;
@@ -798,7 +804,7 @@ public:
 	int m_LastCustomClientsDetect = -1;
 	int m_ShareAnnounceTries = 0;
 	int m_ShareAnnounceTick = 0;
-	void SendKill() const;
+	void SendKill();
 	void SendReadyChange7(); // NOLINT(readability-make-member-function-const)
 
 	void ApplyPreInputs(int Tick, bool Direct, CGameWorld &GameWorld);
@@ -809,6 +815,7 @@ public:
 	// DDRace
 
 	int m_aLocalIds[NUM_DUMMIES];
+	int m_PredictedDummyId = -1;
 	float m_LocalDeathTime = -100.0f;
 	CNetObj_PlayerInput m_DummyInput;
 	CNetObj_PlayerInput m_HammerInput;
@@ -872,6 +879,7 @@ public:
 	protocol7::CNetObjHandler *GetNetObjHandler7() override;
 
 	void LoadGameSkin(const char *pPath, bool AsDir = false);
+	void LoadDummyGameSkin();
 	void LoadEmoticonsSkin(const char *pPath, bool AsDir = false);
 	void LoadParticlesSkin(const char *pPath, bool AsDir = false);
 	void LoadHudSkin(const char *pPath, bool AsDir = false);
@@ -971,6 +979,12 @@ public:
 
 	SClientGameSkin m_GameSkin;
 	bool m_GameSkinLoaded = false;
+
+	SClientGameSkin m_DummyGameSkin;
+	bool m_DummyGameSkinLoaded = false;
+
+	void LoadGameSkinInto(const char *pPath, bool AsDir, SClientGameSkin &Skin, bool &SkinLoaded, const char *pAnimatedName);
+	const SClientGameSkin &GameSkinForClient(int ClientId) const;
 
 	struct SClientParticlesSkin
 	{

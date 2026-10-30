@@ -7,8 +7,12 @@
 #include <engine/graphics.h>
 
 #include <game/client/component.h>
+#include <game/client/lineinput.h>
 #include <game/client/ui.h>
 #include <game/client/ui_rect.h>
+
+#include <map>
+#include <string>
 
 class CScoreboard : public CComponent
 {
@@ -35,6 +39,14 @@ class CScoreboard : public CComponent
 
 	const char *GetTeamName(int Team) const;
 
+	const char *PlayerNote(const char *pName) const;
+	void SetPlayerNote(const char *pName, const char *pNote);
+	void LoadNotes();
+	void SaveNotes() const;
+
+	std::map<std::string, std::string> m_Notes;
+	bool m_NotesDirty = false;
+
 	bool m_Active;
 
 	IGraphics::CTextureHandle m_DeadTeeTexture;
@@ -58,6 +70,8 @@ class CScoreboard : public CComponent
 		int m_ClientId;
 		bool m_IsLocal;
 		bool m_IsSpectating;
+
+		CLineInputBuffered<128> m_NoteInput;
 
 		static CUi::EPopupMenuFunctionResult Render(void *pContext, CUIRect View, bool Active);
 	} m_ScoreboardPopupContext;

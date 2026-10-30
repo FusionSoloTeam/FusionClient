@@ -166,6 +166,8 @@ private:
 	int m_LastPreds[SERVER_TICK_SPEED * 5];
 	int m_LastPredTick;
 	int m_LastPredLength;
+	float m_PracticeLine1Width = -1.0f;
+	float m_PracticeLine2Width = -1.0f;
 
 	inline float GetMovementInformationBoxHeight() const;
 

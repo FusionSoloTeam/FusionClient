@@ -231,6 +231,34 @@ void CMenus::RenderGame(CUIRect MainView)
 				SetActive(false);
 			}
 		}
+
+		if(GameClient()->m_Snap.m_pLocalInfo->m_Team != TEAM_SPECTATORS && !Paused && !Spec)
+		{
+			constexpr float NormalPracticeButtonWidth = 120.0f;
+			constexpr float CompactPracticeButtonWidth = 52.0f;
+			constexpr float PracticeButtonMinWidth = 32.0f;
+			constexpr float ButtonSpacing = 5.0f;
+
+			const bool CompactPractice = ButtonBar.w < NormalPracticeButtonWidth + ButtonSpacing;
+			float PracticeButtonWidth = CompactPractice ? CompactPracticeButtonWidth : NormalPracticeButtonWidth;
+			if(ButtonBar.w < PracticeButtonMinWidth)
+				PracticeButtonWidth = ButtonBar.w;
+			else
+				PracticeButtonWidth = std::clamp(PracticeButtonWidth, PracticeButtonMinWidth, ButtonBar.w);
+
+			if(PracticeButtonWidth > 0.0f)
+			{
+				ButtonBar.VSplitLeft(PracticeButtonWidth, &Button, &ButtonBar);
+				if(ButtonBar.w >= ButtonSpacing)
+					ButtonBar.VSplitLeft(ButtonSpacing, nullptr, &ButtonBar);
+
+				static CButtonContainer s_FastPracticeButton;
+				const bool UseCompactLabel = CompactPractice || PracticeButtonWidth <= CompactPracticeButtonWidth;
+				const char *pFastPracticeLabel = UseCompactLabel ? "fp" : (GameClient()->m_FastPractice.Enabled() ? Localize("Stop practice") : Localize("Fast practice"));
+				if(DoButton_Menu(&s_FastPracticeButton, pFastPracticeLabel, GameClient()->m_FastPractice.Enabled() ? 1 : 0, &Button))
+					Console()->ExecuteLine("fast_practice_toggle", IConsole::CLIENT_ID_UNSPECIFIED);
+			}
+		}
 	}
 
 	if(GameClient()->m_Snap.m_pLocalInfo)

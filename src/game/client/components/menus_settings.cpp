@@ -48,6 +48,7 @@ int CMenus::SettingsGroupOfPage(int Page) const
 		return SETTINGS_GROUP_TCLIENT;
 	case SETTINGS_FUSION:
 	case SETTINGS_FUSION_INFO:
+	case SETTINGS_FUSION_CHATLOG:
 		return SETTINGS_GROUP_FUSION;
 	default:
 		return -1;
@@ -110,6 +111,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 	};
 	const SSubTab aFusionTabs[] = {
 		{SETTINGS_FUSION, TCLocalize("Settings")},
+		{SETTINGS_FUSION_CHATLOG, TCLocalize("Chat Logs")},
 		{SETTINGS_FUSION_INFO, "Info"},
 	};
 
@@ -268,6 +270,10 @@ void CMenus::RenderSettings(CUIRect MainView)
 	case SETTINGS_FUSION_INFO:
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_LANGUAGE);
 		RenderSettingsFusionInfo(MainView);
+		break;
+	case SETTINGS_FUSION_CHATLOG:
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_LANGUAGE);
+		RenderSettingsFusionChatLog(MainView);
 		break;
 	case SETTINGS_PROFILES:
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GENERAL);

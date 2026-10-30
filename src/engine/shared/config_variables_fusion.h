@@ -41,3 +41,23 @@ MACRO_CONFIG_INT(FcTileAnimationMode, fc_tile_animation_mode, 1, 0, 2, CFGFLAG_C
 MACRO_CONFIG_INT(FcTileAnimationSpeed, fc_tile_animation_speed, 100, 10, 400, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tile entry animation speed in percent")
 MACRO_CONFIG_INT(FcTileAnimationPlacingDistance, fc_tile_animation_placing_distance, 6, 1, 16, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tile placing animation distance in tiles")
 MACRO_CONFIG_INT(FcTileAnimationGlitchInterval, fc_tile_animation_glitch_interval, 45, 10, 250, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Entity glitch animation frame interval in milliseconds")
+
+MACRO_CONFIG_INT(FcAboveBelowWallCheck, fc_above_below_wall_check, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Only show the above/below player indicator when no wall is between you and the player")
+
+MACRO_CONFIG_INT(FcChatLog, fc_chat_log, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Save chat messages to chatlog/ and delete logs older than a week")
+
+MACRO_CONFIG_INT(FcScoreboardGradientTeams, fc_scoreboard_gradient_teams, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Draw scoreboard team blocks and team titles with a gradient")
+MACRO_CONFIG_INT(FcScoreboardSort, fc_scoreboard_sort, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Scoreboard sorting (0 = off, 1 = friends first, 2 = friends first and war last)")
+
+MACRO_CONFIG_INT(FcChatSpecClick, fc_chat_spec_click, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Click a chat line asking for a spectate to spectate that player")
+
+MACRO_CONFIG_INT(FcSendPosMarkers, fc_sendpos_markers, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show positions shared by other Fusion clients with !sendpos")
+MACRO_CONFIG_INT(FcSendPosTime, fc_sendpos_time, 10, 1, 60, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Seconds a shared position marker stays visible")
+
+MACRO_CONFIG_INT(FcDeathTracker, fc_death_tracker, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show where tees died on the map");
+MACRO_CONFIG_INT(FcDeathTrackerOthers, fc_death_tracker_others, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Also mark the deaths of other players (0 = only your own tees)");
+MACRO_CONFIG_INT(FcDeathTrackerTime, fc_death_tracker_time, 60, 1, 600, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Seconds a death marker stays visible");
+MACRO_CONFIG_INT(FcDeathTrackerMax, fc_death_tracker_max, 32, 1, 128, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum number of death markers kept on the map");
+MACRO_CONFIG_COL(FcDeathTrackerColor, fc_death_tracker_color, 0xE8564FFF, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Color of the death markers");
+
+MACRO_CONFIG_STR(FcDummyGameSkin, fc_dummy_gameskin, 50, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Gameskin used for your own dummy (empty = same as cl_asset_game)");

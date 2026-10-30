@@ -2,8 +2,13 @@
 #define GAME_CLIENT_COMPONENTS_TCLIENT_CHATBINDS_H
 #include "game/client/component.h"
 
-#include <engine/console.h>
+#include <base/math.h>
 
+#include <engine/console.h>
+#include <engine/http.h>
+#include <engine/shared/protocol.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -15,6 +20,17 @@ class CChatBinds : public CComponent
 		std::string m_Nickname;
 	};
 	std::vector<STrackedPlayer> m_vPlayersInTracker;
+
+	struct SMarker
+	{
+		vec2 m_Pos;
+		char m_aName[MAX_NAME_LENGTH];
+		int64_t m_Time;
+	};
+	std::vector<SMarker> m_vMarkers;
+
+	std::shared_ptr<IHttpRequest> m_pProfileTask;
+	char m_aProfileName[MAX_NAME_LENGTH] = "";
 
 	char m_aPlayerSkinBefore[128] = "";
 	int m_PlayerUseCustomColorBefore = 0;
@@ -28,12 +44,20 @@ class CChatBinds : public CComponent
 	void ApplySkinToPlayer(const char *pSkin, int CustomColor, int SkinColorBodyint, int SkinColorFeetint);
 	void ApplyColorToPlayer(int CustomColor, int SkinColorBodyint, int SkinColorFeetint);
 	void TrackerClientIdRemove(int ClientId);
+	void AddMarker(vec2 Pos, const char *pName);
+	void RenderMarkers();
+	void FetchProfile(const char *pName);
+	void FinishProfile();
 
 public:
 	int Sizeof() const override { return sizeof(*this); }
 	void OnConsoleInit() override;
 	void OnReset() override;
+	void OnMessage(int MsgType, void *pRawMsg) override;
 	void OnRender() override;
+	void OnStateChange(int NewState, int OldState) override;
+
+	bool OnChatCommand(int Team, const char *pLine);
 
 	static void ConFindPlayer(IConsole::IResult *pResult, void *pUserData);
 	static void ConFindSkin(IConsole::IResult *pResult, void *pUserData);

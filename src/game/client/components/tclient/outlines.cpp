@@ -249,6 +249,7 @@ void COutlines::OnRender()
 
 	const float PulsateBonus = g_Config.m_TcOutlinePulsate ? m_SystemAudio.Level() * (g_Config.m_TcOutlinePulsateStrength / 100.0f) * 64.0f : 0.0f;
 	const float GradientOffset = g_Config.m_TcOutlineGradientSpeed > 0 ? (float)(time_get() / (double)time_freq()) * (g_Config.m_TcOutlineGradientSpeed / 100.0f) * 0.5f : 0.0f;
+	const float Transparency = 1.0f - g_Config.m_TcOutlineAlpha / 100.0f;
 
 	const CScreenRect PrevScreen = Graphics()->GetScreen();
 
@@ -393,9 +394,10 @@ void COutlines::OnRender()
 			{
 				const float SmoothProgress = Progress * Progress * (3.0f - 2.0f * Progress);
 				OutlineColor.a *= SmoothProgress;
-				if(OutlineColor.a <= 0.0f)
-					continue;
 			}
+			OutlineColor.a *= Transparency;
+			if(OutlineColor.a <= 0.0f)
+				continue;
 			Graphics()->SetColor(OutlineColor);
 			Graphics()->QuadsDrawTL(aQuads, NumQuads);
 		}

@@ -198,6 +198,7 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			g_Config.m_TcChatCursor = 1;
 		LeftView.HSplitTop(LineSize, &Button, &LeftView);
 		Ui()->DoScrollbarOption(&g_Config.m_TcChatTagCursorHitbox, &g_Config.m_TcChatTagCursorHitbox, &Button, Localize("Tag cursor hitbox"), 50, 500, &CUi::ms_LinearScrollbarScale, 0u, "%");
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcChatSpecClick, Localize("Click chat lines asking for a spectate"), &g_Config.m_FcChatSpecClick, &LeftView, LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcMuteMessagesConsole, Localize("Show muted players' messages in console"), &g_Config.m_TcMuteMessagesConsole, &LeftView, LineSize);
 		if(DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClChatOld, Localize("Use old chat style"), &g_Config.m_ClChatOld, &LeftView, LineSize))
 			GameClient()->m_Chat.RebuildChat();

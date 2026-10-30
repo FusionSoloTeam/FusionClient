@@ -673,6 +673,22 @@ void CHud::RenderTextInfo()
 			TextRender()->TextColor(TextRender()->DefaultTextColor());
 	}
 
+	if(GameClient()->m_FastPractice.Enabled())
+	{
+		constexpr const char *pLine1 = "practice mode";
+		constexpr const char *pLine2 = "(you can use practice commands /tc /invincible)";
+		const float Line1Size = 10.0f;
+		const float Line2Size = 8.0f;
+		if(m_PracticeLine1Width < 0.0f)
+			m_PracticeLine1Width = TextRender()->TextWidth(Line1Size, pLine1, -1, -1.0f);
+		if(m_PracticeLine2Width < 0.0f)
+			m_PracticeLine2Width = TextRender()->TextWidth(Line2Size, pLine2, -1, -1.0f);
+		const float Line1X = m_Width / 2.0f - m_PracticeLine1Width / 2.0f;
+		const float Line2X = m_Width / 2.0f - m_PracticeLine2Width / 2.0f;
+		TextRender()->Text(Line1X, 34.0f, Line1Size, pLine1, -1.0f);
+		TextRender()->Text(Line2X, 45.0f, Line2Size, pLine2, -1.0f);
+	}
+
 	Graphics()->MapScreen(0.0f, 0.0f, m_Width, m_Height);
 
 	if(g_Config.m_TcMiniDebug)

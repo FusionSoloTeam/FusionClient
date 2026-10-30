@@ -348,6 +348,22 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 	}
 	MainView.HSplitTop(5.0f, nullptr, &MainView);
 
+	if(m_Dummy)
+	{
+		CUIRect DummyGameSkin;
+		MainView.HSplitTop(20.0f, &DummyGameSkin, &MainView);
+		MainView.HSplitTop(5.0f, nullptr, &MainView);
+		static CLineInput s_DummyGameSkinInput;
+		static bool s_DummyGameSkinEditing = false;
+		DoEditBoxWithLabel(&s_DummyGameSkinInput, &DummyGameSkin, Localize("Dummy gameskin"), Localize("Same as main"), g_Config.m_FcDummyGameSkin, sizeof(g_Config.m_FcDummyGameSkin));
+		const bool Editing = s_DummyGameSkinInput.IsActive();
+		if(s_DummyGameSkinEditing && !Editing)
+		{
+			GameClient()->LoadDummyGameSkin();
+		}
+		s_DummyGameSkinEditing = Editing;
+	}
+
 	// Layout bottom controls and use remainder for skin selector
 	CUIRect QuickSearch, DatabaseButton, DirectoryButton, RefreshButton;
 	MainView.HSplitBottom(20.0f, &MainView, &QuickSearch);

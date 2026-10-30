@@ -57,6 +57,8 @@ void CVignette::OnRender()
 
 	const float Strength = g_Config.m_TcVignetteStrength / 100.0f;
 	const float Darken = g_Config.m_TcVignetteDarken / 100.0f;
+	if(Strength > 0.0f && g_Config.m_TcVignetteBlur > 0)
+		Graphics()->VignetteBlur();
 	if(Strength <= 0.0f || Darken <= 0.0f)
 		return;
 

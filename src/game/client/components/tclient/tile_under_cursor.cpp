@@ -2,6 +2,7 @@
 
 #include <base/color.h>
 #include <base/math.h>
+#include <base/vmath.h>
 
 #include <engine/graphics.h>
 #include <engine/shared/config.h>
@@ -24,7 +25,7 @@ void CTileUnderCursor::OnRender()
 	const float Aspect = Graphics()->WorldAspect();
 
 	const vec2 CursorOffset = (GameClient()->m_Controls.m_aTargetPos[g_Config.m_ClDummy] - Center) * Zoom;
-	const vec2 AimWorld = Center + rotate(CursorOffset, -GameClient()->m_Camera.TiltAngle());
+	const vec2 AimWorld = Center + rotate_radians(CursorOffset, -GameClient()->m_Camera.TiltAngle());
 
 	const CScreenRect MapRect = Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0.0f, 0.0f, Aspect, Zoom);
 	Graphics()->MapScreen(MapRect);

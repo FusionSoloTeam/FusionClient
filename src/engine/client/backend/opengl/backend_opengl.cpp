@@ -1111,6 +1111,7 @@ ERunCommandReturnTypes CCommandProcessorFragment_OpenGL::RunCommand(const CComma
 	case CCommandBuffer::CMD_CLEAR:
 		Cmd_Clear(static_cast<const CCommandBuffer::SCommand_Clear *>(pBaseCommand));
 		break;
+	case CCommandBuffer::CMD_RENDER_VIGNETTE_BLUR: break;
 	case CCommandBuffer::CMD_RENDER:
 		Cmd_Render(static_cast<const CCommandBuffer::SCommand_Render *>(pBaseCommand));
 		break;

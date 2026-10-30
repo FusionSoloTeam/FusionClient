@@ -687,6 +687,7 @@ public:
 	virtual bool IsForcedAspect() const { return false; }
 	virtual void SetForcedAspect(bool Force) = 0;
 	virtual void SetFrameBlendingAllowed(bool Allowed) = 0;
+	virtual void VignetteBlur() = 0;
 };
 
 class IEngineGraphics : public IGraphics

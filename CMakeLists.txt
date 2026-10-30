@@ -2923,6 +2923,13 @@ if(CLIENT)
     components/tclient/swaptimer.h
     components/tclient/chatbinds.cpp
     components/tclient/chatbinds.h
+    components/tclient/chat_log_browser.cpp
+    components/tclient/chat_log_file.cpp
+    components/tclient/chat_log_file.h
+    components/tclient/death_tracker.cpp
+    components/tclient/death_tracker.h
+    components/tclient/fast_practice.cpp
+    components/tclient/fast_practice.h
     components/tclient/gradient.cpp
     components/tclient/gradient.h
     components/tclient/animated_assets.cpp

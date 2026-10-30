@@ -589,6 +589,8 @@ protected:
 	void RenderSettings(CUIRect MainView);
 	void RenderSettingsFusionSettings(CUIRect MainView);
 	void RenderSettingsFusionInfo(CUIRect MainView);
+
+	void RenderSettingsFusionChatLog(CUIRect MainView);
 	bool RenderHslaScrollbars(CUIRect *pRect, unsigned int *pColor, bool Alpha, float DarkestLight);
 
 	// found in menus_settings_assets.cpp
@@ -756,6 +758,7 @@ public:
 		SETTINGS_PROFILES, // TClient
 		SETTINGS_CONFIGS, // TClient
 		SETTINGS_CREDITS,
+		SETTINGS_FUSION_CHATLOG,
 		SETTINGS_LENGTH,
 	};
 

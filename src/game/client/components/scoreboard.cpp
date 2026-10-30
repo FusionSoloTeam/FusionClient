@@ -3,7 +3,9 @@
 #include "scoreboard.h"
 
 #include <base/dbg.h>
+#include <base/io.h>
 #include <base/time.h>
+#include <cstdlib>
 
 #include <engine/console.h>
 #include <engine/demo.h>
@@ -19,12 +21,16 @@
 #include <game/client/components/countryflags.h>
 #include <game/client/components/motd.h>
 #include <game/client/components/statboard.h>
+#include <game/client/components/tclient/gradient.h>
 #include <game/client/gameclient.h>
 #include <game/client/ui.h>
 #include <game/localization.h>
 
 // Horizontal spacing of the scoreboard contents, both to its edges and between columns
 static constexpr float MARGIN = 10.0f;
+
+static constexpr const char *PLAYER_NOTES_FILE = "player_notes.txt";
+static constexpr int MAX_PLAYER_NOTE_LENGTH = 128;
 
 CScoreboard::CScoreboard()
 {
@@ -107,6 +113,7 @@ void CScoreboard::OnConsoleInit()
 void CScoreboard::OnInit()
 {
 	m_DeadTeeTexture = Graphics()->LoadTexture("deadtee.png", IStorage::TYPE_ALL);
+	LoadNotes();
 }
 
 void CScoreboard::OnReset()
@@ -138,7 +145,81 @@ void CScoreboard::ResetTexts()
 
 void CScoreboard::OnShutdown()
 {
+	if(m_NotesDirty)
+		SaveNotes();
 	ResetTexts();
+}
+
+const char *CScoreboard::PlayerNote(const char *pName) const
+{
+	const auto It = m_Notes.find(pName);
+	return It != m_Notes.end() ? It->second.c_str() : "";
+}
+
+void CScoreboard::SetPlayerNote(const char *pName, const char *pNote)
+{
+	if(pName[0] == '\0')
+		return;
+
+	if(pNote[0] == '\0')
+		m_Notes.erase(pName);
+	else
+		m_Notes[pName] = pNote;
+	m_NotesDirty = true;
+}
+
+void CScoreboard::LoadNotes()
+{
+	m_Notes.clear();
+
+	IOHANDLE File = Storage()->OpenFile(PLAYER_NOTES_FILE, IOFLAG_READ, IStorage::TYPE_SAVE);
+	if(!File)
+		return;
+
+	char *pContent = io_read_all_str(File);
+	io_close(File);
+	if(pContent == nullptr)
+		return;
+
+	for(char *pLine = pContent; *pLine != '\0';)
+	{
+		char *pNext = pLine;
+		while(*pNext != '\0' && *pNext != '\n')
+			pNext++;
+		const char *pLineEnd = pNext;
+		if(*pNext == '\n')
+			pNext++;
+
+		const char *pTab = pLine;
+		while(pTab < pLineEnd && *pTab != '\t')
+			pTab++;
+		if(pTab > pLine && pTab + 1 < pLineEnd)
+		{
+			char aName[MAX_NAME_LENGTH];
+			char aNote[MAX_PLAYER_NOTE_LENGTH];
+			str_truncate(aName, sizeof(aName), pLine, (int)(pTab - pLine));
+			str_truncate(aNote, sizeof(aNote), pTab + 1, (int)(pLineEnd - pTab - 1));
+			m_Notes[aName] = aNote;
+		}
+
+		pLine = pNext;
+	}
+	std::free(pContent);
+}
+
+void CScoreboard::SaveNotes() const
+{
+	IOHANDLE File = Storage()->OpenFile(PLAYER_NOTES_FILE, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+	if(!File)
+		return;
+
+	for(const auto &[Name, Note] : m_Notes)
+	{
+		char aLine[MAX_NAME_LENGTH + MAX_PLAYER_NOTE_LENGTH + 4];
+		str_format(aLine, sizeof(aLine), "%s\t%s\n", Name.c_str(), Note.c_str());
+		io_write(File, aLine, str_length(aLine));
+	}
+	io_close(File);
 }
 
 void CScoreboard::OnWindowResize()
@@ -175,6 +256,9 @@ bool CScoreboard::OnInput(const IInput::CEvent &Event)
 		return true;
 	}
 
+	if(IsActive() && m_MouseUnlocked && !GameClient()->m_Menus.IsActive() && !GameClient()->m_Chat.IsActive())
+		Ui()->OnInput(Event);
+
 	return IsActive() && m_MouseUnlocked;
 }
 
@@ -209,6 +293,27 @@ void CScoreboard::RenderTitle(CUIRect TitleLabel, int Team, const char *pTitle, 
 	SLabelProperties Props;
 	Props.m_MaxWidth = TitleLabel.w;
 	Props.m_EllipsisAtEnd = true;
+	if(g_Config.m_FcScoreboardGradientTeams && !IsMapTitle)
+	{
+		const float TitleWidth = std::min(TextRender()->TextWidth(TitleFontSize, pTitle, -1, TitleLabel.w), TitleLabel.w);
+
+		CTextCursor Cursor;
+		Cursor.SetPosition(vec2(Team == TEAM_RED ? TitleLabel.x : TitleLabel.x + TitleLabel.w - TitleWidth, TitleLabel.y + (TitleLabel.h - TitleFontSize) / 2.0f));
+		Cursor.m_FontSize = TitleFontSize;
+		Cursor.m_LineWidth = TitleLabel.w;
+		Cursor.m_Flags |= TEXTFLAG_ELLIPSIS_AT_END;
+
+		const ColorRGBA Color1 = Team == TEAM_RED ? ColorRGBA(1.0f, 0.45f, 0.45f, 1.0f) : ColorRGBA(0.5f, 0.75f, 1.0f, 1.0f);
+		const ColorRGBA Color2 = Team == TEAM_RED ? ColorRGBA(0.75f, 0.05f, 0.05f, 1.0f) : ColorRGBA(0.05f, 0.2f, 0.8f, 1.0f);
+		Cursor.m_vColorSplits = CBcGradient::BuildAnimatedColorSplits(pTitle, Color1, Color2, CBcGradient::AnimatePhase(Client()->GlobalTime()));
+
+		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+		TextRender()->TextEx(&Cursor, pTitle);
+		Cursor.m_vColorSplits.clear();
+		TextRender()->TextColor(TextRender()->DefaultTextColor());
+		return;
+	}
+
 	Ui()->DoLabel(&TitleLabel, pTitle, TitleFontSize, Team == TEAM_RED ? TEXTALIGN_ML : TEXTALIGN_MR, Props);
 }
 
@@ -444,9 +549,10 @@ void CScoreboard::RenderSpectators(CUIRect Spectators)
 				m_ScoreboardPopupContext.m_IsLocal = GameClient()->m_aLocalIds[0] == pInfo->m_ClientId ||
 								     (Client()->DummyConnected() && GameClient()->m_aLocalIds[1] == pInfo->m_ClientId);
 				m_ScoreboardPopupContext.m_IsSpectating = true;
+				m_ScoreboardPopupContext.m_NoteInput.Set(PlayerNote(GameClient()->m_aClients[pInfo->m_ClientId].m_aName));
 
-				Ui()->DoPopupMenu(&m_ScoreboardPopupContext, Ui()->MouseX(), Ui()->MouseY(), 110.0f,
-					m_ScoreboardPopupContext.m_IsLocal ? 30.0f : 60.0f, &m_ScoreboardPopupContext, CScoreboardPopupContext::Render);
+				Ui()->DoPopupMenu(&m_ScoreboardPopupContext, Ui()->MouseX(), Ui()->MouseY(), 150.0f,
+					m_ScoreboardPopupContext.m_IsLocal ? 54.0f : 84.0f, &m_ScoreboardPopupContext, CScoreboardPopupContext::Render);
 			}
 
 			if(Ui()->HotItem() == &m_aPlayers[pInfo->m_ClientId].m_PlayerButtonId ||
@@ -588,6 +694,64 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 	int PrevDDTeam = -1;
 	int &CurrentDDTeamSize = State.m_CurrentDDTeamSize;
 
+	const CNetObj_PlayerInfo *apPlayers[MAX_CLIENTS];
+	for(int i = 0; i < MAX_CLIENTS; i++)
+		apPlayers[i] = GameClient()->m_Snap.m_apInfoByDDTeamScore[i];
+
+	if(g_Config.m_FcScoreboardSort > 0)
+	{
+		struct SPlayerBlock
+		{
+			int m_Start;
+			int m_End;
+			int m_Priority;
+		};
+
+		std::vector<SPlayerBlock> vBlocks;
+		for(int i = 0; i < MAX_CLIENTS;)
+		{
+			if(apPlayers[i] == nullptr)
+			{
+				i++;
+				continue;
+			}
+
+			const int DDTeam = GameClient()->m_Teams.Team(apPlayers[i]->m_ClientId);
+			int End = i + 1;
+			while(DDTeam != TEAM_FLOCK && End < MAX_CLIENTS && apPlayers[End] != nullptr &&
+				GameClient()->m_Teams.Team(apPlayers[End]->m_ClientId) == DDTeam)
+				End++;
+
+			int Priority = 2;
+			for(int j = i; j < End; j++)
+			{
+				const int ClientId = apPlayers[j]->m_ClientId;
+				const bool Friend = ClientId >= 0 && ClientId < MAX_CLIENTS &&
+					(GameClient()->m_aClients[ClientId].m_Friend || GameClient()->m_HeartList.IsFriend(ClientId));
+				int PlayerPriority = 1;
+				if(Friend)
+					PlayerPriority = 0;
+				else if(g_Config.m_FcScoreboardSort >= 2 && g_Config.m_TcWarList && GameClient()->m_WarList.GetAnyWar(ClientId))
+					PlayerPriority = 2;
+				Priority = minimum(Priority, PlayerPriority);
+			}
+
+			vBlocks.push_back({i, End, Priority});
+			i = End;
+		}
+
+		std::stable_sort(vBlocks.begin(), vBlocks.end(), [](const SPlayerBlock &Left, const SPlayerBlock &Right) { return Left.m_Priority < Right.m_Priority; });
+
+		int Out = 0;
+		for(const SPlayerBlock &Block : vBlocks)
+		{
+			for(int j = Block.m_Start; j < Block.m_End; j++)
+				apPlayers[Out++] = GameClient()->m_Snap.m_apInfoByDDTeamScore[j];
+		}
+		while(Out < MAX_CLIENTS)
+			apPlayers[Out++] = nullptr;
+	}
+
 	char aBuf[64];
 	int MaxTeamSize = GameClient()->MaxTeamSize();
 
@@ -596,7 +760,7 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 		for(int i = 0; i < MAX_CLIENTS; i++)
 		{
 			// make sure that we render the correct team
-			const CNetObj_PlayerInfo *pInfo = GameClient()->m_Snap.m_apInfoByDDTeamScore[i];
+			const CNetObj_PlayerInfo *pInfo = apPlayers[i];
 			if(!pInfo || pInfo->m_Team != Team)
 				continue;
 			bool IsDead = Client()->m_TranslationContext.m_aClients[pInfo->m_ClientId].m_PlayerFlags7 & protocol7::PLAYERFLAG_DEAD;
@@ -616,7 +780,7 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 
 			for(int j = i + 1; j < MAX_CLIENTS; j++)
 			{
-				const CNetObj_PlayerInfo *pInfoNext = GameClient()->m_Snap.m_apInfoByDDTeamScore[j];
+				const CNetObj_PlayerInfo *pInfoNext = apPlayers[j];
 				if(!pInfoNext || pInfoNext->m_Team != Team)
 					continue;
 
@@ -628,7 +792,7 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 			{
 				for(int j = i - 1; j >= 0; j--)
 				{
-					const CNetObj_PlayerInfo *pInfoPrev = GameClient()->m_Snap.m_apInfoByDDTeamScore[j];
+					const CNetObj_PlayerInfo *pInfoPrev = apPlayers[j];
 					if(!pInfoPrev || pInfoPrev->m_Team != Team)
 						continue;
 
@@ -654,8 +818,15 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 				}
 				if(NextDDTeam != DDTeam)
 					TeamRectCorners |= IGraphics::CORNER_B;
-				RowAndSpacing.Draw(Color, TeamRectCorners, RoundRadius);
-
+				if(g_Config.m_FcScoreboardGradientTeams)
+				{
+					const ColorRGBA FadeColor = Color.WithAlpha(0.1f);
+					Graphics()->DrawRect4(RowAndSpacing.x, RowAndSpacing.y, RowAndSpacing.w, RowAndSpacing.h, Color, FadeColor, Color, FadeColor, TeamRectCorners, RoundRadius);
+				}
+				else
+				{
+					RowAndSpacing.Draw(Color, TeamRectCorners, RoundRadius);
+				}
 				CurrentDDTeamSize++;
 
 				if(NextDDTeam != DDTeam)
@@ -709,9 +880,10 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 					m_ScoreboardPopupContext.m_IsLocal = GameClient()->m_aLocalIds[0] == pInfo->m_ClientId ||
 									     (Client()->DummyConnected() && GameClient()->m_aLocalIds[1] == pInfo->m_ClientId);
 					m_ScoreboardPopupContext.m_IsSpectating = false;
+					m_ScoreboardPopupContext.m_NoteInput.Set(PlayerNote(ClientData.m_aName));
 
-					Ui()->DoPopupMenu(&m_ScoreboardPopupContext, Ui()->MouseX(), Ui()->MouseY(), 110.0f,
-						m_ScoreboardPopupContext.m_IsLocal ? 58.5f : 87.5f, &m_ScoreboardPopupContext, CScoreboardPopupContext::Render);
+					Ui()->DoPopupMenu(&m_ScoreboardPopupContext, Ui()->MouseX(), Ui()->MouseY(), 150.0f,
+						m_ScoreboardPopupContext.m_IsLocal ? 82.5f : 111.5f, &m_ScoreboardPopupContext, CScoreboardPopupContext::Render);
 				}
 
 				if(Ui()->HotItem() == &Player.m_PlayerButtonId ||
@@ -866,6 +1038,16 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 
 				TextRender()->TextEx(&Cursor, ClientData.m_aName);
 				Cursor.m_vColorSplits.clear();
+
+				const char *pNote = PlayerNote(ClientData.m_aName);
+				if(pNote[0] != '\0' && Cursor.m_X + 4.0f < NameOffset + NameLength)
+				{
+					Cursor.m_X += 4.0f;
+					Cursor.m_LineWidth = NameOffset + NameLength - Cursor.m_X;
+					TextRender()->TextColor(ColorRGBA(0.6f, 0.85f, 0.95f, TextColor.a));
+					TextRender()->TextEx(&Cursor, pNote);
+					TextRender()->TextColor(NameColor);
+				}
 
 				// ready / watching
 				if(Client()->IsSixup() && Client()->m_TranslationContext.m_aClients[pInfo->m_ClientId].m_PlayerFlags7 & protocol7::PLAYERFLAG_READY)
@@ -1062,8 +1244,18 @@ void CScoreboard::OnRender()
 		RedScoreboard.HSplitTop(TitleHeight, &RedTitle, &RedScoreboard);
 		BlueScoreboard.HSplitTop(TitleHeight, &BlueTitle, &BlueScoreboard);
 
-		RedTitle.Draw(ColorRGBA(0.975f, 0.17f, 0.17f, 0.5f), IGraphics::CORNER_T, 7.5f);
-		BlueTitle.Draw(ColorRGBA(0.17f, 0.46f, 0.975f, 0.5f), IGraphics::CORNER_T, 7.5f);
+		if(g_Config.m_FcScoreboardGradientTeams)
+		{
+			const ColorRGBA RedColor = ColorRGBA(0.975f, 0.17f, 0.17f, 0.5f);
+			const ColorRGBA BlueColor = ColorRGBA(0.17f, 0.46f, 0.975f, 0.5f);
+			Graphics()->DrawRect4(RedTitle.x, RedTitle.y, RedTitle.w, RedTitle.h, RedColor, RedColor, RedColor.WithAlpha(0.1f), RedColor.WithAlpha(0.1f), IGraphics::CORNER_T, 7.5f);
+			Graphics()->DrawRect4(BlueTitle.x, BlueTitle.y, BlueTitle.w, BlueTitle.h, BlueColor, BlueColor, BlueColor.WithAlpha(0.1f), BlueColor.WithAlpha(0.1f), IGraphics::CORNER_T, 7.5f);
+		}
+		else
+		{
+			RedTitle.Draw(ColorRGBA(0.975f, 0.17f, 0.17f, 0.5f), IGraphics::CORNER_T, 7.5f);
+			BlueTitle.Draw(ColorRGBA(0.17f, 0.46f, 0.975f, 0.5f), IGraphics::CORNER_T, 7.5f);
+		}
 		RedScoreboard.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.5f), IGraphics::CORNER_B, 7.5f);
 		BlueScoreboard.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.5f), IGraphics::CORNER_B, 7.5f);
 
@@ -1153,6 +1345,12 @@ void CScoreboard::OnRender()
 	RenderSpectators(Spectators);
 
 	RenderRecordingNotification((Screen.w / 7) * 4 + 10);
+
+	if(m_NotesDirty && !Ui()->IsPopupOpen(&m_ScoreboardPopupContext))
+	{
+		SaveNotes();
+		m_NotesDirty = false;
+	}
 
 	if(!GameClient()->m_Menus.IsActive() && !GameClient()->m_Chat.IsActive())
 	{
@@ -1327,6 +1525,14 @@ CUi::EPopupMenuFunctionResult CScoreboard::CScoreboardPopupContext::Render(void 
 			}
 		}
 	}
+
+	View.HSplitTop(ItemSpacing * 2, nullptr, &View);
+	View.HSplitTop(ButtonSize, &Container, &View);
+	CUIRect NoteLabel, NoteBox;
+	Container.VSplitLeft(30.0f, &NoteLabel, &NoteBox);
+	pUi->DoLabel(&NoteLabel, Localize("Note"), FontSize, TEXTALIGN_ML);
+	if(pUi->DoEditBox(&pPopupContext->m_NoteInput, &NoteBox, FontSize))
+		pScoreboard->SetPlayerNote(Client.m_aName, pPopupContext->m_NoteInput.GetString());
 
 	return CUi::POPUP_KEEP_OPEN;
 }

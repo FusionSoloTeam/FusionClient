@@ -131,6 +131,7 @@ public:
 		CMD_CLEAR,
 		CMD_RENDER,
 		CMD_RENDER_TEX3D,
+		CMD_RENDER_VIGNETTE_BLUR,
 
 		// opengl 2.0+ commands (some are just emulated and only exist in opengl 3.3+)
 		CMD_CREATE_BUFFER_OBJECT, // create vbo
@@ -238,6 +239,12 @@ public:
 		EPrimitiveType m_PrimType;
 		unsigned m_PrimCount;
 		SVertexTex3DStream *m_pVertices; // you should use the command buffer data to allocate vertices for this command
+	};
+
+	struct SCommand_RenderVignetteBlur : public SCommand
+	{
+		SCommand_RenderVignetteBlur() :
+			SCommand(CMD_RENDER_VIGNETTE_BLUR) {}
 	};
 
 	struct SCommand_CreateBufferObject : public SCommand
@@ -1011,6 +1018,8 @@ public:
 	void TextureSet(CTextureHandle TextureId) override;
 
 	void Clear(float r, float g, float b, bool ForceClearNow = false) override;
+
+	void VignetteBlur() override;
 
 	void QuadsBegin() override;
 	void QuadsEnd() override;

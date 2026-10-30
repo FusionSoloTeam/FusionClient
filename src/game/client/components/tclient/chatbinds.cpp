@@ -1,14 +1,37 @@
 #include "chatbinds.h"
 
-#include <cstdarg>
+#include <base/time.h>
 
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdarg>
+#include <cstdio>
+
+#include "engine/client.h"
+#include "engine/graphics.h"
 #include "engine/shared/config.h"
+#include "engine/textrender.h"
 
 #include "game/client/gameclient.h"
 #include "game/client/components/camera.h"
 #include "game/client/components/controls.h"
 #include "game/collision.h"
 #include "game/mapitems.h"
+#include "game/version.h"
+
+static constexpr int MAX_MARKERS = 16;
+static constexpr float MARKER_POINT_RADIUS = 4.5f;
+static constexpr float MARKER_STEM_WIDTH = 2.0f;
+static constexpr float MARKER_STEM_LENGTH = 22.0f;
+static constexpr float MARKER_STEM_GAP = 4.0f;
+static constexpr float MARKER_OUTLINE = 1.2f;
+static constexpr float MARKER_LABEL_FONT_SIZE = 12.0f;
+static constexpr float MARKER_LABEL_PADDING_X = 5.0f;
+static constexpr float MARKER_LABEL_PADDING_Y = 2.5f;
+static constexpr float MARKER_LABEL_ROUNDING = 4.0f;
+static constexpr float MARKER_SCALE_MIN = 0.1f;
+static constexpr float MARKER_SCALE_MAX = 8.0f;
 
 static int FindPlayerClientId(CGameClient *pGameClient, const char *pNickname)
 {
@@ -39,6 +62,36 @@ static std::string TrimRight(const char *pInput)
 	std::string Result(pInput);
 	str_utf8_trim_right(Result.data());
 	return Result;
+}
+
+static bool MatchChatCommand(const char *pLine, const char *pCommand, const char **ppRest)
+{
+	const int Length = str_length(pCommand);
+	if(str_comp_nocase_num(pLine, pCommand, Length) != 0)
+		return false;
+	if(pLine[Length] != '\0' && pLine[Length] != ' ')
+		return false;
+	if(ppRest != nullptr)
+		*ppRest = str_utf8_skip_whitespaces(pLine + Length);
+	return true;
+}
+
+static bool ClientPosition(CGameClient *pGameClient, int ClientId, vec2 &Pos)
+{
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return false;
+	const auto &Character = pGameClient->m_Snap.m_aCharacters[ClientId];
+	if(!Character.m_Active)
+		return false;
+	Pos = pGameClient->m_aClients[ClientId].m_RenderPos;
+	return true;
+}
+
+static int SharedPositionClientId(CGameClient *pGameClient)
+{
+	if(pGameClient->m_Snap.m_SpecInfo.m_Active && pGameClient->m_Snap.m_SpecInfo.m_SpectatorId >= 0)
+		return pGameClient->m_Snap.m_SpecInfo.m_SpectatorId;
+	return pGameClient->m_aLocalIds[g_Config.m_ClDummy];
 }
 
 static void FastPrint(CGameClient *pGameClient, const char *pName, const char *pFmt, ...)
@@ -184,10 +237,21 @@ void CChatBinds::OnConsoleInit()
 void CChatBinds::OnReset()
 {
 	m_vPlayersInTracker.clear();
+	m_vMarkers.clear();
 }
 
 void CChatBinds::OnRender()
 {
+	if(m_pProfileTask)
+	{
+		const EHttpState State = m_pProfileTask->State();
+		if(State != EHttpState::QUEUED && State != EHttpState::RUNNING)
+			FinishProfile();
+	}
+
+	if(!m_vMarkers.empty())
+		RenderMarkers();
+
 	if(m_vPlayersInTracker.empty())
 		return;
 
@@ -527,6 +591,175 @@ void CChatBinds::ConGotoTeleCursor(IConsole::IResult *pResult, void *pUserData)
 	pSelf->GameClient()->m_Controls.m_aMousePos[g_Config.m_ClDummy] = TargetPos;
 }
 
+bool CChatBinds::OnChatCommand(int Team, const char *pLine)
+{
+	if(Client()->State() != IClient::STATE_ONLINE)
+		return false;
+
+	const char *pRest = nullptr;
+	if(MatchChatCommand(pLine, "!sendpos", &pRest))
+	{
+		vec2 Pos;
+		if(!ClientPosition(GameClient(), SharedPositionClientId(GameClient()), Pos))
+			return true;
+
+		char aBuf[64];
+		str_format(aBuf, sizeof(aBuf), "!pos %.2f %.2f", Pos.x / 32.0f, Pos.y / 32.0f);
+		GameClient()->m_Chat.SendChat(Team, aBuf);
+		return true;
+	}
+
+	if(MatchChatCommand(pLine, "!findhours", &pRest) || MatchChatCommand(pLine, "!hours", &pRest))
+	{
+		char aName[MAX_NAME_LENGTH];
+		if(*pRest != '\0')
+		{
+			str_copy(aName, pRest);
+		}
+		else
+		{
+			const int LocalId = GameClient()->m_aLocalIds[g_Config.m_ClDummy];
+			if(LocalId < 0 || LocalId >= MAX_CLIENTS)
+				return true;
+			str_copy(aName, GameClient()->m_aClients[LocalId].m_aName);
+		}
+		FetchProfile(aName);
+		return true;
+	}
+
+	return false;
+}
+
+void CChatBinds::OnMessage(int MsgType, void *pRawMsg)
+{
+	if(MsgType != NETMSGTYPE_SV_CHAT || !g_Config.m_FcSendPosMarkers)
+		return;
+	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
+		return;
+
+	CNetMsg_Sv_Chat *pMsg = (CNetMsg_Sv_Chat *)pRawMsg;
+	if(pMsg->m_ClientId < 0 || pMsg->m_ClientId >= MAX_CLIENTS)
+		return;
+
+	float X, Y;
+	if(std::sscanf(pMsg->m_pMessage, "!pos %f %f", &X, &Y) != 2)
+		return;
+	if(X < -10000.0f || X > 10000.0f || Y < -10000.0f || Y > 10000.0f)
+		return;
+
+	AddMarker(vec2(X * 32.0f, Y * 32.0f), GameClient()->m_aClients[pMsg->m_ClientId].m_aName);
+}
+
+void CChatBinds::OnStateChange(int NewState, int OldState)
+{
+	m_vMarkers.clear();
+	if(NewState != IClient::STATE_ONLINE && NewState != IClient::STATE_DEMOPLAYBACK)
+	{
+		if(m_pProfileTask)
+		{
+			m_pProfileTask->Abort();
+			m_pProfileTask = nullptr;
+		}
+	}
+}
+
+void CChatBinds::AddMarker(vec2 Pos, const char *pName)
+{
+	for(auto It = m_vMarkers.begin(); It != m_vMarkers.end();)
+	{
+		if(str_comp(It->m_aName, pName) == 0)
+			It = m_vMarkers.erase(It);
+		else
+			++It;
+	}
+	if((int)m_vMarkers.size() >= MAX_MARKERS)
+		m_vMarkers.erase(m_vMarkers.begin());
+
+	SMarker Marker;
+	Marker.m_Pos = Pos;
+	str_copy(Marker.m_aName, pName);
+	Marker.m_Time = time();
+	m_vMarkers.push_back(Marker);
+}
+
+void CChatBinds::RenderMarkers()
+{
+	const int64_t Now = time();
+	const int64_t Duration = (int64_t)g_Config.m_FcSendPosTime * time_freq();
+	for(auto It = m_vMarkers.begin(); It != m_vMarkers.end();)
+	{
+		if(Now - It->m_Time >= Duration)
+			It = m_vMarkers.erase(It);
+		else
+			++It;
+	}
+	if(m_vMarkers.empty())
+		return;
+
+	auto MarkerAlpha = [&](const SMarker &Marker) {
+		const float Elapsed = (float)(Now - Marker.m_Time) / (float)time_freq();
+		const float Left = (float)Duration / (float)time_freq() - Elapsed;
+		return std::clamp(std::min(Left, Elapsed * 4.0f), 0.0f, 1.0f);
+	};
+
+	const CScreenRect PrevScreen = Graphics()->GetScreen();
+	Graphics()->SetScreenRotation(GameClient()->m_Camera.TiltAngle());
+	const float Zoom = std::max(GameClient()->m_Camera.m_RenderZoom, 0.01f);
+	const float Scale = std::clamp(Zoom, MARKER_SCALE_MIN, MARKER_SCALE_MAX);
+	Graphics()->MapScreenToInterface(GameClient()->m_Camera.m_Center.x, GameClient()->m_Camera.m_Center.y, Zoom);
+
+	const ColorRGBA Accent(0.45f, 0.9f, 0.95f, 1.0f);
+
+	const float PointRadius = MARKER_POINT_RADIUS * Scale;
+	const float Outline = MARKER_OUTLINE * Scale;
+	const float StemWidth = MARKER_STEM_WIDTH * Scale;
+	const float StemLength = MARKER_STEM_LENGTH * Scale;
+	const float StemGap = MARKER_STEM_GAP * Scale;
+	const float LabelPaddingX = MARKER_LABEL_PADDING_X * Scale;
+	const float LabelPaddingY = MARKER_LABEL_PADDING_Y * Scale;
+	const float LabelRounding = MARKER_LABEL_ROUNDING * Scale;
+	const float LabelFontSize = MARKER_LABEL_FONT_SIZE * Scale;
+
+	Graphics()->TextureClear();
+	for(const SMarker &Marker : m_vMarkers)
+	{
+		const float Alpha = MarkerAlpha(Marker);
+		if(Alpha <= 0.0f)
+			continue;
+
+		const vec2 Pos = Marker.m_Pos;
+		const STextBoundingBox TextBox = TextRender()->TextBoundingBox(LabelFontSize, Marker.m_aName);
+		const float LabelWidth = TextBox.m_W + LabelPaddingX * 2.0f;
+		const float LabelHeight = TextBox.m_H + LabelPaddingY * 2.0f;
+		const float LabelLeft = Pos.x - LabelWidth / 2.0f;
+		const float StemTop = Pos.y - PointRadius - StemGap - StemLength;
+		const float StemBottom = Pos.y - PointRadius - StemGap;
+		const float LabelTop = StemTop - LabelHeight;
+
+		Graphics()->DrawRect(Pos.x - StemWidth / 2.0f - Outline, StemTop - Outline, StemWidth + Outline * 2.0f, StemBottom - StemTop + Outline * 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.5f * Alpha), IGraphics::CORNER_ALL, StemWidth / 2.0f);
+		Graphics()->DrawRect(Pos.x - StemWidth / 2.0f, StemTop, StemWidth, StemBottom - StemTop, ColorRGBA(Accent.r, Accent.g, Accent.b, 0.85f * Alpha), IGraphics::CORNER_ALL, StemWidth / 2.0f);
+
+		Graphics()->QuadsBegin();
+		Graphics()->SetColor(0.0f, 0.0f, 0.0f, 0.5f * Alpha);
+		Graphics()->DrawCircle(Pos.x, Pos.y, PointRadius + Outline, 24);
+		Graphics()->SetColor(Accent.r, Accent.g, Accent.b, 0.95f * Alpha);
+		Graphics()->DrawCircle(Pos.x, Pos.y, PointRadius, 24);
+		Graphics()->QuadsEnd();
+
+		Graphics()->DrawRect(LabelLeft - Outline, LabelTop - Outline, LabelWidth + Outline * 2.0f, LabelHeight + Outline * 2.0f, ColorRGBA(Accent.r, Accent.g, Accent.b, 0.3f * Alpha), IGraphics::CORNER_ALL, LabelRounding);
+		Graphics()->DrawRect(LabelLeft, LabelTop, LabelWidth, LabelHeight, ColorRGBA(0.04f, 0.07f, 0.09f, 0.62f * Alpha), IGraphics::CORNER_ALL, LabelRounding - Outline);
+
+		TextRender()->TextColor(0.82f, 0.97f, 1.0f, Alpha);
+		TextRender()->TextOutlineColor(0.0f, 0.0f, 0.0f, 0.35f * Alpha);
+		TextRender()->Text(LabelLeft + LabelPaddingX - TextBox.m_X, LabelTop + LabelPaddingY - TextBox.m_Y, LabelFontSize, Marker.m_aName, -1.0f);
+	}
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+	TextRender()->TextOutlineColor(TextRender()->DefaultTextOutlineColor());
+	Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+	Graphics()->MapScreen(PrevScreen);
+	Graphics()->SetScreenRotation(0.0f);
+}
+
 void CChatBinds::ConGotoFinishCursor(IConsole::IResult *pResult, void *pUserData)
 {
 	CChatBinds *pSelf = static_cast<CChatBinds *>(pUserData);
@@ -605,4 +838,192 @@ void CChatBinds::ConGotoFinishCursor(IConsole::IResult *pResult, void *pUserData
 
 	const vec2 TargetPos = vec2(Targets[BestIndex].x * 32.0f + 16.0f, Targets[BestIndex].y * 32.0f + 16.0f);
 	pSelf->GameClient()->m_Controls.m_aMousePos[g_Config.m_ClDummy] = TargetPos;
+}
+
+static std::string HtmlToText(const unsigned char *pData, size_t Length)
+{
+	std::string Plain;
+	Plain.reserve(Length);
+	bool InTag = false;
+	bool LastSpace = true;
+	for(size_t i = 0; i < Length; i++)
+	{
+		const char c = (char)pData[i];
+		if(c == '<')
+		{
+			InTag = true;
+			continue;
+		}
+		if(i + 6 <= Length && str_comp_num((const char *)pData + i, "&nbsp;", 6) == 0)
+		{
+			if(!LastSpace)
+			{
+				Plain.push_back(' ');
+				LastSpace = true;
+			}
+			i += 5;
+			continue;
+		}
+		if(InTag)
+		{
+			if(c == '>')
+				InTag = false;
+			continue;
+		}
+		if(c == ' ' || c == '\n' || c == '\r' || c == '\t')
+		{
+			if(!LastSpace)
+			{
+				Plain.push_back(' ');
+				LastSpace = true;
+			}
+			continue;
+		}
+		Plain.push_back(c);
+		LastSpace = false;
+	}
+	return Plain;
+}
+
+static bool ReadNumberBefore(const std::string &Plain, size_t Pos, std::string &Out)
+{
+	size_t Start = Pos;
+	while(Start > 0 && (std::isdigit((unsigned char)Plain[Start - 1]) || Plain[Start - 1] == ','))
+		Start--;
+	if(Start == Pos)
+		return false;
+	Out.clear();
+	for(size_t i = Start; i < Pos; i++)
+	{
+		if(Plain[i] != ',')
+			Out.push_back(Plain[i]);
+	}
+	return true;
+}
+
+static bool ReadPoints(const std::string &Plain, std::string &Out)
+{
+	const size_t Pos = Plain.find(" total)");
+	return Pos != std::string::npos && ReadNumberBefore(Plain, Pos, Out);
+}
+
+static bool ReadRank(const std::string &Plain, std::string &Out)
+{
+	for(size_t Pos = Plain.find("Rank "); Pos != std::string::npos; Pos = Plain.find("Rank ", Pos + 5))
+	{
+		if(Pos >= 5 && Plain.compare(Pos - 5, 5, "Team ") == 0)
+			continue;
+		const size_t Start = Pos + 5;
+		size_t End = Start;
+		while(End < Plain.size() && std::isdigit((unsigned char)Plain[End]))
+			End++;
+		if(End == Start || End >= Plain.size() || Plain[End] != '.')
+			continue;
+		Out.assign(Plain, Start, End - Start);
+		return true;
+	}
+	return false;
+}
+
+static bool ReadFirstFinish(const std::string &Plain, std::string &Date, std::string &MapName)
+{
+	const char *pHeading = "First Finish ";
+	const size_t Pos = Plain.find(pHeading);
+	if(Pos == std::string::npos)
+		return false;
+
+	const size_t Start = Pos + str_length(pHeading);
+	if(Start + 10 >= Plain.size())
+		return false;
+	for(int i = 0; i < 10; i++)
+	{
+		const char c = Plain[Start + i];
+		const bool Digit = std::isdigit((unsigned char)c) != 0;
+		if((i == 4 || i == 7) ? c != '-' : !Digit)
+			return false;
+	}
+	Date.assign(Plain, Start, 10);
+
+	size_t NameStart = Start + 10;
+	if(NameStart + 7 <= Plain.size() && Plain[NameStart] == ' ')
+		NameStart += 7;
+	while(NameStart < Plain.size() && Plain[NameStart] == ' ')
+		NameStart++;
+	size_t NameEnd = Plain.find(" (", NameStart);
+	if(NameEnd == std::string::npos)
+		NameEnd = Plain.size();
+	MapName.assign(Plain, NameStart, NameEnd - NameStart);
+	return true;
+}
+
+void CChatBinds::FetchProfile(const char *pName)
+{
+	if(m_pProfileTask && !m_pProfileTask->Done())
+	{
+		GameClient()->Echo("A ddnet.org lookup is already running");
+		return;
+	}
+
+	char aEscaped[MAX_NAME_LENGTH * 4];
+	EscapeUrl(aEscaped, sizeof(aEscaped), pName);
+	char aUrl[256];
+	str_format(aUrl, sizeof(aUrl), "https://ddnet.org/players/%s/", aEscaped);
+
+	m_pProfileTask = HttpGet(aUrl);
+	m_pProfileTask->Timeout(CTimeout{10000, 0, 500, 10});
+	m_pProfileTask->IpResolve(IPRESOLVE::V4);
+	m_pProfileTask->HeaderString("User-Agent", FUSION_NAME "/" FUSION_VERSION);
+	Http()->Run(m_pProfileTask);
+
+	str_copy(m_aProfileName, pName);
+	char aBuf[256];
+	str_format(aBuf, sizeof(aBuf), "Looking up the DDNet profile of %s", pName);
+	GameClient()->Echo(aBuf);
+}
+
+void CChatBinds::FinishProfile()
+{
+	std::shared_ptr<IHttpRequest> pTask = m_pProfileTask;
+	m_pProfileTask = nullptr;
+	if(!pTask)
+		return;
+
+	if(pTask->State() != EHttpState::DONE || pTask->StatusCode() != 200)
+	{
+		FastEcho(GameClient(), "[[red]]%s: could not load the DDNet profile", m_aProfileName);
+		return;
+	}
+
+	unsigned char *pResult = nullptr;
+	size_t ResultLength = 0;
+	pTask->Result(&pResult, &ResultLength);
+	if(pResult == nullptr || ResultLength == 0)
+	{
+		FastEcho(GameClient(), "[[red]]%s: could not load the DDNet profile", m_aProfileName);
+		return;
+	}
+
+	const std::string Plain = HtmlToText(pResult, ResultLength);
+
+	std::string Hours;
+	const size_t HoursPos = Plain.find(" hours played");
+	if(HoursPos == std::string::npos || !ReadNumberBefore(Plain, HoursPos, Hours))
+	{
+		FastEcho(GameClient(), "[[red]]%s: no DDNet profile found", m_aProfileName);
+		return;
+	}
+	FastEcho(GameClient(), "[[green]]%s: %s hours played in the past 365 days", m_aProfileName, Hours.c_str());
+
+	std::string Points, Rank;
+	if(ReadPoints(Plain, Points))
+	{
+		if(ReadRank(Plain, Rank))
+			FastEcho(GameClient(), "[[green]]%s: %s points, global rank %s", m_aProfileName, Points.c_str(), Rank.c_str());
+		else
+			FastEcho(GameClient(), "[[green]]%s: %s points", m_aProfileName, Points.c_str());
+	}
+
+	std::string FirstFinish, FirstFinishMap;
+	if(ReadFirstFinish(Plain, FirstFinish, FirstFinishMap))
+		FastEcho(GameClient(), "[[green]]%s: first finish %s on %s", m_aProfileName, FirstFinish.c_str(), FirstFinishMap.c_str());
 }

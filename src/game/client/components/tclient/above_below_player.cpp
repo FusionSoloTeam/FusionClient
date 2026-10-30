@@ -92,7 +92,7 @@ void CAboveBelowPlayer::OnRender()
 		const float DiffTiles = absolute(PlayerPos.x - m_LocalPos.x);
 		const int Diff = (int)lroundf(DiffTiles * 100.0f);
 		const bool WithinSkew = g_Config.m_TcAboveBelowSkew > 0 ? Diff <= g_Config.m_TcAboveBelowSkew : DiffTiles == 0.0f;
-		if(!WithinSkew || IsWallBetween(pCollision, m_LocalPos, PlayerPos))
+		if(!WithinSkew || (g_Config.m_FcAboveBelowWallCheck && IsWallBetween(pCollision, m_LocalPos, PlayerPos)))
 			continue;
 
 		if(PlayerPos.y == m_LocalPos.y && g_Config.m_TcNotifyWhenSamePosPlayer)

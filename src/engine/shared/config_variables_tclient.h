@@ -105,7 +105,7 @@ MACRO_CONFIG_INT(TcSpecMenuPrefixes, tc_specmenu_prefixes, 1, 0, 1, CFGFLAG_CLIE
 MACRO_CONFIG_INT(TcChatScroll, tc_chat_scroll, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable scrolling in chat")
 
 MACRO_CONFIG_INT(TcChatCursor, tc_chat_cursor, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Unlock the cursor while the chat is open")
-MACRO_CONFIG_INT(TcChatTagCursor, tc_chat_tag_cursor, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tag with cursor: click a tee to insert its name into the chat")
+MACRO_CONFIG_INT(TcChatTagCursor, tc_chat_tag_cursor, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tag with cursor: click a tee or a chat nickname to insert its name into the chat")
 MACRO_CONFIG_INT(TcChatTagCursorHitbox, tc_chat_tag_cursor_hitbox, 200, 50, 500, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tag with cursor hitbox size in percent of the tee size")
 
 MACRO_CONFIG_INT(TcShowOthersInMenu, tc_show_others_in_menu, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show the settings icon when a tee is in a menu")
@@ -199,6 +199,7 @@ MACRO_CONFIG_INT(TcOutlinePulsate, tc_outline_pulsate, 0, 0, 1, CFGFLAG_CLIENT |
 MACRO_CONFIG_INT(TcOutlinePulsateStrength, tc_outline_pulsate_strength, 50, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tile outline pulsation strength")
 MACRO_CONFIG_INT(TcOutlinePulsateFilter, tc_outline_pulsate_filter, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Ignore the game's own audio and the filter list in outline pulsation")
 MACRO_CONFIG_STR(TcOutlinePulsateFilterList, tc_outline_pulsate_filter_list, 128, "discord.exe,ddnet.exe", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Process names ignored by outline pulsation (comma separated)")
+MACRO_CONFIG_INT(TcOutlineAlpha, tc_outline_alpha, 0, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Transparency of all tile outlines (0 = opaque, 100 = invisible)")
 
 MACRO_CONFIG_INT(TcOutlineGradientSolid, tc_outline_gradient_solid, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Gradient outline for hook and unhook tiles")
 MACRO_CONFIG_COL(TcOutlineGradientColor2Solid, tc_outline_gradient_color2_solid, 4288282496, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Gradient color 2 for hook and unhook outlines")
@@ -430,6 +431,7 @@ MACRO_CONFIG_INT(TcVignetteRadius, tc_vignette_radius, 50, 1, 100, CFGFLAG_CLIEN
 MACRO_CONFIG_INT(TcVignetteStrength, tc_vignette_strength, 60, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Vignette strength")
 MACRO_CONFIG_INT(TcVignetteSmoothness, tc_vignette_smoothness, 50, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Vignette smoothness")
 MACRO_CONFIG_INT(TcVignetteDarken, tc_vignette_darken, 100, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "How much the vignette zones are darkened")
+MACRO_CONFIG_INT(TcVignetteBlur, tc_vignette_blur, 0, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "How much the vignette zones are blurred (Vulkan only)")
 MACRO_CONFIG_COL(TcVignetteColor, tc_vignette_color, 0x000000FF, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Vignette zone colour")
 
 // Flags

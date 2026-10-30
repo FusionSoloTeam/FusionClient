@@ -458,6 +458,19 @@ void CMenus::RenderMenubar(CUIRect Box, IClient::EClientState ClientState)
 	TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
 	TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
 
+	if(ClientState == IClient::STATE_ONLINE && Client()->ConnectAddressString()[0] != '\0')
+	{
+		Box.VSplitRight(33.0f, &Box, &Button);
+		static CButtonContainer s_ReconnectButton;
+		if(DoButton_MenuTab(&s_ReconnectButton, FontIcon::ARROWS_ROTATE, 0, &Button, IGraphics::CORNER_T, nullptr))
+		{
+			Client()->Connect(Client()->ConnectAddressString());
+		}
+		GameClient()->m_Tooltips.DoToolTip(&s_ReconnectButton, &Button, Localize("Reconnect"));
+
+		Box.VSplitRight(10.0f, &Box, nullptr);
+	}
+
 	Box.VSplitRight(33.0f, &Box, &Button);
 	static CButtonContainer s_QuitButton;
 	ColorRGBA QuitColor(1, 0, 0, 0.5f);

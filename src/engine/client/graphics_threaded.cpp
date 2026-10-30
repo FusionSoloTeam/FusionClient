@@ -22,6 +22,7 @@
 #include <generated/data_types.h>
 
 #include <game/localization.h>
+#include <game/version.h>
 
 #if defined(CONF_VIDEORECORDER)
 #include <engine/shared/video.h>
@@ -792,6 +793,13 @@ void CGraphics_Threaded::Clear(float r, float g, float b, bool ForceClearNow)
 	Cmd.m_Color.b = b;
 	Cmd.m_Color.a = 0;
 	Cmd.m_ForceClear = ForceClearNow;
+	AddCmd(Cmd);
+}
+
+void CGraphics_Threaded::VignetteBlur()
+{
+	FlushVertices();
+	CCommandBuffer::SCommand_RenderVignetteBlur Cmd;
 	AddCmd(Cmd);
 }
 
@@ -1790,6 +1798,9 @@ void CGraphics_Threaded::RenderQuadContainerEx(int ContainerIndex, int QuadOffse
 		Cmd.m_State = m_State;
 		Cmd.m_State.m_ScreenTL = CommandScreenRect.m_TopLeft;
 		Cmd.m_State.m_ScreenBR = CommandScreenRect.m_BottomRight;
+		// FUSION: folded into the screen rect, so the mirror on a flipped sprite also mirrors the screen rotation
+		if((ScaleX < 0.0f) != (ScaleY < 0.0f))
+			Cmd.m_State.m_ScreenRotation = -Cmd.m_State.m_ScreenRotation;
 
 		Cmd.m_DrawNum = QuadDrawNum * 6;
 		Cmd.m_pOffset = (void *)(QuadOffset * 6 * sizeof(unsigned int));
@@ -2256,7 +2267,7 @@ int CGraphics_Threaded::IssueInit()
 		Flags |= IGraphicsBackend::INITFLAG_VSYNC;
 	}
 
-	const int Result = m_pBackend->Init("TClient", &g_Config.m_GfxScreen, &g_Config.m_GfxScreenWidth, &g_Config.m_GfxScreenHeight, &g_Config.m_GfxScreenRefreshRate, &g_Config.m_GfxFsaaSamples, Flags, &m_DesktopSize.x, &m_DesktopSize.y, &m_ScreenWidth, &m_ScreenHeight, m_pStorage);
+	const int Result = m_pBackend->Init(FUSION_NAME, &g_Config.m_GfxScreen, &g_Config.m_GfxScreenWidth, &g_Config.m_GfxScreenHeight, &g_Config.m_GfxScreenRefreshRate, &g_Config.m_GfxFsaaSamples, Flags, &m_DesktopSize.x, &m_DesktopSize.y, &m_ScreenWidth, &m_ScreenHeight, m_pStorage);
 	m_DrawableWidth = m_ScreenWidth;
 	m_DrawableHeight = m_ScreenHeight;
 	AddBackEndWarningIfExists();

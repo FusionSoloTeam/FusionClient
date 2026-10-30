@@ -13,8 +13,10 @@
 #include <generated/protocol7.h>
 
 #include <game/client/component.h>
+#include <game/client/components/tclient/chat_log_file.h>
 #include <game/client/lineinput.h>
 #include <game/client/render.h>
+#include <game/client/ui.h>
 
 #include <vector>
 
@@ -40,6 +42,8 @@ class CChat : public CComponent
 	};
 
 	CLineInputBuffered<MAX_CHAT_LENGTH> m_Input;
+	CLineInputBuffered<64> m_SearchInput;
+	bool m_SearchActive = false;
 	class CLine
 	{
 	public:
@@ -58,6 +62,8 @@ class CChat : public CComponent
 		char m_aText[MAX_CHAT_LENGTH];
 		bool m_Friend;
 		bool m_Highlighted;
+		bool m_SpecRequest;
+		float m_RowWidth;
 		std::optional<ColorRGBA> m_CustomColor;
 
 		STextContainerIndex m_TextContainerIndex;
@@ -130,6 +136,8 @@ class CChat : public CComponent
 
 	int m_Mode;
 	vec2 m_ChatCursorPos = vec2(0.0f, 0.0f);
+	CUi::CTouchState m_TouchState;
+	bool m_MouseIsPress = false;
 	bool m_Show;
 	bool m_CompletionUsed;
 	int m_CompletionChosen;
@@ -183,6 +191,7 @@ class CChat : public CComponent
 	bool m_EditingNewLine;
 
 	bool m_ServerSupportsCommandInfo;
+	SChatLogChain m_ChatLogChain = {};
 
 	static void ConSay(IConsole::IResult *pResult, void *pUserData);
 	static void ConSayTeam(IConsole::IResult *pResult, void *pUserData);
@@ -196,8 +205,12 @@ class CChat : public CComponent
 	static void ConchainChatWidth(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 
 	bool LineShouldHighlight(const char *pLine, const char *pName);
+	bool LineMatchesSearch(const CLine &Line) const;
 	void StoreSave(const char *pText);
+	void LogChatLine(int ClientId, int Team, const char *pText);
+	static int ChatLogCleanupCallback(const char *pFilename, int IsDir, int StorageType, void *pUser);
 	int GetInitializedLineCount() const;
+	void SpectatePlayer(int ClientId);
 
 	friend class CBindChat;
 	friend class CTranslate;
@@ -265,5 +278,7 @@ public:
 	bool GetLayoutFixCommand(char *pOut, int OutSize) const;
 	const char *FindCommandByPrefix(const char *pName) const;
 	void TagPlayerUnderCursor();
+	bool TagChatNameUnderCursor(const CLine &Line, const CUIRect &RowRect, float LineWidth, const vec2 &MousePos);
+	void InsertChatTag(const char *pName);
 };
 #endif

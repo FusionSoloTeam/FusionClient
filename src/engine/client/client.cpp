@@ -382,6 +382,12 @@ void CClient::SendInput()
 
 		if(Size)
 		{
+			int aSendData[MAX_INPUT_SIZE];
+			dbg_assert(Size <= (int)sizeof(aSendData), "input size exceeds send buffer");
+			mem_copy(aSendData, m_aInputs[i][m_aCurrentInput[i]].m_aData, (size_t)Size);
+			GameClient()->PrepareInputForSend(aSendData, Size, Dummy);
+			mem_copy(m_aInputs[i][m_aCurrentInput[i]].m_aData, aSendData, (size_t)Size);
+
 			// pack input
 			CMsgPacker Msg(NETMSG_INPUT, true);
 			Msg.AddInt(m_aAckGameTick[i]);
@@ -461,6 +467,9 @@ void CClient::SetState(EClientState State)
 
 	const EClientState OldState = m_State;
 	m_State = State;
+
+	if(State == IClient::STATE_QUITTING || State == IClient::STATE_RESTARTING)
+		m_pConfigManager->Save();
 
 	m_StateStartTime = time_get();
 	GameClient()->OnStateChange(m_State, OldState);
@@ -3803,6 +3812,14 @@ void CClient::Con_Disconnect(IConsole::IResult *pResult, void *pUserData)
 	pSelf->Disconnect();
 }
 
+void CClient::Con_Reconnect(IConsole::IResult *pResult, void *pUserData)
+{
+	CClient *pSelf = (CClient *)pUserData;
+	if(pSelf->m_aConnectAddressStr[0] == '\0')
+		return;
+	pSelf->Connect(pSelf->m_aConnectAddressStr);
+}
+
 void CClient::Con_DummyConnect(IConsole::IResult *pResult, void *pUserData)
 {
 	CClient *pSelf = (CClient *)pUserData;
@@ -4782,6 +4799,7 @@ void CClient::RegisterCommands()
 	m_pConsole->Register("minimize", "", CFGFLAG_CLIENT | CFGFLAG_STORE, Con_Minimize, this, "Minimize the client");
 	m_pConsole->Register("connect", "r[host|ip]", CFGFLAG_CLIENT, Con_Connect, this, "Connect to the specified host/ip");
 	m_pConsole->Register("disconnect", "", CFGFLAG_CLIENT, Con_Disconnect, this, "Disconnect from the server");
+	m_pConsole->Register("reconnect", "", CFGFLAG_CLIENT, Con_Reconnect, this, "Reconnect to the last server");
 	m_pConsole->Register("ping", "", CFGFLAG_CLIENT, Con_Ping, this, "Ping the current server");
 	m_pConsole->Register("screenshot", "", CFGFLAG_CLIENT | CFGFLAG_STORE, Con_Screenshot, this, "Take a screenshot");
 	m_pConsole->Register("net_reset", "", CFGFLAG_CLIENT, ConNetReset, this, "Rebinds the client's listening address and port");

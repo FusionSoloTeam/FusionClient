@@ -21,6 +21,12 @@
 
 #include <algorithm>
 
+static vec2 TiltAim(CGameClient *pGameClient, vec2 Pos)
+{
+	const float Tilt = pGameClient->m_Camera.TiltAngle();
+	return Tilt == 0.0f ? Pos : rotate_radians(Pos, -Tilt);
+}
+
 CControls::CControls()
 {
 	mem_zero(&m_aLastData, sizeof(m_aLastData));
@@ -246,6 +252,7 @@ int CControls::SnapInput(int *pData)
 			if(MaxDistance > 5 && MaxDistance < 1000) // Don't scale if angle bind or reduces precision
 				Pos *= 1000.0f / (float)MaxDistance;
 		}
+		Pos = TiltAim(GameClient(), Pos);
 		m_aInputData[g_Config.m_ClDummy].m_TargetX = (int)Pos.x;
 		m_aInputData[g_Config.m_ClDummy].m_TargetY = (int)Pos.y;
 
@@ -276,6 +283,7 @@ int CControls::SnapInput(int *pData)
 			if(MaxDistance > 5 && MaxDistance < 1000) // Don't scale if angle bind or reduces precision
 				Pos *= 1000.0f / (float)MaxDistance;
 		}
+		Pos = TiltAim(GameClient(), Pos);
 		m_aInputData[g_Config.m_ClDummy].m_TargetX = (int)Pos.x;
 		m_aInputData[g_Config.m_ClDummy].m_TargetY = (int)Pos.y;
 
@@ -354,6 +362,8 @@ int CControls::SnapInput(int *pData)
 		Send = Send || m_aInputData[g_Config.m_ClDummy].m_PrevWeapon != m_aLastData[g_Config.m_ClDummy].m_PrevWeapon;
 		Send = Send || time_get() > m_LastSendTime + time_freq() / 25; // send at least 25 Hz
 		Send = Send || (GameClient()->m_Snap.m_pLocalCharacter && GameClient()->m_Snap.m_pLocalCharacter->m_Weapon == WEAPON_NINJA && (m_aInputData[g_Config.m_ClDummy].m_Direction || m_aInputData[g_Config.m_ClDummy].m_Jump || m_aInputData[g_Config.m_ClDummy].m_Hook));
+		if(GameClient()->m_FastPractice.Enabled())
+			Send = true;
 	}
 
 	// copy and return size

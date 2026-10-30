@@ -83,6 +83,11 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 		return false;
 	}
 
+	[[nodiscard]] bool IsVignetteBlurEnabled()
+	{
+		return m_FrameBlendingAllowed && g_Config.m_TcVignette && g_Config.m_TcVignetteStrength > 0 && g_Config.m_TcVignetteBlur > 0 && !m_vVignetteBlurImages.empty();
+	}
+
 	uint64_t m_VRAMFallbackAllocations = 0;
 	uint64_t m_VRAMBudgetIgnored = 0;
 
@@ -909,6 +914,15 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 		bool m_Valid = false;
 	};
 
+	struct SVignetteBlurImage
+	{
+		VkImage m_Image = VK_NULL_HANDLE;
+		SMemoryImageBlock<IMAGE_BUFFER_CACHE_ID> m_ImgMem;
+		VkImageView m_ImgView = VK_NULL_HANDLE;
+		SDeviceDescriptorSet m_DescriptorSet;
+		VkExtent2D m_Extent{};
+	};
+
 	/************************
 	 * MEMBER VARIABLES
 	 ************************/
@@ -1013,6 +1027,7 @@ private:
 	std::vector<VkImageView> m_vSwapChainImageViewList;
 	std::vector<SSwapChainMultiSampleImage> m_vSwapChainMultiSamplingImages;
 	std::vector<SFrameBlendImage> m_vFrameBlendImages;
+	std::vector<SVignetteBlurImage> m_vVignetteBlurImages;
 	std::vector<VkFramebuffer> m_vFramebufferList;
 	std::vector<VkCommandBuffer> m_vMainDrawCommandBuffers;
 
@@ -1036,6 +1051,9 @@ private:
 	uint32_t m_LastPresentedSwapChainImageIndex;
 	bool m_FrameBlendEnabledLastFrame = false;
 	bool m_FrameBlendEnabledThisFrame = false;
+	bool m_VignetteBlurPass = false;
+	bool m_VignetteBlurPassBegun = false;
+	bool m_ForceInlineRecording = false;
 
 	std::vector<SBufferObjectFrame> m_vBufferObjects;
 
@@ -1367,6 +1385,7 @@ protected:
 		m_aCommandCallbacks[CommandBufferCMDOff(CCommandBuffer::CMD_CLEAR)] = {true, [this](SRenderCommandExecuteBuffer &ExecBuffer, const CCommandBuffer::SCommand *pBaseCommand) { Cmd_Clear_FillExecuteBuffer(ExecBuffer, static_cast<const CCommandBuffer::SCommand_Clear *>(pBaseCommand)); }, [this](const CCommandBuffer::SCommand *pBaseCommand, SRenderCommandExecuteBuffer &ExecBuffer) { return Cmd_Clear(ExecBuffer, static_cast<const CCommandBuffer::SCommand_Clear *>(pBaseCommand)); }};
 		m_aCommandCallbacks[CommandBufferCMDOff(CCommandBuffer::CMD_RENDER)] = {true, [this](SRenderCommandExecuteBuffer &ExecBuffer, const CCommandBuffer::SCommand *pBaseCommand) { Cmd_Render_FillExecuteBuffer(ExecBuffer, static_cast<const CCommandBuffer::SCommand_Render *>(pBaseCommand)); }, [this](const CCommandBuffer::SCommand *pBaseCommand, SRenderCommandExecuteBuffer &ExecBuffer) { return Cmd_Render(static_cast<const CCommandBuffer::SCommand_Render *>(pBaseCommand), ExecBuffer); }};
 		m_aCommandCallbacks[CommandBufferCMDOff(CCommandBuffer::CMD_RENDER_TEX3D)] = {true, [this](SRenderCommandExecuteBuffer &ExecBuffer, const CCommandBuffer::SCommand *pBaseCommand) { Cmd_RenderTex3D_FillExecuteBuffer(ExecBuffer, static_cast<const CCommandBuffer::SCommand_RenderTex3D *>(pBaseCommand)); }, [this](const CCommandBuffer::SCommand *pBaseCommand, SRenderCommandExecuteBuffer &ExecBuffer) { return Cmd_RenderTex3D(static_cast<const CCommandBuffer::SCommand_RenderTex3D *>(pBaseCommand), ExecBuffer); }};
+		m_aCommandCallbacks[CommandBufferCMDOff(CCommandBuffer::CMD_RENDER_VIGNETTE_BLUR)] = {false, [](SRenderCommandExecuteBuffer &ExecBuffer, const CCommandBuffer::SCommand *pBaseCommand) {}, [this](const CCommandBuffer::SCommand *pBaseCommand, SRenderCommandExecuteBuffer &ExecBuffer) { return Cmd_RenderVignetteBlur(); }};
 
 		m_aCommandCallbacks[CommandBufferCMDOff(CCommandBuffer::CMD_CREATE_BUFFER_OBJECT)] = {false, [](SRenderCommandExecuteBuffer &ExecBuffer, const CCommandBuffer::SCommand *pBaseCommand) {}, [this](const CCommandBuffer::SCommand *pBaseCommand, SRenderCommandExecuteBuffer &ExecBuffer) { return Cmd_CreateBufferObject(static_cast<const CCommandBuffer::SCommand_CreateBufferObject *>(pBaseCommand)); }};
 		m_aCommandCallbacks[CommandBufferCMDOff(CCommandBuffer::CMD_RECREATE_BUFFER_OBJECT)] = {false, [](SRenderCommandExecuteBuffer &ExecBuffer, const CCommandBuffer::SCommand *pBaseCommand) {}, [this](const CCommandBuffer::SCommand *pBaseCommand, SRenderCommandExecuteBuffer &ExecBuffer) { return Cmd_RecreateBufferObject(static_cast<const CCommandBuffer::SCommand_RecreateBufferObject *>(pBaseCommand)); }};
@@ -2458,15 +2477,22 @@ protected:
 
 		vkCmdEndRenderPass(CommandBuffer);
 
-		if(FrameBlendEnabled)
-			CopyFrameToFrameBlendHistory(CommandBuffer);
+		if(!m_VignetteBlurPassBegun)
+		{
+			if(FrameBlendEnabled)
+				CopyFrameToFrameBlendHistory(CommandBuffer);
 
-		BeginFrameBlendOverlayPass(CommandBuffer);
+			BeginFrameBlendOverlayPass(CommandBuffer);
 
-		if(FrameBlendEnabled && !RenderFrameBlend(CommandBuffer))
-			return false;
+			if(FrameBlendEnabled && !RenderFrameBlend(CommandBuffer))
+				return false;
 
-		vkCmdEndRenderPass(CommandBuffer);
+			vkCmdEndRenderPass(CommandBuffer);
+		}
+
+		m_VignetteBlurPass = false;
+		m_VignetteBlurPassBegun = false;
+		m_ForceInlineRecording = false;
 
 		if(vkEndCommandBuffer(CommandBuffer) != VK_SUCCESS)
 		{
@@ -2638,6 +2664,9 @@ protected:
 			}
 		}
 
+		m_VignetteBlurPass = IsVignetteBlurEnabled() && !m_FrameBlendEnabledThisFrame;
+		m_ForceInlineRecording = m_VignetteBlurPass && m_ThreadCount > 1;
+
 		VkRenderPassBeginInfo RenderPassInfo{};
 		RenderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 		RenderPassInfo.renderPass = m_VKRenderPass;
@@ -2649,7 +2678,7 @@ protected:
 		RenderPassInfo.clearValueCount = 1;
 		RenderPassInfo.pClearValues = &ClearColorVal;
 
-		vkCmdBeginRenderPass(CommandBuffer, &RenderPassInfo, m_ThreadCount > 1 ? VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS : VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdBeginRenderPass(CommandBuffer, &RenderPassInfo, m_ThreadCount > 1 && !m_ForceInlineRecording ? VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS : VK_SUBPASS_CONTENTS_INLINE);
 
 		for(auto &LastPipe : m_vLastPipeline)
 			LastPipe = VK_NULL_HANDLE;
@@ -4717,7 +4746,8 @@ public:
 			FrameBlendImage.m_Valid = false;
 	}
 
-	[[nodiscard]] bool CreateFrameBlendDescriptorSet(SFrameBlendImage &FrameBlendImage)
+	template<typename TImage>
+	[[nodiscard]] bool CreateFrameBlendDescriptorSet(TImage &FrameBlendImage)
 	{
 		VkDescriptorPool DescriptorPool;
 		if(!GetDescriptorPoolForAlloc(DescriptorPool, m_StandardTextureDescrPool, &FrameBlendImage.m_DescriptorSet, 1))
@@ -4791,6 +4821,52 @@ public:
 
 		m_vFrameBlendImages.clear();
 		m_FrameBlendEnabledLastFrame = false;
+	}
+
+	[[nodiscard]] bool CreateVignetteBlurImages()
+	{
+		DestroyVignetteBlurImages();
+		m_vVignetteBlurImages.resize(4);
+
+		const uint32_t ScreenWidth = m_VKSwapImgAndViewportExtent.m_SwapImageViewport.width;
+		const uint32_t ScreenHeight = m_VKSwapImgAndViewportExtent.m_SwapImageViewport.height;
+
+		for(size_t i = 0; i < m_vVignetteBlurImages.size(); ++i)
+		{
+			auto &BlurImage = m_vVignetteBlurImages[i];
+			const uint32_t Divider = (uint32_t)(1u << (i + 1));
+			BlurImage.m_Extent.width = std::max<uint32_t>(1, ScreenWidth / Divider);
+			BlurImage.m_Extent.height = std::max<uint32_t>(1, ScreenHeight / Divider);
+
+			if(!CreateImage(BlurImage.m_Extent.width, BlurImage.m_Extent.height, 1, 1, m_VKSurfFormat.format, VK_IMAGE_TILING_OPTIMAL, BlurImage.m_Image, BlurImage.m_ImgMem, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
+				return false;
+			BlurImage.m_ImgView = CreateImageView(BlurImage.m_Image, m_VKSurfFormat.format, VK_IMAGE_VIEW_TYPE_2D, 1, 1);
+			if(!ImageBarrier(BlurImage.m_Image, 0, 1, 0, 1, m_VKSurfFormat.format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL))
+				return false;
+			if(!ImageBarrier(BlurImage.m_Image, 0, 1, 0, 1, m_VKSurfFormat.format, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
+				return false;
+			if(!CreateFrameBlendDescriptorSet(BlurImage))
+				return false;
+		}
+
+		return true;
+	}
+
+	void DestroyVignetteBlurImages()
+	{
+		for(auto &BlurImage : m_vVignetteBlurImages)
+		{
+			if(BlurImage.m_DescriptorSet.m_Descriptor != VK_NULL_HANDLE)
+				FreeDescriptorSetFromPool(BlurImage.m_DescriptorSet);
+			if(BlurImage.m_ImgView != VK_NULL_HANDLE)
+				vkDestroyImageView(m_VKDevice, BlurImage.m_ImgView, nullptr);
+			if(BlurImage.m_Image != VK_NULL_HANDLE)
+				vkDestroyImage(m_VKDevice, BlurImage.m_Image, nullptr);
+			if(BlurImage.m_ImgMem.m_BufferMem.m_Mem != VK_NULL_HANDLE)
+				FreeImageMemBlock(BlurImage.m_ImgMem);
+		}
+
+		m_vVignetteBlurImages.clear();
 	}
 
 	void DestroyMultiSamplerImageAttachments()
@@ -5866,6 +5942,7 @@ public:
 		DestroyRenderPass();
 
 		DestroyFrameBlendImages();
+		DestroyVignetteBlurImages();
 
 		DestroyMultiSamplerImageAttachments();
 
@@ -6008,6 +6085,8 @@ public:
 		if(Ret == 0 && OldSwapChainImageCount == m_SwapChainImageCount)
 		{
 			if(!CreateFrameBlendImages())
+				Ret = -1;
+			if(Ret == 0 && !CreateVignetteBlurImages())
 				Ret = -1;
 		}
 
@@ -6366,6 +6445,20 @@ public:
 			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 			DestinationStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+		{
+			Barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			Barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			SourceStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+		{
+			Barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			Barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
 		else if(OldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 		{
 			Barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -6700,6 +6793,9 @@ public:
 		if(!CreateFrameBlendImages())
 			return -1;
 
+		if(!CreateVignetteBlurImages())
+			return -1;
+
 		m_vStreamedVertexBuffers.resize(m_ThreadCount);
 		m_vStreamedUniformBuffers.resize(m_ThreadCount);
 		for(size_t i = 0; i < m_ThreadCount; ++i)
@@ -6774,7 +6870,7 @@ public:
 
 	[[nodiscard]] bool GetGraphicCommandBuffer(VkCommandBuffer *&pDrawCommandBuffer, size_t RenderThreadIndex)
 	{
-		if(m_ThreadCount < 2)
+		if(m_ThreadCount < 2 || m_ForceInlineRecording)
 		{
 			pDrawCommandBuffer = &m_vMainDrawCommandBuffers[m_CurImageIndex];
 			return true;
@@ -7014,7 +7110,7 @@ public:
 					CanStartThread = true;
 					m_LastCommandsInPipeThreadIndex = PotentiallyNextThread - 1;
 				}
-				Buffer.m_ThreadIndex = m_ThreadCount > 1 && !ForceSingleThread ? (m_LastCommandsInPipeThreadIndex + 1) : 0;
+				Buffer.m_ThreadIndex = m_ThreadCount > 1 && !ForceSingleThread && !m_ForceInlineRecording ? (m_LastCommandsInPipeThreadIndex + 1) : 0;
 				CallbackObj.m_FillExecuteBuffer(Buffer, pBaseCommand);
 				m_CurRenderCallCountInPipe += Buffer.m_EstimatedRenderCallCount;
 			}
@@ -7469,6 +7565,153 @@ public:
 		return true;
 	}
 
+	[[nodiscard]] bool RenderVignetteBlur()
+	{
+		if(m_vVignetteBlurImages.empty())
+			return true;
+
+		const auto Viewport = m_VKSwapImgAndViewportExtent.GetPresentedImageViewport();
+		const float ScreenW = (float)Viewport.width;
+		const float ScreenH = (float)Viewport.height;
+		if(ScreenW <= 0.0f || ScreenH <= 0.0f)
+			return true;
+
+		const float Strength = g_Config.m_TcVignetteStrength / 100.0f;
+		const float Smooth = g_Config.m_TcVignetteSmoothness / 100.0f;
+		const float Radius = g_Config.m_TcVignetteRadius / 100.0f;
+		const float MaxAlpha = Strength;
+		if(MaxAlpha <= 0.0f || Radius <= 0.0f)
+			return true;
+
+		const size_t BlurLevel = (size_t)std::clamp<int>((int)g_Config.m_TcVignetteBlur * (int)m_vVignetteBlurImages.size() / 100, 0, (int)m_vVignetteBlurImages.size() - 1);
+		auto &BlurImage = m_vVignetteBlurImages[BlurLevel];
+
+		bool aSides[4] = {false, false, false, false};
+		if(g_Config.m_TcVignetteMode == 1)
+		{
+			aSides[0] = true;
+			aSides[1] = true;
+		}
+		else if(g_Config.m_TcVignetteMode == 2)
+		{
+			aSides[2] = true;
+			aSides[3] = true;
+		}
+		else
+		{
+			for(bool &Side : aSides)
+				Side = true;
+		}
+
+		const float BandX = ScreenW * Radius * 0.5f;
+		const float BandY = ScreenH * Radius * 0.5f;
+		const float aBandScale[3] = {1.0f, 0.55f + 0.25f * Smooth, 0.28f + 0.20f * Smooth};
+		const float aBandAlpha[3] = {1.0f, 0.6f, 0.3f};
+
+		std::vector<CCommandBuffer::SVertex> vVertices;
+		vVertices.reserve((size_t)4 * (size_t)3 * 4);
+		for(int Side = 0; Side < 4; ++Side)
+		{
+			if(!aSides[Side])
+				continue;
+
+			const float FullBand = Side < 2 ? BandX : BandY;
+			if(FullBand <= 0.0f)
+				continue;
+
+			for(int BandIndex = 0; BandIndex < 3; ++BandIndex)
+			{
+				const float Band = FullBand * aBandScale[BandIndex];
+				const float BandAlpha = MaxAlpha * aBandAlpha[BandIndex];
+				if(Band <= 0.0f || BandAlpha <= 0.0f)
+					continue;
+
+				float BandX0 = 0.0f;
+				float BandY0 = 0.0f;
+				float BandX1 = 0.0f;
+				float BandY1 = 0.0f;
+				float aCornerAlpha[4];
+				if(Side == 0)
+				{
+					BandX1 = Band;
+					BandY1 = ScreenH;
+					aCornerAlpha[0] = BandAlpha;
+					aCornerAlpha[1] = 0.0f;
+					aCornerAlpha[2] = 0.0f;
+					aCornerAlpha[3] = BandAlpha;
+				}
+				else if(Side == 1)
+				{
+					BandX0 = ScreenW - Band;
+					BandX1 = ScreenW;
+					BandY1 = ScreenH;
+					aCornerAlpha[0] = 0.0f;
+					aCornerAlpha[1] = BandAlpha;
+					aCornerAlpha[2] = BandAlpha;
+					aCornerAlpha[3] = 0.0f;
+				}
+				else if(Side == 2)
+				{
+					BandX1 = ScreenW;
+					BandY1 = Band;
+					aCornerAlpha[0] = BandAlpha;
+					aCornerAlpha[1] = BandAlpha;
+					aCornerAlpha[2] = 0.0f;
+					aCornerAlpha[3] = 0.0f;
+				}
+				else
+				{
+					BandX1 = ScreenW;
+					BandY0 = ScreenH - Band;
+					BandY1 = ScreenH;
+					aCornerAlpha[0] = 0.0f;
+					aCornerAlpha[1] = 0.0f;
+					aCornerAlpha[2] = BandAlpha;
+					aCornerAlpha[3] = BandAlpha;
+				}
+
+				const vec2 aPos[4] = {
+					vec2(BandX0, BandY0),
+					vec2(BandX1, BandY0),
+					vec2(BandX1, BandY1),
+					vec2(BandX0, BandY1),
+				};
+
+				for(int Corner = 0; Corner < 4; ++Corner)
+				{
+					CCommandBuffer::SVertex Vertex{};
+					Vertex.m_Pos = aPos[Corner];
+					Vertex.m_Tex = vec2(std::clamp(aPos[Corner].x / ScreenW, 0.0f, 1.0f), std::clamp(aPos[Corner].y / ScreenH, 0.0f, 1.0f));
+					const float CornerAlpha = std::clamp(aCornerAlpha[Corner], 0.0f, 1.0f);
+					Vertex.m_Color.r = 255;
+					Vertex.m_Color.g = 255;
+					Vertex.m_Color.b = 255;
+					Vertex.m_Color.a = (uint8_t)std::round(CornerAlpha * 255.0f);
+					vVertices.push_back(Vertex);
+				}
+			}
+		}
+
+		if(vVertices.empty())
+			return true;
+
+		CCommandBuffer::SState State{};
+		State.m_BlendMode = EBlendMode::ALPHA;
+		State.m_WrapMode = EWrapMode::CLAMP;
+		State.m_Texture = 0;
+		State.m_ScreenTL = vec2(0.0f, 0.0f);
+		State.m_ScreenBR = vec2(ScreenW, ScreenH);
+		State.m_ClipEnable = false;
+
+		SRenderCommandExecuteBuffer ExecBuffer{};
+		ExecBuffer.m_ThreadIndex = MAIN_THREAD_INDEX;
+		ExecBuffer.m_IndexBuffer = m_IndexBuffer;
+		ExecBuffer.m_aDescriptors[0] = BlurImage.m_DescriptorSet;
+		ExecBufferFillDynamicStates(State, ExecBuffer);
+
+		return RenderStandard<CCommandBuffer::SVertex, false>(ExecBuffer, State, EPrimitiveType::QUADS, vVertices.data(), (int)(vVertices.size() / 4));
+	}
+
 	void BeginFrameBlendOverlayPass(VkCommandBuffer &CommandBuffer)
 	{
 		VkRenderPassBeginInfo RenderPassInfo{};
@@ -7480,7 +7723,7 @@ public:
 		RenderPassInfo.clearValueCount = 0;
 		RenderPassInfo.pClearValues = nullptr;
 
-		vkCmdBeginRenderPass(CommandBuffer, &RenderPassInfo, m_ThreadCount > 1 ? VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS : VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdBeginRenderPass(CommandBuffer, &RenderPassInfo, m_ThreadCount > 1 && !m_ForceInlineRecording ? VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS : VK_SUBPASS_CONTENTS_INLINE);
 	}
 
 	void CopyFrameToFrameBlendHistory(VkCommandBuffer &CommandBuffer)
@@ -7513,6 +7756,69 @@ public:
 		FrameBlendImageBarrier(CommandBuffer, SwapImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
 		FrameBlendImage.m_Valid = true;
+	}
+
+	void PrepareVignetteBlur(VkCommandBuffer &CommandBuffer)
+	{
+		if(m_vVignetteBlurImages.empty())
+			return;
+
+		VkImage SrcImage = m_vSwapChainImages[m_CurImageIndex];
+		VkExtent2D SrcExtent = m_VKSwapImgAndViewportExtent.m_SwapImageViewport;
+		bool SrcIsSwapImage = true;
+
+		for(auto &BlurImage : m_vVignetteBlurImages)
+		{
+			if(!SrcIsSwapImage)
+				FrameBlendImageBarrier(CommandBuffer, SrcImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+			FrameBlendImageBarrier(CommandBuffer, BlurImage.m_Image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+			VkImageBlit BlitRegion{};
+			BlitRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			BlitRegion.srcSubresource.mipLevel = 0;
+			BlitRegion.srcSubresource.baseArrayLayer = 0;
+			BlitRegion.srcSubresource.layerCount = 1;
+			BlitRegion.srcOffsets[1] = {(int32_t)SrcExtent.width, (int32_t)SrcExtent.height, 1};
+			BlitRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			BlitRegion.dstSubresource.mipLevel = 0;
+			BlitRegion.dstSubresource.baseArrayLayer = 0;
+			BlitRegion.dstSubresource.layerCount = 1;
+			BlitRegion.dstOffsets[1] = {(int32_t)BlurImage.m_Extent.width, (int32_t)BlurImage.m_Extent.height, 1};
+
+			vkCmdBlitImage(CommandBuffer, SrcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, BlurImage.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &BlitRegion, VK_FILTER_LINEAR);
+
+			if(!SrcIsSwapImage)
+				FrameBlendImageBarrier(CommandBuffer, SrcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			FrameBlendImageBarrier(CommandBuffer, BlurImage.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+			SrcImage = BlurImage.m_Image;
+			SrcExtent = BlurImage.m_Extent;
+			SrcIsSwapImage = false;
+		}
+	}
+
+	[[nodiscard]] bool Cmd_RenderVignetteBlur()
+	{
+		if(!m_VignetteBlurPass || m_VignetteBlurPassBegun)
+			return true;
+
+		auto &CommandBuffer = GetMainGraphicCommandBuffer();
+		vkCmdEndRenderPass(CommandBuffer);
+
+		FrameBlendImageBarrier(CommandBuffer, m_vSwapChainImages[m_CurImageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
+		PrepareVignetteBlur(CommandBuffer);
+
+		FrameBlendImageBarrier(CommandBuffer, m_vSwapChainImages[m_CurImageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+		BeginFrameBlendOverlayPass(CommandBuffer);
+
+		if(!RenderVignetteBlur())
+			return false;
+
+		m_VignetteBlurPassBegun = true;
+
+		return true;
 	}
 
 	[[nodiscard]] bool Cmd_ReadPixel(const CCommandBuffer::SCommand_TrySwapAndReadPixel *pCommand)

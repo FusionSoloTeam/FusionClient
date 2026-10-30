@@ -33,6 +33,8 @@
 
 static constexpr float CHAT_SLIDE_MS = 220.0f;
 static constexpr float CHAT_REVEAL_MS = 700.0f;
+static constexpr const char *CHAT_LOG_DIR = "chatlog";
+static constexpr int CHAT_LOG_MAX_DAYS = 7;
 
 namespace
 {
@@ -75,6 +77,8 @@ CChat::CLine::CLine()
 {
 	m_TextContainerIndex.Reset();
 	m_QuadContainerIndex = -1;
+	m_SpecRequest = false;
+	m_RowWidth = 0.0f;
 }
 
 void CChat::CLine::Reset(CChat &This)
@@ -86,6 +90,8 @@ void CChat::CLine::Reset(CChat &This)
 	m_aText[0] = '\0';
 	m_aName[0] = '\0';
 	m_Friend = false;
+	m_SpecRequest = false;
+	m_RowWidth = 0.0f;
 	m_TimesRepeated = 0;
 	m_pManagedTeeRenderInfo = nullptr;
 	m_pTranslateResponse = nullptr;
@@ -413,6 +419,8 @@ void CChat::OnInit()
 	Console()->Chain("cl_chat_old", ConchainChatOld, this);
 	Console()->Chain("cl_chat_size", ConchainChatFontSize, this);
 	Console()->Chain("cl_chat_width", ConchainChatWidth, this);
+	if(g_Config.m_FcChatLog)
+		Storage()->ListDirectory(IStorage::TYPE_SAVE, CHAT_LOG_DIR, ChatLogCleanupCallback, this);
 }
 
 static bool ChatCursorEnabled()
@@ -422,7 +430,7 @@ static bool ChatCursorEnabled()
 
 bool CChat::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
 {
-	if(!IsActive() || !ChatCursorEnabled())
+	if(!IsActive() || !(ChatCursorEnabled() || g_Config.m_FcChatSpecClick))
 		return false;
 
 	Ui()->ConvertMouseMove(&x, &y, CursorType);
@@ -440,6 +448,30 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 {
 	if(m_Mode == MODE_NONE)
 		return false;
+
+	if(m_SearchActive)
+	{
+		if(Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_ESCAPE)
+		{
+			m_SearchActive = false;
+			m_SearchInput.Clear();
+			return true;
+		}
+		if(Event.m_Flags & IInput::FLAG_PRESS && (Event.m_Key == KEY_RETURN || Event.m_Key == KEY_KP_ENTER))
+		{
+			m_SearchActive = false;
+			return true;
+		}
+		m_SearchInput.ProcessInput(Event);
+		return true;
+	}
+
+	if(Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_F && Input()->ModifierIsPressed())
+	{
+		m_SearchActive = true;
+		m_SearchInput.Activate(EInputPriority::CHAT);
+		return true;
+	}
 
 	if(Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_ESCAPE)
 	{
@@ -774,7 +806,21 @@ void CChat::DisableMode()
 		m_Mode = MODE_NONE;
 		m_Input.Deactivate();
 	}
+	m_SearchActive = false;
+	m_SearchInput.Clear();
 	m_HistoryScrollOffset = 0;
+}
+
+bool CChat::LineMatchesSearch(const CLine &Line) const
+{
+	const char *pQuery = m_SearchInput.GetString();
+	if(pQuery[0] == '\0')
+		return true;
+
+	const CColoredParts ColoredParts(Line.m_aText, Line.m_ClientId == CLIENT_MSG);
+	if(str_utf8_find_nocase(ColoredParts.Text(), pQuery) != nullptr)
+		return true;
+	return Line.m_aName[0] != '\0' && str_utf8_find_nocase(Line.m_aName, pQuery) != nullptr;
 }
 
 void CChat::TagPlayerUnderCursor()
@@ -805,8 +851,13 @@ void CChat::TagPlayerUnderCursor()
 	if(BestId < 0)
 		return;
 
+	InsertChatTag(GameClient()->m_aClients[BestId].m_aName);
+}
+
+void CChat::InsertChatTag(const char *pName)
+{
 	char aName[MAX_NAME_LENGTH + 2];
-	str_copy(aName, GameClient()->m_aClients[BestId].m_aName);
+	str_copy(aName, pName);
 	str_append(aName, " ");
 	m_Input.Insert(aName, m_Input.GetCursorOffset());
 }
@@ -833,6 +884,7 @@ void CChat::OnMessage(int MsgType, void *pRawMsg)
 		*/
 
 		AddLine(pMsg->m_ClientId, pMsg->m_Team, pMsg->m_pMessage);
+		LogChatLine(pMsg->m_ClientId, pMsg->m_Team, pMsg->m_pMessage);
 
 		if(Client()->State() != IClient::STATE_DEMOPLAYBACK &&
 			pMsg->m_ClientId == SERVER_MSG)
@@ -921,6 +973,48 @@ void CChat::StoreSave(const char *pText)
 	}
 	CsvWrite(File, 4, apColumns);
 	io_close(File);
+}
+
+void CChat::LogChatLine(int ClientId, int Team, const char *pText)
+{
+	if(!g_Config.m_FcChatLog || pText[0] == '\0')
+		return;
+
+	char aText[512];
+	str_copy(aText, pText, sizeof(aText));
+	for(char *pChar = aText; pChar[0] != '\0'; pChar++)
+	{
+		if(*pChar == '\n' || *pChar == '\r')
+			*pChar = ' ';
+	}
+
+	const int Flags = ClientId == SERVER_MSG ? CHAT_LOG_FLAG_SERVER : 0;
+	const char *pName = ClientId >= 0 ? GameClient()->m_aClients[ClientId].m_aName : "";
+
+	static bool s_ErrorReported = false;
+	if(!ChatLogSealedAppend(Storage(), CHAT_LOG_DIR, &m_ChatLogChain, time_timestamp(), ClientId, Team, Flags, pName, aText) && !s_ErrorReported)
+	{
+		s_ErrorReported = true;
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "chatlog", "failed to write sealed chat log");
+	}
+}
+
+int CChat::ChatLogCleanupCallback(const char *pFilename, int IsDir, int StorageType, void *pUser)
+{
+	const bool Sealed = str_length(pFilename) == CHAT_LOG_SEALED_NAME_LENGTH && str_endswith(pFilename, CHAT_LOG_SEALED_EXTENSION);
+	const bool Legacy = str_length(pFilename) == CHAT_LOG_LEGACY_NAME_LENGTH && str_endswith(pFilename, CHAT_LOG_LEGACY_EXTENSION);
+	if(IsDir || (!Sealed && !Legacy))
+		return 0;
+
+	char aCutoff[16];
+	str_timestamp_ex((time_t)(time_timestamp() - CHAT_LOG_MAX_DAYS * 24 * 60 * 60), aCutoff, sizeof(aCutoff), "%Y-%m-%d");
+	if(str_comp_nocase_num(pFilename, aCutoff, 10) >= 0)
+		return 0;
+
+	char aPath[IO_MAX_PATH_LENGTH];
+	str_format(aPath, sizeof(aPath), "%s/%s", CHAT_LOG_DIR, pFilename);
+	static_cast<CChat *>(pUser)->Storage()->RemoveFile(aPath, IStorage::TYPE_SAVE);
+	return 0;
 }
 
 void CChat::AddLine(int ClientId, int Team, const char *pLine)
@@ -1271,7 +1365,41 @@ static bool ChatGradientWordChar(char c)
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || (unsigned char)c >= 0x80;
 }
 
-static void ChatCollectGradientRanges(CGameClient *pGameClient, const char *pText, std::vector<SChatGradientRange> &vRanges)
+static bool ChatIsSpecRequest(const char *pText)
+{
+	static const char *const s_apSpecWords[] = {
+		"spec", "specs", "spect", "spectate", "spectated", "spectating", "spectator", "spectators",
+	};
+
+	const int TextLength = str_length(pText);
+	for(int i = 0; i < TextLength;)
+	{
+		if(!ChatGradientWordChar(pText[i]))
+		{
+			i++;
+			continue;
+		}
+
+		int WordEnd = i;
+		while(WordEnd < TextLength && ChatGradientWordChar(pText[WordEnd]))
+			WordEnd++;
+
+		char aWord[64];
+		str_truncate(aWord, sizeof(aWord), pText + i, WordEnd - i);
+		for(const char *pSpecWord : s_apSpecWords)
+		{
+			if(str_utf8_comp_nocase(aWord, pSpecWord) == 0)
+				return true;
+		}
+		if(str_utf8_find_nocase(aWord, "спек") != nullptr)
+			return true;
+
+		i = WordEnd + 1;
+	}
+	return false;
+}
+
+static void ChatCollectGradientRanges(CGameClient *pGameClient, const char *pText, std::vector<SChatGradientRange> &vRanges, bool SkipFriends = true)
 {
 	const int TextLen = str_length(pText);
 	if(TextLen <= 0)
@@ -1280,7 +1408,7 @@ static void ChatCollectGradientRanges(CGameClient *pGameClient, const char *pTex
 	for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
 	{
 		const auto &ClientData = pGameClient->m_aClients[ClientId];
-		if(!ClientData.m_Active || ClientData.m_aName[0] == '\0' || pGameClient->m_HeartList.IsFriend(ClientId))
+		if(!ClientData.m_Active || ClientData.m_aName[0] == '\0' || (SkipFriends && pGameClient->m_HeartList.IsFriend(ClientId)))
 			continue;
 
 		const int NameLen = str_length(ClientData.m_aName);
@@ -1411,6 +1539,103 @@ static void SmoothRevealSplits(CTextCursor *pCursor, const char *pText, const Co
 	pCursor->m_vColorSplits = std::move(vSplits);
 }
 
+bool CChat::TagChatNameUnderCursor(const CLine &Line, const CUIRect &RowRect, float LineWidth, const vec2 &MousePos)
+{
+	const float FontSize = this->FontSize();
+	const float TextTop = RowRect.y + (g_Config.m_ClChatOld ? 0.0f : MessagePaddingY());
+	if(MousePos.y < TextTop || MousePos.y > TextTop + FontSize)
+		return false;
+	if(MousePos.x < RowRect.x || MousePos.x > RowRect.x + LineWidth)
+		return false;
+
+	const bool Named = Line.m_ClientId >= 0 && Line.m_aName[0] != '\0';
+	float X = RowRect.x + (g_Config.m_ClChatOld ? 0.0f : MessagePaddingX() / 2.0f);
+	if(Named && !g_Config.m_ClChatOld)
+		X += MessageTeeSize() + MESSAGE_TEE_PADDING_RIGHT;
+
+	const auto AdvanceText = [&](const char *pText) {
+		X += TextRender()->TextWidth(FontSize, pText);
+	};
+
+	char aClientId[16] = "";
+	if(Named && g_Config.m_ClShowIds)
+		GameClient()->FormatClientId(Line.m_ClientId, aClientId, EClientIdFormat::INDENT_AUTO);
+
+	if(Named)
+	{
+		const auto &PrefixAuthor = GameClient()->m_aClients[Line.m_ClientId];
+		if(g_Config.m_TcSpectatePrefix && PrefixAuthor.m_Team == TEAM_SPECTATORS)
+			AdvanceText(g_Config.m_TcSpecPrefix);
+		if(g_Config.m_TcWarlistPrefixes && GameClient()->m_WarList.GetAnyWar(Line.m_ClientId))
+			AdvanceText(g_Config.m_TcWarlistPrefix);
+		else if(Line.m_Friend && g_Config.m_ClMessageFriend)
+			AdvanceText(g_Config.m_TcFriendPrefix);
+	}
+	AdvanceText(aClientId);
+
+	char aCount[12] = "";
+	if(Line.m_TimesRepeated > 0)
+	{
+		if(Named)
+			str_format(aCount, sizeof(aCount), " [%d]", Line.m_TimesRepeated + 1);
+		else
+			str_format(aCount, sizeof(aCount), "[%d] ", Line.m_TimesRepeated + 1);
+	}
+
+	if(Named)
+	{
+		const float NameStart = X;
+		AdvanceText(Line.m_aName);
+		if(MousePos.x >= NameStart && MousePos.x <= X)
+		{
+			InsertChatTag(Line.m_aName);
+			return true;
+		}
+		AdvanceText(aCount);
+		AdvanceText(": ");
+	}
+	else
+	{
+		AdvanceText(aCount);
+	}
+
+	const CColoredParts ColoredParts(Line.m_aText, Line.m_ClientId == CLIENT_MSG);
+	const char *pText = ColoredParts.Text();
+	if(pText[0] == '\0')
+		return false;
+
+	std::vector<SChatGradientRange> vRanges;
+	ChatCollectGradientRanges(GameClient(), pText, vRanges, false);
+	if(vRanges.empty())
+		return false;
+
+	const float MaxX = RowRect.x + LineWidth;
+	for(const char *pChar = pText; *pChar != '\0' && X <= MaxX;)
+	{
+		const char *pNext = pChar;
+		str_utf8_decode(&pNext);
+		if(pNext <= pChar)
+			break;
+		const float CharWidth = TextRender()->TextWidth(FontSize, pChar, (int)(pNext - pChar));
+		if(MousePos.x >= X && MousePos.x < X + CharWidth)
+		{
+			const int Offset = (int)(pChar - pText);
+			for(const SChatGradientRange &Range : vRanges)
+			{
+				if(Offset >= Range.m_Start && Offset < Range.m_Start + Range.m_Length && GameClient()->m_aClients[Range.m_ClientId].m_aName[0] != '\0')
+				{
+					InsertChatTag(GameClient()->m_aClients[Range.m_ClientId].m_aName);
+					return true;
+				}
+			}
+			return false;
+		}
+		X += CharWidth;
+		pChar = pNext;
+	}
+	return false;
+}
+
 void CChat::OnPrepareLines(float y)
 {
 	float x = 5.0f;
@@ -1462,6 +1687,9 @@ void CChat::OnPrepareLines(float y)
 		if(Now > Line.m_Time + 16 * time_freq() && !m_PrevShowChat)
 			break;
 
+		if(!LineMatchesSearch(Line))
+			continue;
+
 		if(Line.m_TextContainerIndex.Valid() && !ForceRecreate)
 			continue;
 
@@ -1501,6 +1729,8 @@ void CChat::OnPrepareLines(float y)
 		if(!ColoredParts.Colors().empty() && ColoredParts.Colors()[0].m_Index == 0)
 			Line.m_CustomColor = ColoredParts.Colors()[0].m_Color;
 		pText = ColoredParts.Text();
+
+		Line.m_SpecRequest = Client()->State() != IClient::STATE_DEMOPLAYBACK && Line.m_ClientId >= 0 && ChatIsSpecRequest(pText);
 
 		const char *pTranslatedError = nullptr;
 		const char *pTranslatedText = nullptr;
@@ -1811,7 +2041,6 @@ void CChat::OnPrepareLines(float y)
 			AppendCursor.m_vColorSplits.clear();
 		}
 
-		if(!g_Config.m_ClChatOld && (Line.m_aText[0] != '\0' || Line.m_aName[0] != '\0'))
 		{
 			float FullWidth = RealMsgPaddingX * 1.5f;
 			if(!IsScoreBoardOpen && !g_Config.m_ClChatOld)
@@ -1822,8 +2051,13 @@ void CChat::OnPrepareLines(float y)
 			{
 				FullWidth += std::max(LineCursor.m_LongestLineWidth, AppendCursor.m_LongestLineWidth);
 			}
-			Graphics()->SetColor(1, 1, 1, 1);
-			Line.m_QuadContainerIndex = Graphics()->CreateRectQuadContainer(Begin, y, FullWidth, Line.m_aYOffset[OffsetType], MessageRounding(), IGraphics::CORNER_ALL);
+			Line.m_RowWidth = FullWidth;
+
+			if(!g_Config.m_ClChatOld && (Line.m_aText[0] != '\0' || Line.m_aName[0] != '\0'))
+			{
+				Graphics()->SetColor(1, 1, 1, 1);
+				Line.m_QuadContainerIndex = Graphics()->CreateRectQuadContainer(Begin, y, FullWidth, Line.m_aYOffset[OffsetType], MessageRounding(), IGraphics::CORNER_ALL);
+			}
 		}
 
 		TextRender()->SetRenderFlags(CurRenderFlags);
@@ -2058,7 +2292,24 @@ void CChat::OnRender()
 	// float y = 300.0f - 20.0f * FontSize() / 6.0f;
 
 	float ScaledFontSize = FontSize() * (8.0f / 6.0f);
-	if(m_Mode != MODE_NONE)
+	if(m_Mode != MODE_NONE && m_SearchActive)
+	{
+		// render chat search
+		CTextCursor SearchCursor;
+		SearchCursor.SetPosition(vec2(x, y));
+		SearchCursor.m_FontSize = ScaledFontSize;
+		SearchCursor.m_LineWidth = std::max(Width - 190.0f, 190.0f);
+
+		TextRender()->TextEx(&SearchCursor, Localize("Search"));
+		TextRender()->TextEx(&SearchCursor, ": ");
+
+		const float SearchMaxWidth = SearchCursor.m_LineWidth - (SearchCursor.m_X - SearchCursor.m_StartX);
+		m_SearchInput.Activate(EInputPriority::CHAT);
+		const bool SearchChanged = m_SearchInput.WasChanged() || m_SearchInput.WasCursorChanged();
+		const CUIRect SearchRect = {SearchCursor.m_X, SearchCursor.m_Y, 0.0f, 0.0f};
+		m_SearchInput.Render(&SearchRect, SearchCursor.m_FontSize, TEXTALIGN_TL, SearchChanged, SearchMaxWidth, 0.0f);
+	}
+	else if(m_Mode != MODE_NONE)
 	{
 		// render chat input
 		CTextCursor InputCursor;
@@ -2213,6 +2464,13 @@ void CChat::OnRender()
 
 	OnPrepareLines(y);
 
+	const vec2 UiSize = vec2(600.0f * Graphics()->ScreenAspect(), 600.0f);
+	const vec2 MousePos = m_ChatCursorPos / UiSize * vec2(Width, Height);
+	const bool MousePressed = Input()->NativeMousePressed(1);
+	const bool MouseClicked = IsActive() && ChatCursorEnabled() && !m_MouseIsPress && MousePressed;
+	m_MouseIsPress = MousePressed;
+	int ClickClientId = -1;
+
 	bool IsScoreBoardOpen = GameClient()->m_Scoreboard.IsActive() && (Graphics()->ScreenAspect() > 1.7f); // only assume scoreboard when screen ratio is widescreen(something around 16:9)
 
 	int64_t Now = time();
@@ -2221,12 +2479,16 @@ void CChat::OnRender()
 
 	float RealMsgPaddingX = MessagePaddingX();
 	float RealMsgPaddingY = MessagePaddingY();
+	float RealMsgPaddingTee = MessageTeeSize() + MESSAGE_TEE_PADDING_RIGHT;
 
 	if(g_Config.m_ClChatOld)
 	{
 		RealMsgPaddingX = 0;
 		RealMsgPaddingY = 0;
+		RealMsgPaddingTee = 0;
 	}
+
+	const float LineWidth = (IsScoreBoardOpen ? std::max(85.0f, FontSize() * 85.0f / 6.0f) : g_Config.m_ClChatWidth) - (RealMsgPaddingX * 1.5f) - RealMsgPaddingTee;
 
 	for(int i = m_HistoryScrollOffset; i < MAX_LINES; i++)
 	{
@@ -2235,6 +2497,9 @@ void CChat::OnRender()
 			break;
 		if(Now > Line.m_Time + 16 * time_freq() && !m_PrevShowChat)
 			break;
+
+		if(!LineMatchesSearch(Line))
+			continue;
 
 		y -= Line.m_aYOffset[OffsetType] * (i == m_HistoryScrollOffset ? m_SmoothSlotScale : 1.0f);
 
@@ -2253,6 +2518,22 @@ void CChat::OnRender()
 				Graphics()->SetColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClChatBackgroundColor, true)).WithMultipliedAlpha(Blend));
 				Graphics()->RenderQuadContainerEx(Line.m_QuadContainerIndex, 0, -1, 0, ((y + RealMsgPaddingY / 2.0f) - Line.m_TextYOffset));
 			}
+		}
+
+		if(IsActive() && g_Config.m_FcChatSpecClick && Line.m_SpecRequest && Line.m_RowWidth > 0.0f)
+		{
+			const bool Hovered = MousePos.x >= x && MousePos.x <= x + Line.m_RowWidth &&
+					     MousePos.y >= y && MousePos.y <= y + Line.m_aYOffset[OffsetType];
+			Graphics()->DrawRect(x, y, Line.m_RowWidth, Line.m_aYOffset[OffsetType], ColorRGBA(0.45f, 0.9f, 0.95f, (Hovered ? 0.4f : 0.2f) * Blend), IGraphics::CORNER_ALL, MessageRounding());
+			const bool Clickable = Line.m_ClientId >= 0 && Line.m_ClientId != GameClient()->m_aLocalIds[0] && Line.m_ClientId != GameClient()->m_aLocalIds[1];
+			if(Hovered && Clickable && MouseClicked)
+				ClickClientId = Line.m_ClientId;
+		}
+
+		if(IsActive() && g_Config.m_TcChatTagCursor && MouseClicked && ClickClientId < 0)
+		{
+			const CUIRect RowRect = {x, y, Line.m_RowWidth, Line.m_aYOffset[OffsetType]};
+			TagChatNameUnderCursor(Line, RowRect, LineWidth, MousePos);
 		}
 
 		if(Line.m_TextContainerIndex.Valid())
@@ -2281,13 +2562,40 @@ void CChat::OnRender()
 		}
 	}
 
-	if(IsActive() && ChatCursorEnabled())
+	if(ClickClientId >= 0)
+	{
+		SpectatePlayer(ClickClientId);
+		DisableMode();
+		GameClient()->OnRelease();
+	}
+
+	if(IsActive() && (ChatCursorEnabled() || g_Config.m_FcChatSpecClick))
 	{
 		const CScreenRect PrevScreen = Graphics()->GetScreen();
 		Ui()->MapScreen();
 		RenderTools()->RenderCursor(m_ChatCursorPos, 24.0f);
 		Graphics()->MapScreen(PrevScreen);
 	}
+}
+
+void CChat::SpectatePlayer(int ClientId)
+{
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return;
+
+	if(GameClient()->m_Snap.m_SpecInfo.m_Active && GameClient()->m_aClients[ClientId].m_Team != TEAM_SPECTATORS)
+	{
+		GameClient()->m_Spectator.Spectate(ClientId);
+		return;
+	}
+
+	char aEscapedCommand[2 * MAX_NAME_LENGTH + 32];
+	str_copy(aEscapedCommand, "say /spec \"");
+	char *pDst = aEscapedCommand + str_length(aEscapedCommand);
+	str_escape(&pDst, GameClient()->m_aClients[ClientId].m_aName, aEscapedCommand + sizeof(aEscapedCommand));
+	str_append(aEscapedCommand, "\"");
+
+	Console()->ExecuteLine(aEscapedCommand, IConsole::CLIENT_ID_UNSPECIFIED);
 }
 
 void CChat::EnsureCoherentFontSize() const
@@ -2365,7 +2673,13 @@ void CChat::SendChat(int Team, const char *pLine)
 	if(*str_utf8_skip_whitespaces(pLine) == '\0')
 		return;
 
+	if(GameClient()->m_FastPractice.ConsumePracticeChatCommand(Team, pLine))
+		return;
+
 	if((!str_comp(pLine, "/spec") || !str_comp(pLine, "/pause")) && GameClient()->m_TClient.AntiUnSpec())
+		return;
+
+	if(GameClient()->m_ChatBinds.OnChatCommand(Team, pLine))
 		return;
 
 	GameClient()->m_PracticeTags.OnChatCommand(pLine);
