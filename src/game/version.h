@@ -31,7 +31,7 @@ extern const char *GIT_SHORTREV_HASH;
 
 #define FUSION_NAME "Fusion Client"
 #ifndef FUSION_VERSION
-#define FUSION_VERSION "1.2"
+#define FUSION_VERSION "2.0"
 #endif
 
 #endif

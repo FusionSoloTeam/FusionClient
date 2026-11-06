@@ -2990,7 +2990,13 @@ void CGameClient::OnPredict()
 		}
 
 		if(Tick == FinalTickRegular)
+		{
 			m_PrevRegularPredictedWorld.CopyWorldClean(&m_PredictedWorld);
+			if(pLocalChar)
+				m_aClients[m_Snap.m_LocalClientId].m_PrevRegularPredicted = pLocalChar->GetCore();
+			if(pDummyChar)
+				m_aClients[m_aLocalIds[!g_Config.m_ClDummy]].m_PrevRegularPredicted = pDummyChar->GetCore();
+		}
 
 		// optionally allow some movement in freeze by not predicting freeze the last one to two ticks
 		if(g_Config.m_ClPredictFreeze == 2 && Client()->PredGameTick(g_Config.m_ClDummy) - 1 - Client()->PredGameTick(g_Config.m_ClDummy) % 2 <= Tick)
@@ -3129,7 +3135,7 @@ void CGameClient::OnPredict()
 	if(FastInputTicks > 0)
 	{
 		m_PredictedWorld.CopyWorld(&m_RegularPredictedWorld);
-		// m_PrevPredictedWorld.CopyWorld(&m_PrevRegularPredictedWorld); // not sure if this is worth performance cost, it seems to not matter
+		m_PrevPredictedWorld.CopyWorld(&m_PrevRegularPredictedWorld);
 	}
 
 	if(g_Config.m_TcRemoveAnti)
@@ -4513,6 +4519,11 @@ void CGameClient::UpdateRenderedCharacters()
 	const int PracticeControlledId = PracticeActive ? m_FastPractice.ControlledPracticeId() : -1;
 	const int PracticePartnerId = PracticeActive ? m_FastPractice.PartnerPracticeId() : -1;
 
+	const bool bLagSmooth = g_Config.m_FcLagSmooth && Client()->State() == IClient::STATE_ONLINE &&
+		!m_Snap.m_SpecInfo.m_Active && Predict();
+	if(bLagSmooth)
+		UpdateLagStall();
+
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
 		const bool IsPracticeParticipant = PracticeActive && m_FastPractice.IsPracticeParticipant(i);
@@ -4612,17 +4623,44 @@ void CGameClient::UpdateRenderedCharacters()
 
 			if(g_Config.m_TcRemoveAnti)
 				Pos = GetFreezePos(i);
+			else if(TcInputs::FusionActive() && (i == m_Snap.m_LocalClientId || IsDummy))
+				Pos = GetFusionPos(i);
 			else if(TcInputs::FastInputActive() && (i == m_Snap.m_LocalClientId || IsDummy))
 				Pos = GetFastInputPos(i);
 
 			if(i == m_Snap.m_LocalClientId || IsDummy)
 			{
 				m_aClients[i].m_IsPredictedLocal = true;
+				if(!TcInputs::FusionActive())
+				{
+					m_aClients[i].m_FusionLeadX = 0.0f;
+					m_aClients[i].m_FusionLeadY = 0.0f;
+				}
 				if((AntiPingGunfire() || PredictOwnWeapons()) && ((pChar->m_NinjaJetpack && pChar->m_FreezeTime == 0) || m_Snap.m_aCharacters[i].m_Cur.m_Weapon != WEAPON_NINJA || m_Snap.m_aCharacters[i].m_Cur.m_Weapon == m_aClients[i].m_Predicted.m_ActiveWeapon))
 				{
 					m_aClients[i].m_RenderCur.m_AttackTick = pChar->GetAttackTick();
 					if(m_Snap.m_aCharacters[i].m_Cur.m_Weapon != WEAPON_NINJA && !(pChar->m_NinjaJetpack && pChar->Core()->m_ActiveWeapon == WEAPON_GUN))
 						m_aClients[i].m_RenderCur.m_Weapon = m_aClients[i].m_Predicted.m_ActiveWeapon;
+				}
+
+				if(bLagSmooth)
+				{
+					const vec2 Smoothed = LagSmoothPos(i, Pos, &m_aClients[i].m_Predicted);
+					const vec2 Delta = Smoothed - Pos;
+					const int DX = round_to_int(Delta.x);
+					const int DY = round_to_int(Delta.y);
+					if(DX != 0 || DY != 0)
+					{
+						m_aClients[i].m_RenderCur.m_X += DX;
+						m_aClients[i].m_RenderCur.m_Y += DY;
+						m_aClients[i].m_RenderPrev.m_X += DX;
+						m_aClients[i].m_RenderPrev.m_Y += DY;
+					}
+					Pos = Smoothed;
+				}
+				else
+				{
+					m_aClients[i].m_LagInit = false;
 				}
 			}
 			else
@@ -4852,6 +4890,99 @@ vec2 CGameClient::GetFastInputPos(int ClientId)
 	}
 
 	return Pos;
+}
+
+vec2 CGameClient::GetFusionPos(int ClientId)
+{
+	const float PredIntraTick = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+	const vec2 Ahead = GetFastInputPos(ClientId);
+	const vec2 Regular = mix(m_aClients[ClientId].m_PrevRegularPredicted.m_Pos, m_aClients[ClientId].m_RegularPredicted.m_Pos, PredIntraTick);
+
+
+	const float Dt = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.033f);
+	const float Rate = g_Config.m_FcFusionSmoothing <= 0 ? 1000.0f : mix(24.0f, 2.5f, g_Config.m_FcFusionSmoothing / 100.0f);
+
+	const auto Ease = [Rate, Dt](float &fFactor)
+	{
+		fFactor = fFactor + Rate * Dt >= 1.0f ? 1.0f : fFactor + Rate * Dt;
+	};
+
+	Ease(m_aClients[ClientId].m_FusionLeadX);
+	Ease(m_aClients[ClientId].m_FusionLeadY);
+
+	return vec2(mix(Regular.x, Ahead.x, m_aClients[ClientId].m_FusionLeadX), mix(Regular.y, Ahead.y, m_aClients[ClientId].m_FusionLeadY));
+}
+
+void CGameClient::UpdateLagStall()
+{
+	const int64_t Now = time_get();
+	const int Tick = Client()->GameTick(g_Config.m_ClDummy);
+
+	m_LagResumeJustHappened = false;
+
+	if(Tick != m_LagLastTick)
+	{
+		if(m_LagStalled)
+			m_LagResumeJustHappened = true;
+		m_LagStalled = false;
+		m_LagLastTick = Tick;
+		m_LagLastTickTime = Now;
+	}
+	else
+	{
+		const int64_t StallTime = (int64_t)g_Config.m_FcLagSmoothStall * time_freq() / 1000;
+		if(Now - m_LagLastTickTime > StallTime)
+			m_LagStalled = true;
+	}
+}
+
+vec2 CGameClient::LagSmoothPos(int ClientId, vec2 TargetPos, const CCharacterCore *pCore)
+{
+	CClientData &c = m_aClients[ClientId];
+	const float Dt = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.033f);
+
+	if(!c.m_LagInit)
+	{
+		c.m_LagInit = true;
+		c.m_LagShownPos = TargetPos;
+		c.m_LagEaseActive = false;
+		c.m_LagEaseT = 1.0f;
+		return TargetPos;
+	}
+
+	if(g_Config.m_FcLagSmoothExtrap && m_LagStalled && !c.m_LagEaseActive && distance(TargetPos, c.m_LagShownPos) < 1.0f)
+	{
+		const vec2 Vel = pCore ? pCore->m_Vel : vec2(0.0f, 0.0f);
+		c.m_LagShownPos += Vel * Dt;
+		return c.m_LagShownPos;
+	}
+
+	const float Jump = distance(TargetPos, c.m_LagShownPos);
+	if(!c.m_LagEaseActive && m_LagResumeJustHappened && Jump > (float)g_Config.m_FcLagSmoothThreshold)
+	{
+		c.m_LagEaseFrom = c.m_LagShownPos;
+		c.m_LagEaseActive = true;
+		c.m_LagEaseT = 0.0f;
+	}
+
+	if(c.m_LagEaseActive)
+	{
+		const float Duration = (float)std::max(g_Config.m_FcLagSmoothTime, 1) / 1000.0f;
+		c.m_LagEaseT += Dt / Duration;
+		if(c.m_LagEaseT >= 1.0f)
+		{
+			c.m_LagEaseT = 1.0f;
+			c.m_LagEaseActive = false;
+			c.m_LagShownPos = TargetPos;
+			return TargetPos;
+		}
+		const float K = c.m_LagEaseT * c.m_LagEaseT * (3.0f - 2.0f * c.m_LagEaseT);
+		c.m_LagShownPos = mix(c.m_LagEaseFrom, TargetPos, K);
+		return c.m_LagShownPos;
+	}
+
+	c.m_LagShownPos = TargetPos;
+	return TargetPos;
 }
 vec2 CGameClient::GetFreezePos(int ClientId)
 {

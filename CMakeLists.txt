@@ -2900,6 +2900,8 @@ if(CLIENT)
     components/tclient/lyrics.cpp
     components/tclient/lyrics.h
     components/tclient/menus_assets_editor.cpp
+    components/tclient/menus_modern_ui.cpp
+    components/tclient/menus_modern_ui.h
     components/tclient/menus_tclient.cpp
     components/tclient/r_jelly.cpp
     components/tclient/r_jelly.h
@@ -3221,6 +3223,7 @@ if(CLIENT)
 
   if(TARGET_OS STREQUAL "windows")
     list(APPEND LIBS_CLIENT ole32 advapi32 mmdevapi)
+    list(APPEND LIBS_CLIENT mfplat mfreadwrite mfuuid) # Media Foundation, used to decode video assets
     set(VERSION_EXECUTABLE "${CLIENT_EXECUTABLE}")
     set(VERSION_COMPANY "${CLIENT_EXECUTABLE} Team")
     configure_file("other/versioninfo/versioninfo.rc.in" "client.versioninfo.rc")

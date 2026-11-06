@@ -304,6 +304,8 @@ public:
 	virtual void Move(int x, int y) = 0;
 	virtual bool Resize(int w, int h, int RefreshRate) = 0;
 	virtual void ResizeToScreen() = 0;
+	// Re-centers the OS window on its current display. No-op on backends that do not support it.
+	virtual void CenterWindow() {}
 	virtual void GotResized(int w, int h, int RefreshRate) = 0;
 	virtual void UpdateViewport(int X, int Y, int W, int H, bool ByResize) = 0;
 	virtual bool IsScreenKeyboardShown() = 0;

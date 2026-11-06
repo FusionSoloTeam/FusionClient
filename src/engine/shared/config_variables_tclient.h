@@ -532,7 +532,7 @@ MACRO_CONFIG_INT(TcFinishPredictionSpeedMode, tc_finish_prediction_speed_mode, 1
 MACRO_CONFIG_INT(TcFinishPredictionSmooth, tc_finish_prediction_smooth, 60, 0, 95, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Smoothing of the predicted time (0 = instant, 95 = slow)")
 
 MACRO_CONFIG_INT(TcMuteOthersSounds, tc_mute_others_sounds, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Mute every sound that comes from other players")
-MACRO_CONFIG_INT(TcInputs, tc_inputs, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Input prediction mode (0 = off, 1 = fast, 2 = best)")
+MACRO_CONFIG_INT(TcInputs, tc_inputs, 0, 0, 7, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Input prediction mode (0 = off, 1 = fast, 2 = best, 7 = fusion)")
 MACRO_CONFIG_INT(TcBestInputAmount, tc_best_input_amount, 0, 0, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Best input prediction amount in 0.01 ticks")
 MACRO_CONFIG_INT(TcBestInputSmoothing, tc_best_input_smoothing, 0, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Best input smoothing amount (0-100%)")
 MACRO_CONFIG_INT(TcBestInputLatencyComp, tc_best_input_latency_comp, 0, 0, 50, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Best input latency compensation (0-50%)")

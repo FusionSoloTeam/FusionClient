@@ -14,6 +14,12 @@ MACRO_CONFIG_INT(FcCustomClientsOwn, fc_custom_clients_own, 1, 0, 1, CFGFLAG_CLI
 MACRO_CONFIG_INT(FcCustomClientsColor, fc_custom_clients_color, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tint custom client icons with the tee colors")
 MACRO_CONFIG_INT(FcCustomClientsBestClient, fc_custom_clients_bestclient, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Detect BestClient users via its public user list (contacts an external server)")
 
+MACRO_CONFIG_INT(FcCoord, fc_coord, 3, 0, 3, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show the tee's X-coordinate fraction above nameplates (wall+arrow at .44/.53): 0=none, 1=others, 2=own, 3=all")
+MACRO_CONFIG_INT(FcCoordSize, fc_coord_size, 100, 20, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Size in percent of the coordinate indicator drawn above nameplates")
+
+MACRO_CONFIG_INT(FcCinematicCamEnable, fc_cinematic_cam_enable, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable cinematic ease-in/out of the camera when panning in spectate")
+MACRO_CONFIG_INT(FcCinematicCam, fc_cinematic_cam, 50, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Cinematic ease-in/out of the camera when panning in spectate (0=off, higher=smoother, slower)")
+
 MACRO_CONFIG_INT(FcSkinGradient, fc_skin_gradient, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Animated glowing gradient on tee skins")
 MACRO_CONFIG_COL(FcSkinGradientColor1, fc_skin_gradient_color1, 0xBEA880FF, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Skin gradient color 1")
 MACRO_CONFIG_COL(FcSkinGradientColor2, fc_skin_gradient_color2, 0xCBFFB0FF, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Skin gradient color 2")
@@ -61,3 +67,31 @@ MACRO_CONFIG_INT(FcDeathTrackerMax, fc_death_tracker_max, 32, 1, 128, CFGFLAG_CL
 MACRO_CONFIG_COL(FcDeathTrackerColor, fc_death_tracker_color, 0xE8564FFF, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Color of the death markers");
 
 MACRO_CONFIG_STR(FcDummyGameSkin, fc_dummy_gameskin, 50, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Gameskin used for your own dummy (empty = same as cl_asset_game)");
+
+MACRO_CONFIG_INT(FcModernUi, fc_modern_ui, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Modern UI variant (0 = classic, 1 = dark, 2 = white)")
+MACRO_CONFIG_INT(FcModernUiPanelAlpha, fc_modern_ui_panel_alpha, 65, 10, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Modern UI panel and button translucency in percent")
+MACRO_CONFIG_INT(FcModernUiAnim, fc_modern_ui_anim, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Modern UI animations (hover, split, transitions, startup window)")
+
+MACRO_CONFIG_INT(FcEditorEnvelopeHelp, fc_editor_envelope_help, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Map editor envelopes: quick-start hints, richer tooltips and a live time-scrub preview bar")
+
+MACRO_CONFIG_INT(FcFusionAmount, fc_fusion_amount, 20, 1, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Fusion input: how many milliseconds the tee is predicted ahead")
+MACRO_CONFIG_INT(FcFusionSmoothing, fc_fusion_smoothing, 50, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Fusion input: how slowly the ahead-offset eases in and out (0 = instant, higher = slower)")
+
+MACRO_CONFIG_INT(FcLagSmooth, fc_lag_smooth, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Smooth the own/dummy tee when it teleports after a packet-loss stall instead of snapping to the server position")
+MACRO_CONFIG_INT(FcLagSmoothStall, fc_lag_smooth_stall, 120, 30, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Lag smoothing: how long (ms) without a new game tick before a stall is considered to have happened")
+MACRO_CONFIG_INT(FcLagSmoothTime, fc_lag_smooth_time, 250, 50, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Lag smoothing: how long (ms) to ease the tee from its last shown position to the server position after a stall")
+MACRO_CONFIG_INT(FcLagSmoothThreshold, fc_lag_smooth_threshold, 32, 4, 200, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Lag smoothing: minimum position jump (world units) on stall recovery to treat as a teleport worth smoothing")
+MACRO_CONFIG_INT(FcLagSmoothExtrap, fc_lag_smooth_extrap, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Lag smoothing: while stalled and the tee has frozen, glide it forward on its last velocity")
+
+MACRO_CONFIG_INT(FcCrosshair, fc_crosshair, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Draw a dynamic crosshair at your aim point")
+MACRO_CONFIG_INT(FcCrosshairShape, fc_crosshair_shape, 1, 0, 7, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Dynamic crosshair shape (0 = ring, 1 = cross, 2 = X, 3 = reticle, 4 = square, 5 = diamond, 6 = triangle, 7 = dot)")
+MACRO_CONFIG_INT(FcCrosshairFilled, fc_crosshair_filled, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Fill the polygon crosshair shapes (ring, square, diamond, triangle) solid instead of outlining them")
+MACRO_CONFIG_COL(FcCrosshairColor, fc_crosshair_color, 0xFFFFFFFF, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Dynamic crosshair color")
+MACRO_CONFIG_INT(FcCrosshairSize, fc_crosshair_size, 80, 8, 600, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Dynamic crosshair size (world units, your tee is ~64)")
+MACRO_CONFIG_INT(FcCrosshairThickness, fc_crosshair_thickness, 8, 1, 80, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Dynamic crosshair line thickness (world units)")
+MACRO_CONFIG_INT(FcCrosshairGap, fc_crosshair_gap, 16, 0, 200, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Dynamic crosshair center gap (world units)")
+MACRO_CONFIG_INT(FcCrosshairRotate, fc_crosshair_rotate, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Rotate the dynamic crosshair with your tee speed")
+MACRO_CONFIG_INT(FcCrosshairRotateSpeed, fc_crosshair_rotate_speed, 200, 0, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Dynamic crosshair rotation speed as a percentage of tee speed")
+MACRO_CONFIG_INT(FcCrosshairPulse, fc_crosshair_pulse, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Pulse the dynamic crosshair to system audio (like tile outline pulsation)")
+MACRO_CONFIG_INT(FcCrosshairPulseStrength, fc_crosshair_pulse_strength, 50, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Dynamic crosshair pulse strength")
+MACRO_CONFIG_INT(FcCrosshairHideDefault, fc_crosshair_hide_default, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Hide the default weapon cursor sprite while the dynamic crosshair is on")

@@ -105,6 +105,9 @@ public:
 	bool InfoTaskDone() { return m_pTClientInfoTask && m_pTClientInfoTask->State() == EHttpState::DONE; }
 	bool m_FetchedTClientInfo = false;
 	char m_aVersionStr[10] = "0";
+	char m_aReleaseTag[64] = {0};
+	char m_aReleaseNotesBody[8192] = {0};
+	bool ReleaseNotesAvailable() const { return m_aReleaseNotesBody[0] != '\0'; }
 
 	CUIRect m_InfoOverlayRect{};
 

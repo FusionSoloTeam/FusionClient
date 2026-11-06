@@ -26,6 +26,9 @@
 #include <game/client/components/scoreboard.h>
 #include <game/client/components/hud_layout.h>
 #include <game/client/components/tclient/gradient.h>
+#include <game/client/components/tclient/outlines.h>
+#include <game/client/components/tclient/system_audio.h>
+#include <game/client/components/tclient/fx/fgf_glow.h>
 #include <game/client/gameclient.h>
 #include <game/client/prediction/entities/character.h>
 #include <game/layers.h>
@@ -985,8 +988,134 @@ void CHud::RenderCursor()
 		Graphics()->SetColor(1.0f, 1.0f, 1.0f, CursorAlpha);
 		Graphics()->RenderQuadContainerAsSprite(m_HudQuadContainerIndex, m_aCursorOffset[CurWeapon], Pos.x, Pos.y, CursorScale, CursorScale);
 	};
-	GameClient()->m_FgfMotionBlur.RenderCrosshair(Center, TargetPos, Alpha, Scale, DrawCursor);
+	if(!(g_Config.m_FcCrosshair && g_Config.m_FcCrosshairHideDefault))
+		GameClient()->m_FgfMotionBlur.RenderCrosshair(Center, TargetPos, Alpha, Scale, DrawCursor);
 }
+
+void CHud::RenderDynamicCrosshair()
+{
+	if(!g_Config.m_FcCrosshair)
+		return;
+	if(!GameClient()->m_Snap.m_pLocalCharacter)
+		return;
+
+	const int ActiveId = GameClient()->m_aLocalIds[g_Config.m_ClDummy];
+	if(ActiveId < 0 || ActiveId >= MAX_CLIENTS)
+		return;
+
+	const vec2 Center = GameClient()->m_Camera.m_Center;
+	const float Zoom = std::max(GameClient()->m_Camera.m_RenderZoom, 0.01f);
+	const float Aspect = Graphics()->WorldAspect();
+
+	const vec2 AimPos = GameClient()->m_Controls.m_aTargetPos[g_Config.m_ClDummy];
+	const CScreenRect PrevScreen = Graphics()->GetScreen();
+	const CScreenRect MapRect = Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0.0f, 0.0f, Aspect, 1.0f);
+	Graphics()->MapScreen(MapRect);
+	const float ZoomScale = 1.0f / Zoom;
+
+	if(g_Config.m_FcCrosshairRotate)
+	{
+		const float Speed = length(GameClient()->m_aClients[ActiveId].m_Predicted.m_Vel);
+		const float Dt = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.033f);
+		const float Spin = Speed * (g_Config.m_FcCrosshairRotateSpeed / 100.0f) * 0.02f;
+		m_CrosshairAngle = std::fmod(m_CrosshairAngle + Spin * Dt, 2.0f * pi);
+	}
+	const float Rotation = m_CrosshairAngle;
+
+	float Pulse = 0.0f;
+	if(g_Config.m_FcCrosshairPulse)
+		Pulse = GameClient()->m_Outlines.SystemAudio().Level() * (g_Config.m_FcCrosshairPulseStrength / 100.0f);
+
+	const float Size = (float)g_Config.m_FcCrosshairSize * (1.0f + Pulse) * ZoomScale;
+	const float Thickness = std::max(0.5f, (float)g_Config.m_FcCrosshairThickness * (1.0f + Pulse * 0.5f)) * ZoomScale;
+	const float Gap = (float)g_Config.m_FcCrosshairGap * ZoomScale;
+	const ColorRGBA Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_FcCrosshairColor, true));
+
+	const auto Bar = [&](vec2 A, vec2 B, float W) {
+		const vec2 Delta = B - A;
+		const float Len = length(Delta);
+		if(Len < 0.001f)
+			return;
+		const vec2 Dir = Delta / Len;
+		const vec2 Side(-Dir.y, Dir.x);
+		const vec2 Half = Side * (W * 0.5f);
+		const IGraphics::CFreeformItem Item(A + Half, B + Half, A - Half, B - Half);
+		Graphics()->QuadsDrawFreeform(&Item, 1);
+	};
+	const auto Arm = [&](float Angle, float R) {
+		Bar(AimPos + direction(Angle) * Gap, AimPos + direction(Angle) * R, Thickness);
+	};
+	const auto Polygon = [&](int Num, float R, float AngleOffset) {
+		vec2 aVerts[32];
+		if(Num > 32)
+			Num = 32;
+		for(int i = 0; i < Num; i++)
+			aVerts[i] = AimPos + direction(AngleOffset + i * (2.0f * pi / Num)) * R;
+		for(int i = 0; i < Num; i++)
+			Bar(aVerts[i], aVerts[(i + 1) % Num], Thickness);
+	};
+	const auto FillPoly = [&](int Num, float R, float AngleOffset) {
+		vec2 aVerts[32];
+		if(Num > 32)
+			Num = 32;
+		for(int i = 0; i < Num; i++)
+			aVerts[i] = AimPos + direction(AngleOffset + i * (2.0f * pi / Num)) * R;
+		for(int i = 0; i < Num; i++)
+		{
+			const IGraphics::CFreeformItem Item(AimPos, AimPos, aVerts[i], aVerts[(i + 1) % Num]);
+			Graphics()->QuadsDrawFreeform(&Item, 1);
+		}
+	};
+	const auto ShapePoly = [&](int Num, float R, float AngleOffset) {
+		if(g_Config.m_FcCrosshairFilled)
+			FillPoly(Num, R, AngleOffset);
+		else
+			Polygon(Num, R, AngleOffset);
+	};
+
+	Graphics()->TextureClear();
+	Graphics()->QuadsBegin();
+	Graphics()->SetColor(Color.r, Color.g, Color.b, Color.a);
+
+	switch(g_Config.m_FcCrosshairShape)
+	{
+	case 0: // ring
+		ShapePoly(16, Size, Rotation);
+		break;
+	case 1: // cross
+		for(int i = 0; i < 4; i++)
+			Arm(Rotation + i * (pi / 2.0f), Size);
+		break;
+	case 2: // X
+		for(int i = 0; i < 4; i++)
+			Arm(Rotation + pi / 4.0f + i * (pi / 2.0f), Size);
+		break;
+	case 3: // reticle
+		for(int i = 0; i < 4; i++)
+			Arm(Rotation + i * (pi / 2.0f), Size);
+		for(int i = 0; i < 4; i++)
+			Arm(Rotation + pi / 4.0f + i * (pi / 2.0f), Size * 0.5f);
+		break;
+	case 4: // square
+		ShapePoly(4, Size, Rotation + pi / 4.0f);
+		break;
+	case 5: // diamond
+		ShapePoly(4, Size, Rotation);
+		break;
+	case 6: // triangle
+		ShapePoly(3, Size, Rotation - pi / 2.0f);
+		break;
+	case 7: // dot
+		Graphics()->DrawCircle(AimPos.x, AimPos.y, std::max(Thickness * 1.5f, Size * 0.15f), 24);
+		break;
+	default:
+		break;
+	}
+
+	Graphics()->QuadsEnd();
+	Graphics()->MapScreen(PrevScreen);
+}
+
 void CHud::PrepareAmmoHealthAndArmorQuads()
 {
 	float x = 5;
@@ -2923,6 +3052,7 @@ void CHud::OnRender()
 			RenderRecord();
 	}
 	RenderCursor();
+	RenderDynamicCrosshair();
 }
 
 void CHud::OnMessage(int MsgType, void *pRawMsg)

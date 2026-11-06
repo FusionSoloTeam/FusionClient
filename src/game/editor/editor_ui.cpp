@@ -1,9 +1,48 @@
 #include <base/color.h>
 #include <base/math.h>
 
+#include <engine/shared/config.h>
+
 #include <game/client/ui.h>
 #include <game/editor/editor.h>
 #include <game/editor/editor_ui.h>
+
+#include <algorithm>
+
+bool CEditor::ModernUiActive()
+{
+	return g_Config.m_FcModernUi != 0;
+}
+
+static ColorRGBA EditorUiPick(const ColorRGBA &Dark, const ColorRGBA &White)
+{
+	return g_Config.m_FcModernUi == 2 ? White : Dark;
+}
+
+ColorRGBA CEditor::ModernPanelBg() { return EditorUiPick(ColorRGBA(0.12f, 0.12f, 0.15f, 1.0f), ColorRGBA(0.90f, 0.91f, 0.93f, 1.0f)); }
+ColorRGBA CEditor::ModernMenuBarBg() { return EditorUiPick(ColorRGBA(0.09f, 0.09f, 0.115f, 1.0f), ColorRGBA(0.85f, 0.865f, 0.9f, 1.0f)); }
+ColorRGBA CEditor::ModernButtonBg() { return EditorUiPick(ColorRGBA(0.18f, 0.18f, 0.22f, 1.0f), ColorRGBA(0.955f, 0.96f, 0.975f, 1.0f)); }
+ColorRGBA CEditor::ModernButtonHover() { return EditorUiPick(ColorRGBA(0.26f, 0.26f, 0.31f, 1.0f), ColorRGBA(0.8f, 0.82f, 0.86f, 1.0f)); }
+ColorRGBA CEditor::ModernText() { return EditorUiPick(ColorRGBA(0.92f, 0.93f, 0.95f, 1.0f), ColorRGBA(0.1f, 0.105f, 0.13f, 1.0f)); }
+ColorRGBA CEditor::ModernAccent() { return EditorUiPick(ColorRGBA(0.18f, 0.78f, 0.62f, 1.0f), ColorRGBA(0.1f, 0.6f, 0.48f, 1.0f)); }
+float CEditor::ModernRounding() { return g_Config.m_FcModernUi != 0 ? 4.0f : 3.0f; }
+float CEditor::ModernRoundingFor(const CUIRect *pRect)
+{
+	const float Rounding = ModernRounding();
+	if(g_Config.m_FcModernUi == 0 || !pRect)
+		return Rounding;
+	return std::min(Rounding, std::min(pRect->w, pRect->h) * 0.2f);
+}
+
+void CEditor::RenderEditorPanelBg(const CUIRect &View, const ColorRGBA &Color) const
+{
+	Graphics()->TextureClear();
+	Graphics()->QuadsBegin();
+	Graphics()->SetColor(Color.r, Color.g, Color.b, Color.a);
+	IGraphics::CQuadItem QuadItem(View.x, View.y, View.w, View.h);
+	Graphics()->QuadsDrawTL(&QuadItem, 1);
+	Graphics()->QuadsEnd();
+}
 
 void CEditor::UpdateTooltip(const void *pId, const CUIRect *pRect, const char *pToolTip)
 {
@@ -16,7 +55,7 @@ void CEditor::UpdateTooltip(const void *pId, const CUIRect *pRect, const char *p
 ColorRGBA CEditor::GetButtonColor(const void *pId, int Checked)
 {
 	if(Checked < 0)
-		return ColorRGBA(0, 0, 0, 0.5f);
+		return ModernUiActive() ? ModernPanelBg() : ColorRGBA(0, 0, 0, 0.5f);
 
 	switch(Checked)
 	{
@@ -27,6 +66,8 @@ ColorRGBA CEditor::GetButtonColor(const void *pId, int Checked)
 	case 8: // invisible
 		return ColorRGBA(0, 0, 0, 0);
 	case 7: // selected + game layers
+		if(ModernUiActive())
+			return ModernAccent();
 		if(Ui()->HotItem() == pId)
 			return ColorRGBA(1, 0, 0, 0.4f);
 		return ColorRGBA(1, 0, 0, 0.2f);
@@ -57,11 +98,15 @@ ColorRGBA CEditor::GetButtonColor(const void *pId, int Checked)
 		return ColorRGBA(0, 0, 1, 0.5f);
 
 	case 1: // selected
+		if(ModernUiActive())
+			return ModernAccent();
 		if(Ui()->HotItem() == pId)
 			return ColorRGBA(1, 0, 0, 0.75f);
 		return ColorRGBA(1, 0, 0, 0.5f);
 
 	default: // regular
+		if(ModernUiActive())
+			return Ui()->HotItem() == pId ? ModernButtonHover() : ModernButtonBg();
 		if(Ui()->HotItem() == pId)
 			return ColorRGBA(1, 1, 1, 0.75f);
 		return ColorRGBA(1, 1, 1, 0.5f);
@@ -82,7 +127,7 @@ int CEditor::DoButtonLogic(const void *pId, int Checked, const CUIRect *pRect, i
 
 int CEditor::DoButton_Editor(const void *pId, const char *pText, int Checked, const CUIRect *pRect, int Flags, const char *pToolTip)
 {
-	pRect->Draw(GetButtonColor(pId, Checked), IGraphics::CORNER_ALL, 3.0f);
+	pRect->Draw(GetButtonColor(pId, Checked), IGraphics::CORNER_ALL, ModernRoundingFor(pRect));
 	CUIRect NewRect = *pRect;
 	Ui()->DoLabel(&NewRect, pText, 10.0f, TEXTALIGN_MC);
 	Checked %= 2;
@@ -95,7 +140,7 @@ int CEditor::DoButton_Env(const void *pId, const char *pText, int Checked, const
 	float Alpha = Ui()->HotItem() == pId ? 1.0f : 0.75f;
 	ColorRGBA Color = ColorRGBA(BaseColor.r * Bright, BaseColor.g * Bright, BaseColor.b * Bright, Alpha);
 
-	pRect->Draw(Color, Corners, 3.0f);
+	pRect->Draw(Color, Corners, ModernRoundingFor(pRect));
 	Ui()->DoLabel(pRect, pText, 10.0f, TEXTALIGN_MC);
 	Checked %= 2;
 	return DoButtonLogic(pId, Checked, pRect, BUTTONFLAG_LEFT, pToolTip);
@@ -103,7 +148,7 @@ int CEditor::DoButton_Env(const void *pId, const char *pText, int Checked, const
 
 int CEditor::DoButton_Ex(const void *pId, const char *pText, int Checked, const CUIRect *pRect, int Flags, const char *pToolTip, int Corners, float FontSize, int Align)
 {
-	pRect->Draw(GetButtonColor(pId, Checked), Corners, 3.0f);
+	pRect->Draw(GetButtonColor(pId, Checked), Corners, ModernRoundingFor(pRect));
 
 	CUIRect Rect;
 	pRect->VMargin(((Align & TEXTALIGN_MASK_HORIZONTAL) == TEXTALIGN_CENTER) ? 1.0f : 5.0f, &Rect);
@@ -118,7 +163,7 @@ int CEditor::DoButton_Ex(const void *pId, const char *pText, int Checked, const 
 
 int CEditor::DoButton_FontIcon(const void *pId, const char *pText, int Checked, const CUIRect *pRect, int Flags, const char *pToolTip, int Corners, float FontSize)
 {
-	pRect->Draw(GetButtonColor(pId, Checked), Corners, 3.0f);
+	pRect->Draw(GetButtonColor(pId, Checked), Corners, ModernRoundingFor(pRect));
 
 	TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
 	TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING);
@@ -132,7 +177,7 @@ int CEditor::DoButton_FontIcon(const void *pId, const char *pText, int Checked, 
 int CEditor::DoButton_MenuItem(const void *pId, const char *pText, int Checked, const CUIRect *pRect, int Flags, const char *pToolTip)
 {
 	if((Ui()->HotItem() == pId && Checked == 0) || Checked > 0)
-		pRect->Draw(GetButtonColor(pId, Checked), IGraphics::CORNER_ALL, 3.0f);
+		pRect->Draw(GetButtonColor(pId, Checked), IGraphics::CORNER_ALL, ModernRoundingFor(pRect));
 
 	CUIRect Rect;
 	pRect->VMargin(5.0f, &Rect);
@@ -151,7 +196,7 @@ int CEditor::DoButton_MenuItem(const void *pId, const char *pText, int Checked, 
 
 int CEditor::DoButton_DraggableEx(const void *pId, const char *pText, int Checked, const CUIRect *pRect, bool *pClicked, bool *pAbrupted, int Flags, const char *pToolTip, int Corners, float FontSize)
 {
-	pRect->Draw(GetButtonColor(pId, Checked), Corners, 3.0f);
+	pRect->Draw(GetButtonColor(pId, Checked), Corners, ModernRoundingFor(pRect));
 
 	CUIRect Rect;
 	pRect->VMargin(pRect->w > 20.0f ? 5.0f : 0.0f, &Rect);
@@ -294,7 +339,7 @@ SEditResult<int> CEditor::UiDoValueSelector(const void *pId, CUIRect *pRect, con
 			str_format(aBuf, sizeof(aBuf), "#%06X", Current);
 		else
 			str_format(aBuf, sizeof(aBuf), "%d", Current);
-		pRect->Draw(pColor ? *pColor : GetButtonColor(pId, 0), Corners, 3.0f);
+		pRect->Draw(pColor ? *pColor : GetButtonColor(pId, 0), Corners, ModernRoundingFor(pRect));
 		Ui()->DoLabel(pRect, aBuf, 10, TEXTALIGN_MC);
 	}
 

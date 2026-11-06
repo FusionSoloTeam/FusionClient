@@ -440,6 +440,11 @@ public:
 
 	vec2 m_LocalCharacterPos;
 
+	int m_LagLastTick = -1;
+	int64_t m_LagLastTickTime = 0;
+	bool m_LagStalled = false;
+	bool m_LagResumeJustHappened = false;
+
 	/**
 	 * Our prediction for the local character at tick
 	 * `IClient::PredGameTick() - 1`.
@@ -602,6 +607,17 @@ public:
 
 		// TClient
 		CCharacterCore m_RegularPredicted;
+
+		// shitty fusion input <<3
+		CCharacterCore m_PrevRegularPredicted;
+		float m_FusionLeadX = 0.0f;
+		float m_FusionLeadY = 0.0f;
+
+		bool m_LagInit = false;
+		vec2 m_LagShownPos = vec2(0.0f, 0.0f);
+		vec2 m_LagEaseFrom = vec2(0.0f, 0.0f);
+		float m_LagEaseT = 1.0f;
+		bool m_LagEaseActive = false;
 
 		// TClient
 		vec2 m_ImprovedPredPos = vec2(0, 0);
@@ -1066,6 +1082,10 @@ public:
 	bool AntiPingInteractionFilter() const;
 	vec2 GetFreezePos(int ClientId);
 	vec2 GetFastInputPos(int ClientId);
+	vec2 GetFusionPos(int ClientId);
+
+	void UpdateLagStall();
+	vec2 LagSmoothPos(int ClientId, vec2 TargetPos, const CCharacterCore *pCore);
 
 	int m_MultiViewTeam;
 	float m_MultiViewPersonalZoom;

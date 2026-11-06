@@ -102,6 +102,11 @@ CMenus::CMenus()
 	m_PasswordInput.SetHidden(true);
 }
 
+static ColorRGBA ModernMix(const ColorRGBA &A, const ColorRGBA &B, float T)
+{
+	return ColorRGBA(A.r + (B.r - A.r) * T, A.g + (B.g - A.g) * T, A.b + (B.b - A.b) * T, A.a + (B.a - A.a) * T);
+}
+
 int CMenus::DoButton_Toggle(const void *pId, int Checked, const CUIRect *pRect, bool Active, const unsigned Flags)
 {
 	Graphics()->TextureSet(g_pData->m_aImages[IMAGE_GUIBUTTONS].m_Id);
@@ -126,12 +131,41 @@ int CMenus::DoButton_Menu(CButtonContainer *pButtonContainer, const char *pText,
 {
 	CUIRect Text = *pRect;
 
-	if(Checked)
-		Color = ColorRGBA(0.6f, 0.6f, 0.6f, 0.5f);
-	else // TClient, why was this not here? ig they never use "checked" anywhere important
-		Color.a *= Ui()->ButtonColorMul(pButtonContainer);
+	const bool bModern = CMenusModern::Enabled();
+	ColorRGBA PrevTextColor = TextRender()->DefaultTextColor();
 
-	pRect->Draw(Color, Corners, Rounding);
+	if(bModern)
+	{
+		const SModernUiPalette &Pal = CMenusModern::Palette();
+		const float Dt = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.1f);
+		const bool bHot = Ui()->HotItem() == pButtonContainer;
+		const bool bActive = Ui()->ActiveItem() == pButtonContainer;
+		const float H = CMenusModern::HoverEase(pButtonContainer, bHot, Dt);
+
+		ColorRGBA Fill = Checked ? Pal.m_Accent : Pal.m_Button;
+		Fill = ModernMix(Fill, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f), 0.08f * H);
+		if(bActive)
+			Fill = ModernMix(Fill, ColorRGBA(0.0f, 0.0f, 0.0f, 1.0f), 0.14f);
+		Fill.a = 1.0f;
+
+		ColorRGBA Border = ModernMix(Fill, Pal.m_Text, 0.12f);
+		Border.a = 0.30f + 0.25f * H;
+		pRect->Draw(Border, Corners, Rounding);
+		CUIRect Inner;
+		pRect->Margin(1.0f, &Inner);
+		Inner.Draw(Fill, Corners, maximum(Rounding - 1.0f, 0.0f));
+
+		TextRender()->TextColor(ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f));
+	}
+	else
+	{
+		if(Checked)
+			Color = ColorRGBA(0.6f, 0.6f, 0.6f, 0.5f);
+		else // TClient, why was this not here? ig they never use "checked" anywhere important
+			Color.a *= Ui()->ButtonColorMul(pButtonContainer);
+
+		pRect->Draw(Color, Corners, Rounding);
+	}
 
 	if(pImageName)
 	{
@@ -156,6 +190,8 @@ int CMenus::DoButton_Menu(CButtonContainer *pButtonContainer, const char *pText,
 	Text.HMargin(pRect->h >= 20.0f ? 2.0f : 1.0f, &Text);
 	Text.HMargin((Text.h * FontFactor) / 2.0f, &Text);
 	Ui()->DoLabel(&Text, pText, Text.h * CUi::ms_FontmodHeight, TEXTALIGN_MC);
+	if(bModern)
+		TextRender()->TextColor(PrevTextColor);
 
 	return Ui()->DoButtonLogic(pButtonContainer, Checked, pRect, Flags);
 }
@@ -287,9 +323,36 @@ int CMenus::DoButton_CheckBox_Common(const void *pId, const char *pText, const c
 	Label.VSplitLeft(5.0f, nullptr, &Label);
 
 	Box.Margin(2.0f, &Box);
-	Box.Draw(ColorRGBA(1, 1, 1, 0.25f * Ui()->ButtonColorMul(pId)), IGraphics::CORNER_ALL, 3.0f);
 
+	const bool bModern = CMenusModern::Enabled();
+	const SModernUiPalette &Pal = CMenusModern::Palette();
 	const bool Checkable = *pBoxText == 'X';
+	const ColorRGBA PrevTextColor = TextRender()->DefaultTextColor();
+
+	if(bModern)
+	{
+		const float Dt = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.1f);
+		const float H = CMenusModern::HoverEase(pId, Ui()->HotItem() == pId, Dt);
+
+		ColorRGBA Fill = Checkable ? Pal.m_Accent : Pal.m_Button;
+		Fill = ModernMix(Fill, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f), 0.08f * H);
+		Fill.a = 1.0f;
+
+		ColorRGBA Border = ModernMix(Fill, Pal.m_Text, 0.12f);
+		Border.a = 0.30f + 0.25f * H;
+		Box.Draw(Border, IGraphics::CORNER_ALL, 4.0f);
+		CUIRect Inner;
+		Box.Margin(1.0f, &Inner);
+		Inner.Draw(Fill, IGraphics::CORNER_ALL, 3.0f);
+	}
+	else
+	{
+		Box.Draw(ColorRGBA(1, 1, 1, 0.25f * Ui()->ButtonColorMul(pId)), IGraphics::CORNER_ALL, 3.0f);
+	}
+
+	if(bModern)
+		TextRender()->TextColor(ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f));
+
 	if(Checkable)
 	{
 		TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT);
@@ -303,7 +366,11 @@ int CMenus::DoButton_CheckBox_Common(const void *pId, const char *pText, const c
 	}
 
 	TextRender()->SetRenderFlags(0);
+	if(bModern)
+		TextRender()->TextColor(ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f));
 	Ui()->DoLabel(&Label, pText, Box.h * CUi::ms_FontmodHeight, TEXTALIGN_ML);
+	if(bModern)
+		TextRender()->TextColor(PrevTextColor);
 
 	return Ui()->DoButtonLogic(pId, 0, pRect, Flags);
 }
@@ -383,14 +450,28 @@ ColorHSLA CMenus::DoButton_ColorPicker(const CUIRect *pRect, unsigned int *pHsla
 {
 	ColorHSLA HslaColor = ColorHSLA(*pHslaColor, Alpha);
 
-	ColorRGBA Outline = ColorRGBA(1.0f, 1.0f, 1.0f, 0.25f);
-	Outline.a *= Ui()->ButtonColorMul(pHslaColor);
+	const bool bModern = CMenusModern::Enabled();
+	const float Rounding = bModern ? 6.0f : 4.0f;
+	ColorRGBA Outline;
+	if(bModern)
+	{
+		const SModernUiPalette &Pal = CMenusModern::Palette();
+		const float Dt = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.1f);
+		const float H = CMenusModern::HoverEase(pHslaColor, Ui()->HotItem() == pHslaColor, Dt);
+		Outline = Pal.m_Text;
+		Outline.a = 0.30f + 0.35f * H;
+	}
+	else
+	{
+		Outline = ColorRGBA(1.0f, 1.0f, 1.0f, 0.25f);
+		Outline.a *= Ui()->ButtonColorMul(pHslaColor);
+	}
 
 	CUIRect Rect;
 	pRect->Margin(3.0f, &Rect);
 
-	pRect->Draw(Outline, IGraphics::CORNER_ALL, 4.0f);
-	Rect.Draw(color_cast<ColorRGBA>(HslaColor), IGraphics::CORNER_ALL, 4.0f);
+	pRect->Draw(Outline, IGraphics::CORNER_ALL, Rounding);
+	Rect.Draw(color_cast<ColorRGBA>(HslaColor), IGraphics::CORNER_ALL, Rounding - 1.0f);
 
 	if(Ui()->DoButtonLogic(pHslaColor, 0, pRect, BUTTONFLAG_LEFT))
 	{
@@ -690,7 +771,12 @@ void CMenus::RenderMenubar(CUIRect Box, IClient::EClientState ClientState)
 	if(NewPage != -1)
 	{
 		if(ClientState == IClient::STATE_OFFLINE)
-			SetMenuPage(NewPage);
+		{
+			if(CMenusModern::Enabled() && g_Config.m_FcModernUiAnim && NewPage != m_MenuPage)
+				m_MenusModern.StartFlash(NewPage);
+			else
+				SetMenuPage(NewPage);
+		}
 		else
 			m_GamePage = NewPage;
 	}
@@ -814,6 +900,7 @@ void CMenus::OnInterfacesInit(CGameClient *pClient)
 	m_MenusIngameTouchControls.OnInterfacesInit(pClient);
 	m_MenusSettingsControls.OnInterfacesInit(pClient);
 	m_MenusStart.OnInterfacesInit(pClient);
+	m_MenusModern.OnInterfacesInit(pClient);
 	m_CommunityIcons.OnInterfacesInit(pClient);
 }
 
@@ -1036,7 +1123,11 @@ void CMenus::Render()
 	}
 	else
 	{
-		if(!GameClient()->m_MenuBackground.Render())
+		if(CMenusModern::Enabled())
+		{
+			m_MenusModern.RenderBackground();
+		}
+		else if(!GameClient()->m_MenuBackground.Render())
 		{
 			RenderBackground();
 		}
@@ -1073,7 +1164,10 @@ void CMenus::Render()
 		}
 		else if(m_ShowStart)
 		{
-			m_MenusStart.RenderStartMenu(Screen);
+			if(CMenusModern::Enabled())
+				m_MenusModern.RenderStartMenu(Screen);
+			else
+				m_MenusStart.RenderStartMenu(Screen);
 		}
 		else
 		{
@@ -1175,6 +1269,9 @@ void CMenus::Render()
 
 	Ui()->RenderPopupMenus();
 
+	if(CMenusModern::Enabled())
+		m_MenusModern.RenderOverlay();
+
 	// Prevent UI elements from being hovered while a key reader is active
 	if(GameClient()->m_KeyBinder.IsActive())
 	{
@@ -1184,7 +1281,10 @@ void CMenus::Render()
 	// Handle this escape hotkey after popup menus
 	if(!m_ShowStart && ClientState == IClient::STATE_OFFLINE && Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
 	{
-		m_ShowStart = true;
+		if(CMenusModern::Enabled() && g_Config.m_FcModernUiAnim)
+			m_MenusModern.StartFlashToMenu();
+		else
+			m_ShowStart = true;
 	}
 }
 
@@ -2432,6 +2532,19 @@ void CMenus::OnRender()
 	UpdateColors();
 
 	Ui()->Update();
+
+	if(CMenusModern::Enabled())
+	{
+		m_MenusModern.MaybeBeginStartup();
+		m_MenusModern.Update();
+		if(m_MenusModern.StartupActive())
+		{
+			m_MenusModern.RenderStartupOverlay();
+			Ui()->FinishCheck();
+			Ui()->ClearHotkeys();
+			return;
+		}
+	}
 
 	if(IsActive())
 		Ui()->DoBackButton();

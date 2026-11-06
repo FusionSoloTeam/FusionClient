@@ -25,6 +25,20 @@ static const char *const CURVE_TYPE_NAMES_SHORT[] = {"N", "L", "S", "F", "M", "B
 static_assert(std::size(CURVE_TYPE_NAMES) == NUM_CURVETYPES);
 static_assert(std::size(CURVE_TYPE_NAMES_SHORT) == NUM_CURVETYPES);
 
+// lets hope this is useful and someone is gonna find it
+static const char *const ENVELOPE_QUICKSTART =
+	"An envelope animates a value over time.\n"
+	"\n"
+	"1. Create one with 'Color+', 'Pos.+' or 'Sound+' (top right).\n"
+	"2. Double-click the graph to add points, then drag them into place.\n"
+	"3. Right-click a point to pick a curve: step, linear, slow, fast, smooth or bezier.\n"
+	"4. Use the channel buttons (X/Y/R or R/G/B/A) to show or edit one channel at a time.\n"
+	"5. Give it a name, then bind it: select a quad or layer and choose this envelope in its 'Envelope' property.\n"
+	"6. To make freeze using layers just rename your thing to QFr. \n"
+	"7. Press play here (or Ctrl+M) to watch the map, and drag the yellow bar to scrub to a time.\n"
+	"\n"
+	"Tip: hold Ctrl while dragging the time bar for fine control. Press Enter to close.";
+
 static const char *CurveTypeNameShort(int CurveType)
 {
 	if(in_range<int>(CurveType, 0, std::size(CURVE_TYPE_NAMES_SHORT) - 1))
@@ -285,6 +299,41 @@ void CEnvelopeEditor::Render(CUIRect View)
 
 			// Margin on the right side
 			ToolBar.VSplitRight(7.0f, &ToolBar, nullptr);
+		}
+
+		if(g_Config.m_FcEditorEnvelopeHelp)
+		{
+			static const char s_HelpButtonId = 0;
+			static const char s_PreviewButtonId = 0;
+			CUIRect HelpBtn, PlayBtn, TimeLabel;
+
+			ToolBar.VSplitLeft(20.0f, &HelpBtn, &ToolBar);
+			ToolBar.VSplitLeft(3.0f, nullptr, &ToolBar);
+			if(Editor()->DoButton_FontIcon(&s_HelpButtonId, FontIcon::INFO, 0, &HelpBtn, BUTTONFLAG_LEFT, "Show a quick-start guide for using envelopes.", IGraphics::CORNER_ALL, 10.0f) == 1)
+				Editor()->ShowEditorMessage(ENVELOPE_QUICKSTART);
+
+			ToolBar.VSplitLeft(20.0f, &PlayBtn, &ToolBar);
+			ToolBar.VSplitLeft(3.0f, nullptr, &ToolBar);
+			const bool Animating = Map()->m_EnvelopeEvaluator.m_Animate;
+			if(Editor()->DoButton_FontIcon(&s_PreviewButtonId, Animating ? FontIcon::PAUSE : FontIcon::PLAY, Animating, &PlayBtn, BUTTONFLAG_LEFT, "Preview the animation on the map. Tip: press Ctrl+M anywhere.", IGraphics::CORNER_ALL, 10.0f) == 1)
+			{
+				if(Animating)
+				{
+					Map()->m_EnvelopeEvaluator.m_Animate = false;
+				}
+				else
+				{
+					Map()->m_EnvelopeEvaluator.m_AnimateStart = Client()->GlobalTime() - Map()->m_EnvelopeEvaluator.m_AnimateTime;
+					Map()->m_EnvelopeEvaluator.m_Animate = true;
+				}
+			}
+
+			ToolBar.VSplitLeft(44.0f, &TimeLabel, &ToolBar);
+			char aTimeBuf[32];
+			str_format(aTimeBuf, sizeof(aTimeBuf), "%.2fs", Map()->m_EnvelopeEvaluator.m_AnimateTime * Map()->m_EnvelopeEvaluator.m_AnimateSpeed);
+			Ui()->DoLabel(&TimeLabel, aTimeBuf, 10.0f, TEXTALIGN_ML);
+
+			ToolBar.VSplitLeft(8.0f, nullptr, &ToolBar);
 		}
 
 		CUIRect Shifter, Inc, Dec;
@@ -1504,6 +1553,13 @@ void CEnvelopeEditor::Render(CUIRect View)
 				}
 			}
 		}
+
+		if(g_Config.m_FcEditorEnvelopeHelp && pEnvelope->m_vPoints.empty())
+			Ui()->DoLabel(&View, "This envelope has no points yet - double-click anywhere on the graph to add your first one.", 11.0f, TEXTALIGN_MC);
+	}
+	else if(g_Config.m_FcEditorEnvelopeHelp)
+	{
+		Ui()->DoLabel(&View, "No envelopes on this map yet. Use 'Color+', 'Pos.+' or 'Sound+' (top right) to create your first one.", 11.0f, TEXTALIGN_MC);
 	}
 }
 

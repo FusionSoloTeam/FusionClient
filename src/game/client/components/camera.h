@@ -34,6 +34,10 @@ private:
 	vec2 m_SmoothCamStart = vec2(0.0f, 0.0f);
 	bool m_UserZoomActive = false;
 
+	vec2 m_CinematicPos = vec2(0.0f, 0.0f);
+	vec2 m_CinematicVel = vec2(0.0f, 0.0f);
+	bool m_CinematicActive = false;
+
 	int m_PrevSpecId;
 	bool m_WasSpectating;
 

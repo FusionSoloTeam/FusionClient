@@ -526,10 +526,33 @@ void CCamera::OnRender()
 			GameClient()->m_Controls.ClampMousePos();
 			m_CamType = CAMTYPE_SPEC;
 		}
-		m_Center = GameClient()->m_Controls.m_aMousePos[g_Config.m_ClDummy];
+
+		const vec2 RawCenter = GameClient()->m_Controls.m_aMousePos[g_Config.m_ClDummy];
+		if(g_Config.m_FcCinematicCamEnable && g_Config.m_FcCinematicCam > 0)
+		{
+			const float Dt = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.033f);
+			const float Omega = mix(10.0f, 2.0f, g_Config.m_FcCinematicCam / 100.0f);
+			if(!m_CinematicActive)
+			{
+				m_CinematicPos = RawCenter;
+				m_CinematicVel = vec2(0.0f, 0.0f);
+				m_CinematicActive = true;
+			}
+			const vec2 Displacement = m_CinematicPos - RawCenter;
+			const vec2 Accel = Displacement * (-(Omega * Omega)) + m_CinematicVel * (-2.0f * Omega);
+			m_CinematicVel += Accel * Dt;
+			m_CinematicPos += m_CinematicVel * Dt;
+			m_Center = m_CinematicPos;
+		}
+		else
+		{
+			m_CinematicActive = false;
+			m_Center = RawCenter;
+		}
 	}
 	else
 	{
+		m_CinematicActive = false;
 		if(m_CamType != CAMTYPE_PLAYER)
 		{
 			GameClient()->m_Controls.m_aMousePos[g_Config.m_ClDummy] = m_aLastPos[g_Config.m_ClDummy];
@@ -637,6 +660,7 @@ void CCamera::OnReset()
 	m_UserZoomTarget = CCamera::ZoomStepsToValue(g_Config.m_ClDefaultZoom - 10);
 	m_SmoothCamActive = false;
 	m_UserZoomActive = false;
+	m_CinematicActive = false;
 }
 
 void CCamera::ConZoomPlus(IConsole::IResult *pResult, void *pUserData)

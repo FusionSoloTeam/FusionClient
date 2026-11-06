@@ -16,6 +16,7 @@ enum
 	INPUT_MODE_DELTA,
 	INPUT_MODE_F,
 	INPUT_MODE_CLOUD,
+	INPUT_MODE_FUSION = 7,
 };
 
 	float EffectiveOffsetTicks();
@@ -40,6 +41,7 @@ enum
 
 	bool FastInputActive();
 	bool BestMode();
+	bool FusionActive();
 }
 
 #endif

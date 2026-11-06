@@ -19,7 +19,7 @@ public:
 
 	static bool IsVideoFile(const char *pPath);
 
-	static bool Load(const char *pPath, size_t TargetWidth, size_t TargetHeight, size_t MaxFrames, int AlphaMode, CGifAnimation &Animation);
+	static bool Load(const char *pRealPath, size_t TargetWidth, size_t TargetHeight, size_t MaxFrames, int AlphaMode, CGifAnimation &Animation);
 };
 
 #endif

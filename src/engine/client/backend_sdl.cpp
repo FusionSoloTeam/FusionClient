@@ -1596,6 +1596,15 @@ bool CGraphicsBackend_SDL_GL::ResizeWindow(int w, int h, int RefreshRate)
 	return false;
 }
 
+void CGraphicsBackend_SDL_GL::CenterWindow()
+{
+	if(!m_pWindow)
+		return;
+	if(SDL_GetWindowFlags(m_pWindow) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP))
+		return;
+	SDL_SetWindowPosition(m_pWindow, SDL_WINDOWPOS_CENTERED_DISPLAY(g_Config.m_GfxScreen), SDL_WINDOWPOS_CENTERED_DISPLAY(g_Config.m_GfxScreen));
+}
+
 void CGraphicsBackend_SDL_GL::GetViewportSize(int &w, int &h)
 {
 	if(m_BackendType != EBackendType::BACKEND_TYPE_VULKAN)

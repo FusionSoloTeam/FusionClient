@@ -826,7 +826,7 @@ void CEditor::DoToolbarLayers(CUIRect ToolBar)
 		{
 			ToolbarBottom.VSplitLeft(40.0f, &Button, &ToolbarBottom);
 			static int s_FillButton = 0;
-			if(DoButton_Editor(&s_FillButton, "Fill", m_FillEnabled, &Button, BUTTONFLAG_LEFT, "[F] Toggle fill mode: left click fills or outlines the smallest enclosed region with the brush tiles. [Shift+F] Cycle submodes: area only, area + walls, outline.") ||
+			if(DoButton_Editor(&s_FillButton, "Fill", m_FillEnabled, &Button, BUTTONFLAG_LEFT, "[F] Toggle fill mode: left click fills, outlines or replaces the smallest enclosed region with the brush tiles. [Shift+F] Cycle submodes: area only, area + walls, outline, replace.") ||
 				(m_Dialog == DIALOG_NONE && CLineInput::GetActiveInput() == nullptr && Input()->KeyPress(KEY_F) && !ModPressed && !ShiftPressed))
 				m_FillEnabled = !m_FillEnabled;
 
@@ -837,8 +837,10 @@ void CEditor::DoToolbarLayers(CUIRect ToolBar)
 					ShowEditorMessage("Fill mode: area only");
 				else if(m_FillMode == EFillMode::AREA_WALLS)
 					ShowEditorMessage("Fill mode: area + walls");
-				else
+				else if(m_FillMode == EFillMode::OUTLINE)
 					ShowEditorMessage("Fill mode: outline");
+				else
+					ShowEditorMessage("Fill mode: replace");
 			}
 
 			ToolbarBottom.VSplitLeft(5.0f, &Button, &ToolbarBottom);
@@ -4198,6 +4200,41 @@ static std::vector<ivec2> ComputeOutlineCells(CEditorMap *pMap, int StartX, int 
 	return ComputeOutlineWallStroke(pMap, WallX, WallY, SeedX, SeedY);
 }
 
+static std::vector<ivec2> ComputeSimilarRegion(CLayerTiles *pLayer, int StartX, int StartY)
+{
+	std::vector<ivec2> vCells;
+	if(StartX < 0 || StartX >= pLayer->m_Width || StartY < 0 || StartY >= pLayer->m_Height)
+		return vCells;
+
+	constexpr size_t MAX_REPLACE_CELLS = 1 << 19;
+	const CTile Source = pLayer->GetTile(StartX, StartY);
+	std::vector<uint8_t> Visited((size_t)pLayer->m_Width * pLayer->m_Height, 0);
+	std::vector<ivec2> vQueue;
+	Visited[(size_t)StartY * pLayer->m_Width + StartX] = 1;
+	vQueue.push_back(ivec2(StartX, StartY));
+	size_t Head = 0;
+	while(Head < vQueue.size() && vCells.size() < MAX_REPLACE_CELLS)
+	{
+		const ivec2 Cell = vQueue[Head++];
+		vCells.push_back(Cell);
+		const ivec2 aNeighbors[4] = {ivec2(Cell.x - 1, Cell.y), ivec2(Cell.x + 1, Cell.y), ivec2(Cell.x, Cell.y - 1), ivec2(Cell.x, Cell.y + 1)};
+		for(const ivec2 &Neighbor : aNeighbors)
+		{
+			if(Neighbor.x < 0 || Neighbor.x >= pLayer->m_Width || Neighbor.y < 0 || Neighbor.y >= pLayer->m_Height)
+				continue;
+			const size_t Index = (size_t)Neighbor.y * pLayer->m_Width + Neighbor.x;
+			if(Visited[Index])
+				continue;
+			const CTile Tile = pLayer->GetTile(Neighbor.x, Neighbor.y);
+			if(Tile.m_Index != Source.m_Index || Tile.m_Flags != Source.m_Flags)
+				continue;
+			Visited[Index] = 1;
+			vQueue.push_back(Neighbor);
+		}
+	}
+	return vCells;
+}
+
 void CEditor::ApplyFill(vec2 WorldPos)
 {
 	if(m_pBrush->m_vpLayers.empty())
@@ -4205,6 +4242,67 @@ void CEditor::ApplyFill(vec2 WorldPos)
 
 	const int StartX = (int)(WorldPos.x / 32.0f);
 	const int StartY = (int)(WorldPos.y / 32.0f);
+
+	if(m_FillMode == EFillMode::REPLACE)
+	{
+		std::vector<std::shared_ptr<CLayer>> vEditLayers;
+		for(size_t i = 0; i < Map()->m_vSelectedLayers.size(); i++)
+		{
+			std::shared_ptr<CLayer> pLayer = Map()->SelectedLayerType(i, LAYERTYPE_TILES);
+			if(pLayer)
+				vEditLayers.push_back(pLayer);
+		}
+		if(vEditLayers.empty())
+			return;
+
+		bool bAnyReplaced = false;
+		for(size_t k = 0; k < vEditLayers.size(); k++)
+		{
+			std::shared_ptr<CLayer> &pEditLayer = vEditLayers[k];
+			std::shared_ptr<CLayer> &pBrushLayer = m_pBrush->m_vpLayers[k % m_pBrush->m_vpLayers.size()];
+			if(pEditLayer->m_Type != pBrushLayer->m_Type)
+				continue;
+
+			CLayerTiles *pTiles = static_cast<CLayerTiles *>(pEditLayer.get());
+			const CLayerTiles *pBrushTiles = static_cast<const CLayerTiles *>(pBrushLayer.get());
+			if(pTiles->m_Readonly || pBrushTiles->m_Width < 1 || pBrushTiles->m_Height < 1)
+				continue;
+
+			const std::vector<ivec2> vCells = ComputeSimilarRegion(pTiles, StartX, StartY);
+			if(vCells.empty())
+				continue;
+
+			const CTile Replacement = pBrushTiles->GetTile(0, 0);
+			bool bLayerChanged = false;
+			int MinX = vCells[0].x, MinY = vCells[0].y, MaxX = vCells[0].x, MaxY = vCells[0].y;
+			for(const ivec2 &Cell : vCells)
+			{
+				MinX = std::min(MinX, Cell.x);
+				MinY = std::min(MinY, Cell.y);
+				MaxX = std::max(MaxX, Cell.x);
+				MaxY = std::max(MaxY, Cell.y);
+
+				const CTile Current = pTiles->GetTile(Cell.x, Cell.y);
+				if(Current.m_Index == Replacement.m_Index && Current.m_Flags == Replacement.m_Flags)
+					continue;
+				pTiles->SetTile(Cell.x, Cell.y, Replacement);
+				bLayerChanged = true;
+			}
+			if(bLayerChanged)
+			{
+				pTiles->FlagModified(MinX, MinY, MaxX - MinX + 1, MaxY - MinY + 1);
+				bAnyReplaced = true;
+			}
+		}
+
+		if(!bAnyReplaced)
+			return;
+
+		std::shared_ptr<IEditorAction> pAction = std::make_shared<CEditorBrushDrawAction>(Map(), Map()->m_SelectedGroup);
+		if(!pAction->IsEmpty())
+			Map()->m_EditorHistory.RecordAction(pAction);
+		return;
+	}
 
 	std::vector<ivec2> vPaintCells;
 	if(m_FillMode == EFillMode::OUTLINE)
@@ -4605,6 +4703,8 @@ void CEditor::Render()
 	Ui()->MapScreen();
 	m_CursorType = CURSOR_NORMAL;
 
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+
 	float Width = View.w;
 	float Height = View.h;
 
@@ -4621,7 +4721,7 @@ void CEditor::Render()
 	if(m_GuiActive)
 	{
 		View.HSplitTop(16.0f, &MenuBar, &View);
-		View.HSplitTop(53.0f, &ToolBar, &View);
+		View.HSplitTop(ModernUiActive() ? 70.0f : 53.0f, &ToolBar, &View);
 		View.VSplitLeft(m_ToolBoxWidth, &ToolBox, &View);
 
 		View.HSplitBottom(16.0f, &View, &StatusBar);
@@ -4677,17 +4777,33 @@ void CEditor::Render()
 
 	if(m_GuiActive)
 	{
-		RenderBackground(MenuBar, IGraphics::CTextureHandle(), BackgroundScale, 0.0f);
+		if(ModernUiActive())
+			TextRender()->TextColor(ModernText());
+
+		const bool bModern = ModernUiActive();
+		if(bModern)
+			RenderEditorPanelBg(MenuBar, ModernMenuBarBg());
+		else
+			RenderBackground(MenuBar, IGraphics::CTextureHandle(), BackgroundScale, 0.0f);
 		MenuBar.Margin(2.0f, &MenuBar);
 
-		RenderBackground(ToolBox, g_pData->m_aImages[IMAGE_BACKGROUND_NOISE].m_Id, BackgroundScale, BackgroundBrightness);
+		if(bModern)
+			RenderEditorPanelBg(ToolBox, ModernPanelBg());
+		else
+			RenderBackground(ToolBox, g_pData->m_aImages[IMAGE_BACKGROUND_NOISE].m_Id, BackgroundScale, BackgroundBrightness);
 		ToolBox.Margin(2.0f, &ToolBox);
 
-		RenderBackground(ToolBar, g_pData->m_aImages[IMAGE_BACKGROUND_NOISE].m_Id, BackgroundScale, BackgroundBrightness);
+		if(bModern)
+			RenderEditorPanelBg(ToolBar, ModernPanelBg());
+		else
+			RenderBackground(ToolBar, g_pData->m_aImages[IMAGE_BACKGROUND_NOISE].m_Id, BackgroundScale, BackgroundBrightness);
 		ToolBar.Margin(2.0f, &ToolBar);
 		ToolBar.VSplitLeft(m_ToolBoxWidth, &ModeBar, &ToolBar);
 
-		RenderBackground(StatusBar, g_pData->m_aImages[IMAGE_BACKGROUND_NOISE].m_Id, BackgroundScale, BackgroundBrightness);
+		if(bModern)
+			RenderEditorPanelBg(StatusBar, ModernPanelBg());
+		else
+			RenderBackground(StatusBar, g_pData->m_aImages[IMAGE_BACKGROUND_NOISE].m_Id, BackgroundScale, BackgroundBrightness);
 		StatusBar.Margin(2.0f, &StatusBar);
 	}
 
@@ -4788,7 +4904,10 @@ void CEditor::Render()
 		{
 			if(m_ActiveExtraEditor != EXTRAEDITOR_NONE)
 			{
-				RenderBackground(ExtraEditor, g_pData->m_aImages[IMAGE_BACKGROUND_NOISE].m_Id, BackgroundScale, BackgroundBrightness);
+				if(ModernUiActive())
+					RenderEditorPanelBg(ExtraEditor, ModernPanelBg());
+				else
+					RenderBackground(ExtraEditor, g_pData->m_aImages[IMAGE_BACKGROUND_NOISE].m_Id, BackgroundScale, BackgroundBrightness);
 				ExtraEditor.HMargin(2.0f, &ExtraEditor);
 				ExtraEditor.VSplitRight(2.0f, &ExtraEditor, nullptr);
 			}

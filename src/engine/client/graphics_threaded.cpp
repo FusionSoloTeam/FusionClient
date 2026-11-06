@@ -2864,6 +2864,11 @@ void CGraphics_Threaded::ResizeToScreen()
 	g_Config.m_GfxScreenRefreshRate = m_ScreenRefreshRate;
 }
 
+void CGraphics_Threaded::CenterWindow()
+{
+	m_pBackend->CenterWindow();
+}
+
 void CGraphics_Threaded::GotResized(int w, int h, int RefreshRate)
 {
 #if defined(CONF_VIDEORECORDER)

@@ -13,6 +13,8 @@ namespace
 	{
 		if(g_Config.m_TcInputs >= TcInputs::INPUT_MODE_FAST && g_Config.m_TcInputs <= TcInputs::INPUT_MODE_BEST)
 			return g_Config.m_TcInputs;
+		if(g_Config.m_TcInputs == TcInputs::INPUT_MODE_FUSION)
+			return TcInputs::INPUT_MODE_FUSION;
 		if(g_Config.m_TcInputs == TcInputs::INPUT_MODE_OFF && g_Config.m_TcFastInput)
 			return TcInputs::INPUT_MODE_FAST;
 		return TcInputs::INPUT_MODE_OFF;
@@ -22,6 +24,13 @@ namespace
 		if(InputMode() != TcInputs::INPUT_MODE_FAST || g_Config.m_TcFastInputAmount <= 0)
 			return 0.0f;
 		return g_Config.m_TcFastInputAmount / 20.0f;
+	}
+
+	float FusionModeOffsetTicks()
+	{
+		if(InputMode() != TcInputs::INPUT_MODE_FUSION || g_Config.m_FcFusionAmount <= 0)
+			return 0.0f;
+		return g_Config.m_FcFusionAmount / 20.0f;
 	}
 
 	float BestModeOffsetTicks()
@@ -71,6 +80,7 @@ float TcInputs::EffectiveOffsetTicks()
 	case TcInputs::INPUT_MODE_SAIKO: return SaikoModeOffsetTicks();
 	case TcInputs::INPUT_MODE_DELTA: return DeltaModeOffsetTicks();
 	case TcInputs::INPUT_MODE_F: return FModeOffsetTicks();
+	case TcInputs::INPUT_MODE_FUSION: return FusionModeOffsetTicks();
 	default: return 0.0f;
 	}
 }
@@ -179,4 +189,9 @@ bool TcInputs::FastInputActive()
 bool TcInputs::BestMode()
 {
 	return InputMode() == TcInputs::INPUT_MODE_BEST;
+}
+
+bool TcInputs::FusionActive()
+{
+	return InputMode() == TcInputs::INPUT_MODE_FUSION && EffectiveOffsetTicks() > 0.0f;
 }

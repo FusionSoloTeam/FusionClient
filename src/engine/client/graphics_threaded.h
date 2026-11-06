@@ -711,6 +711,7 @@ public:
 	virtual void SetWindowGrab(bool Grab) = 0;
 	// returns true, if the video mode changed
 	virtual bool ResizeWindow(int w, int h, int RefreshRate) = 0;
+	virtual void CenterWindow() {}
 	virtual void GetViewportSize(int &w, int &h) = 0;
 	// Insets of the drawable area which are covered by the cutout of the display,
 	// in pixels. Only determined on iOS, zero on all other platforms.
@@ -1272,6 +1273,7 @@ public:
 	void Move(int x, int y) override;
 	bool Resize(int w, int h, int RefreshRate) override;
 	void ResizeToScreen() override;
+	void CenterWindow() override;
 	void GotResized(int w, int h, int RefreshRate) override;
 	void UpdateViewport(int X, int Y, int W, int H, bool ByResize) override;
 	bool IsScreenKeyboardShown() override;

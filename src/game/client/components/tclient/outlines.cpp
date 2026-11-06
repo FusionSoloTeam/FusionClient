@@ -234,7 +234,7 @@ float COutlines::GetTileAnimationProgress(int Type, int x, int y, int LodLevel) 
 
 void COutlines::OnRender()
 {
-	m_SystemAudio.SetEnabled(g_Config.m_TcOutlinePulsate || g_Config.m_TcLyricsBeat);
+	m_SystemAudio.SetEnabled(g_Config.m_TcOutlinePulsate || g_Config.m_TcLyricsBeat || (g_Config.m_FcCrosshair && g_Config.m_FcCrosshairPulse));
 	if(!m_pMapData)
 		return;
 	if(GameClient()->m_MapLayersBackground.m_OnlineOnly && Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)

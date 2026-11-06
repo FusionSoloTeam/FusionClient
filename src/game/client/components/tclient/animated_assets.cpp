@@ -2,6 +2,8 @@
 
 #include "video_loader.h"
 
+#include <base/fs.h>
+#include <base/io.h>
 #include <base/log.h>
 #include <base/math.h>
 #include <base/mem.h>
@@ -35,6 +37,31 @@ bool SheetEnabled(const char *pName)
 	if(str_comp(pName, VCSKINS_ENTITY_NAME) == 0)
 		return true;
 	return g_Config.m_FcAnimatedAssetsGame != 0;
+}
+
+bool ResolveVideoPath(IStorage *pStorage, const char *pPath, char *pOut, size_t OutSize)
+{
+	pOut[0] = '\0';
+	if(pStorage == nullptr || pPath == nullptr || pPath[0] == '\0')
+		return false;
+
+	char aFilePath[IO_MAX_PATH_LENGTH];
+	IOHANDLE File = pStorage->OpenFile(pPath, IOFLAG_READ, IStorage::TYPE_ALL, aFilePath, sizeof(aFilePath));
+	if(File == nullptr)
+		return false;
+	io_close(File);
+
+	if(!fs_is_relative_path(aFilePath))
+	{
+		str_copy(pOut, aFilePath, OutSize);
+		return true;
+	}
+
+	char aCwd[IO_MAX_PATH_LENGTH];
+	if(fs_getcwd(aCwd, sizeof(aCwd)) == nullptr)
+		return false;
+	str_format(pOut, OutSize, "%s/%s", aCwd, aFilePath);
+	return true;
 }
 
 bool ScaleNearest(const CImageInfo &Src, size_t Width, size_t Height, CImageInfo &Dst)
@@ -277,7 +304,14 @@ bool CVcAnimatedAssets::LoadAnimationFile(IStorage *pStorage, const char *pPath,
 			return false;
 		}
 
-		return CVideoLoader::Load(pPath, TargetWidth, TargetHeight, MaxFrames == 0 ? (size_t)g_Config.m_FcAnimatedAssetsVideoFrames : MaxFrames, g_Config.m_FcAnimatedAssetsVideoAlpha, Gif);
+		char aVideoPath[IO_MAX_PATH_LENGTH];
+		if(!ResolveVideoPath(pStorage, pPath, aVideoPath, sizeof(aVideoPath)))
+		{
+			log_warn("fusion", "could not find video asset '%s' on the file system", pPath);
+			return false;
+		}
+
+		return CVideoLoader::Load(aVideoPath, TargetWidth, TargetHeight, MaxFrames == 0 ? (size_t)g_Config.m_FcAnimatedAssetsVideoFrames : MaxFrames, g_Config.m_FcAnimatedAssetsVideoAlpha, Gif);
 	}
 
 	void *pData = nullptr;
@@ -388,19 +422,30 @@ void CVcAnimatedAssets::ApplySheetFrame(SSheetAnimation &Sheet, int FrameIndex)
 			continue;
 
 		const CDataSprite *pSprite = Channel.m_pSprite;
-		if(pSprite == nullptr || pSprite->m_W <= 0 || pSprite->m_H <= 0)
+		if(pSprite == nullptr || pSprite->m_pSet == nullptr || pSprite->m_W <= 0 || pSprite->m_H <= 0)
+			continue;
+		if(pSprite->m_pSet->m_Gridx <= 0 || pSprite->m_pSet->m_Gridy <= 0)
 			continue;
 
-		if((size_t)pSprite->m_X + (size_t)pSprite->m_W > Src.m_Width ||
-			(size_t)pSprite->m_Y + (size_t)pSprite->m_H > Src.m_Height)
+		const int ImageGridX = (int)Src.m_Width / pSprite->m_pSet->m_Gridx;
+		const int ImageGridY = (int)Src.m_Height / pSprite->m_pSet->m_Gridy;
+		if(ImageGridX <= 0 || ImageGridY <= 0)
+			continue;
+		const int SpriteX = pSprite->m_X * ImageGridX;
+		const int SpriteY = pSprite->m_Y * ImageGridY;
+		const int SpriteW = pSprite->m_W * ImageGridX;
+		const int SpriteH = pSprite->m_H * ImageGridY;
+
+		if((size_t)SpriteX + (size_t)SpriteW > Src.m_Width ||
+			(size_t)SpriteY + (size_t)SpriteH > Src.m_Height)
 			continue;
 
 		CImageInfo SpriteInfo;
-		SpriteInfo.m_Width = (size_t)pSprite->m_W;
-		SpriteInfo.m_Height = (size_t)pSprite->m_H;
+		SpriteInfo.m_Width = (size_t)SpriteW;
+		SpriteInfo.m_Height = (size_t)SpriteH;
 		SpriteInfo.m_Format = CImageInfo::FORMAT_RGBA;
 		SpriteInfo.Allocate();
-		SpriteInfo.CopyRectFrom(Src, (size_t)pSprite->m_X, (size_t)pSprite->m_Y, SpriteInfo.m_Width, SpriteInfo.m_Height, 0, 0);
+		SpriteInfo.CopyRectFrom(Src, (size_t)SpriteX, (size_t)SpriteY, SpriteInfo.m_Width, SpriteInfo.m_Height, 0, 0);
 
 		if(Graphics()->ReloadTexture(Channel.m_Handle, SpriteInfo, pSprite->m_pName))
 			Applied++;

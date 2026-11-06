@@ -22,6 +22,27 @@
 
 #include <limits>
 
+static bool ModernUiActive()
+{
+	return g_Config.m_FcModernUi != 0;
+}
+
+static ColorRGBA ModernUiAccent()
+{
+	return g_Config.m_FcModernUi == 2 ? ColorRGBA(0.10f, 0.60f, 0.48f, 1.0f) : ColorRGBA(0.18f, 0.78f, 0.62f, 1.0f);
+}
+
+static ColorRGBA ModernUiMix(const ColorRGBA &A, const ColorRGBA &B, float T)
+{
+	return ColorRGBA(A.r + (B.r - A.r) * T, A.g + (B.g - A.g) * T, A.b + (B.b - A.b) * T, A.a + (B.a - A.a) * T);
+}
+
+// theme-aware card surface used by modern edit boxes
+static ColorRGBA ModernUiCard()
+{
+	return g_Config.m_FcModernUi == 2 ? ColorRGBA(0.90f, 0.91f, 0.93f, 1.0f) : ColorRGBA(0.13f, 0.13f, 0.16f, 1.0f);
+}
+
 void CUIElement::Init(CUi *pUI, int RequestedRectCount)
 {
 	m_pUI = pUI;
@@ -55,6 +76,7 @@ void CUIElement::SUIElementRect::Reset()
 	m_TextColor = ColorRGBA(-1, -1, -1, -1);
 	m_TextOutlineColor = ColorRGBA(-1, -1, -1, -1);
 	m_QuadColor = ColorRGBA(-1, -1, -1, -1);
+	m_CachedTheme = -1;
 	m_ReadCursorGlyphCount = -1;
 }
 
@@ -1008,7 +1030,23 @@ bool CUi::DoEditBox(CLineInput *pLineInput, const CUIRect *pRect, float FontSize
 	}
 
 	// Render
-	pRect->Draw(ms_LightButtonColorFunction.GetColor(Active, HotItem() == pLineInput), Corners, 3.0f);
+	if(ModernUiActive())
+	{
+		const bool bWhite = g_Config.m_FcModernUi == 2;
+		const bool bHot = HotItem() == pLineInput;
+		const ColorRGBA Lift = bWhite ? ColorRGBA(0.0f, 0.0f, 0.0f, 1.0f) : ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
+		const ColorRGBA Fill = ModernUiMix(ModernUiCard(), Lift, Active ? 0.06f : (bHot ? 0.04f : 0.0f));
+		ColorRGBA Border = Active ? ModernUiAccent() : ModernUiMix(ModernUiCard(), Lift, 0.18f);
+		Border.a = Active ? 0.9f : (bHot ? 0.5f : 0.3f);
+		pRect->Draw(Border, Corners, 5.0f);
+		CUIRect Inner;
+		pRect->Margin(1.0f, &Inner);
+		Inner.Draw(Fill, Corners, 4.0f);
+	}
+	else
+	{
+		pRect->Draw(ms_LightButtonColorFunction.GetColor(Active, HotItem() == pLineInput), Corners, 3.0f);
+	}
 	ClipEnable(pRect);
 	Textbox.x -= ScrollOffset;
 	const STextBoundingBox BoundingBox = pLineInput->Render(&Textbox, FontSize, TEXTALIGN_ML, Changed || CursorChanged, -1.0f, 0.0f, vColorSplits);
@@ -1039,7 +1077,23 @@ bool CUi::DoClearableEditBox(CLineInput *pLineInput, const CUIRect *pRect, float
 
 	bool ReturnValue = DoEditBox(pLineInput, &EditBox, FontSize, Corners & ~IGraphics::CORNER_R, vColorSplits);
 
-	ClearButton.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.33f * ButtonColorMul(pLineInput->GetClearButtonId())), Corners & ~IGraphics::CORNER_L, 3.0f);
+	if(ModernUiActive())
+	{
+		const bool bWhite = g_Config.m_FcModernUi == 2;
+		const ColorRGBA Lift = bWhite ? ColorRGBA(0.0f, 0.0f, 0.0f, 1.0f) : ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
+		const bool bClearHot = HotItem() == pLineInput->GetClearButtonId();
+		const ColorRGBA Fill = ModernUiMix(ModernUiCard(), Lift, bClearHot ? 0.10f : 0.0f);
+		ColorRGBA Border = ModernUiMix(ModernUiCard(), Lift, 0.18f);
+		Border.a = bClearHot ? 0.5f : 0.3f;
+		ClearButton.Draw(Border, Corners & ~IGraphics::CORNER_L, 5.0f);
+		CUIRect ClearInner;
+		ClearButton.Margin(1.0f, &ClearInner);
+		ClearInner.Draw(Fill, Corners & ~IGraphics::CORNER_L, 4.0f);
+	}
+	else
+	{
+		ClearButton.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.33f * ButtonColorMul(pLineInput->GetClearButtonId())), Corners & ~IGraphics::CORNER_L, 3.0f);
+	}
 	TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
 	DoLabel(&ClearButton, "×", ClearButton.h * CUi::ms_FontmodHeight * 0.8f, TEXTALIGN_MC);
 	TextRender()->SetRenderFlags(0);
@@ -1086,6 +1140,8 @@ int CUi::DoButton_Menu(CUIElement &UIElement, const CButtonContainer *pId, const
 	if(!UIElement.AreRectsInit() || Props.m_HintRequiresStringCheck || Props.m_HintCanChangePositionOrSize || !UIElement.Rect(0)->m_UITextContainer.Valid())
 	{
 		bool NeedsRecalc = !UIElement.AreRectsInit() || !UIElement.Rect(0)->m_UITextContainer.Valid();
+		if(UIElement.AreRectsInit() && UIElement.Rect(0)->m_CachedTheme != g_Config.m_FcModernUi)
+			NeedsRecalc = true;
 		if(Props.m_HintCanChangePositionOrSize)
 		{
 			if(UIElement.AreRectsInit())
@@ -1118,13 +1174,27 @@ int CUi::DoButton_Menu(CUIElement &UIElement, const CButtonContainer *pId, const
 
 			for(int i = 0; i < 3; ++i)
 			{
-				ColorRGBA Color = Props.m_Color;
-				if(i == 0)
-					Color.a *= ButtonColorMulActive();
-				else if(i == 1)
-					Color.a *= ButtonColorMulHot();
-				else if(i == 2)
-					Color.a *= ButtonColorMulDefault();
+				ColorRGBA Color;
+				if(ModernUiActive())
+				{
+					const bool bWhite = g_Config.m_FcModernUi == 2;
+					Color = bWhite ? ColorRGBA(0.90f, 0.91f, 0.93f, 1.0f) : ColorRGBA(0.13f, 0.13f, 0.16f, 1.0f);
+					const ColorRGBA Shade = bWhite ? ColorRGBA(0.0f, 0.0f, 0.0f, 1.0f) : ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
+					if(i == 0)
+						Color = ModernUiMix(Color, Shade, 0.14f); // pressed
+					else if(i == 1)
+						Color = ModernUiMix(Color, Shade, 0.08f); // hovered
+				}
+				else
+				{
+					Color = Props.m_Color;
+					if(i == 0)
+						Color.a *= ButtonColorMulActive();
+					else if(i == 1)
+						Color.a *= ButtonColorMulHot();
+					else if(i == 2)
+						Color.a *= ButtonColorMulDefault();
+				}
 				Graphics()->SetColor(Color);
 
 				CUIElement::SUIElementRect &NewRect = *UIElement.Rect(i);
@@ -1136,6 +1206,7 @@ int CUi::DoButton_Menu(CUIElement &UIElement, const CButtonContainer *pId, const
 				NewRect.m_Height = pRect->h;
 				NewRect.m_Rounding = Props.m_Rounding;
 				NewRect.m_Corners = Props.m_Corners;
+				NewRect.m_CachedTheme = g_Config.m_FcModernUi;
 				if(i == 0)
 				{
 					if(pText == nullptr)
@@ -1209,7 +1280,16 @@ int CUi::DoButton_FontIcon(CButtonContainer *pButtonContainer, const char *pText
 int CUi::DoButton_PopupMenu(CButtonContainer *pButtonContainer, const char *pText, const CUIRect *pRect, float Size, int Align, float Padding, bool TransparentInactive, bool Enabled, const std::optional<ColorRGBA> ButtonColor)
 {
 	if(!TransparentInactive || CheckActiveItem(pButtonContainer) || HotItem() == pButtonContainer)
-		pRect->Draw(ButtonColor.value_or(Enabled ? ColorRGBA(1.0f, 1.0f, 1.0f, 0.5f * ButtonColorMul(pButtonContainer)) : ColorRGBA(0.0f, 0.0f, 0.0f, 0.4f)), IGraphics::CORNER_ALL, 3.0f);
+	{
+		if(ModernUiActive() && Enabled && !ButtonColor.has_value())
+		{
+			ColorRGBA Accent = ModernUiAccent();
+			Accent.a = CheckActiveItem(pButtonContainer) ? 0.6f : 0.42f;
+			pRect->Draw(Accent, IGraphics::CORNER_ALL, 4.0f);
+		}
+		else
+			pRect->Draw(ButtonColor.value_or(Enabled ? ColorRGBA(1.0f, 1.0f, 1.0f, 0.5f * ButtonColorMul(pButtonContainer)) : ColorRGBA(0.0f, 0.0f, 0.0f, 0.4f)), IGraphics::CORNER_ALL, 3.0f);
+	}
 
 	CUIRect Label;
 	pRect->Margin(Padding, &Label);
@@ -1516,8 +1596,25 @@ float CUi::DoScrollbarH(const void *pId, const CUIRect *pRect, float Current, co
 	}
 	else
 	{
-		Rail.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.25f), IGraphics::CORNER_ALL, Rail.h / 2.0f);
-		Handle.Draw(HandleColor, IGraphics::CORNER_ALL, Rail.h / 2.0f);
+		if(ModernUiActive())
+		{
+			const bool bWhite = g_Config.m_FcModernUi == 2;
+			const ColorRGBA Track = bWhite ? ColorRGBA(0.80f, 0.82f, 0.85f, 1.0f) : ColorRGBA(0.13f, 0.13f, 0.16f, 1.0f);
+			const ColorRGBA Knob = bWhite ? ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f) : ColorRGBA(0.92f, 0.93f, 0.95f, 1.0f);
+			const ColorRGBA Accent = ModernUiAccent();
+			const float R = Rail.h / 2.0f;
+			Rail.Draw(Track, IGraphics::CORNER_ALL, R);
+			CUIRect Filled = Rail;
+			Filled.w = Handle.x + Handle.w - Rail.x;
+			if(Filled.w > 0.0f)
+				Filled.Draw(Accent, IGraphics::CORNER_ALL, R);
+			Handle.Draw(Knob, IGraphics::CORNER_ALL, R);
+		}
+		else
+		{
+			Rail.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.25f), IGraphics::CORNER_ALL, Rail.h / 2.0f);
+			Handle.Draw(HandleColor, IGraphics::CORNER_ALL, Rail.h / 2.0f);
+		}
 	}
 
 	return ReturnValue;

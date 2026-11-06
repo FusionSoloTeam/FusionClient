@@ -181,6 +181,7 @@ public:
 		SUIElementRect();
 
 		ColorRGBA m_QuadColor;
+		int m_CachedTheme = -1;
 
 		void Reset();
 		void Draw(const CUIRect *pRect, ColorRGBA Color, int Corners, float Rounding);
@@ -476,6 +477,7 @@ private:
 		CUIRect m_Rect;
 		void *m_pContext;
 		FPopupMenuFunction m_pfnFunc;
+		std::chrono::nanoseconds m_OpenTime{0};
 	};
 	std::vector<SPopupMenu> m_vPopupMenus;
 	FPopupMenuClosedCallback m_pfnPopupMenuClosedCallback = nullptr;

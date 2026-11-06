@@ -14,6 +14,7 @@
 #include <game/client/gameclient.h>
 #include <game/client/prediction/entities/character.h>
 
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -761,6 +762,147 @@ public:
 		CNamePlatePartText(This) {}
 };
 
+class CNamePlatePartCoord : public CNamePlatePart
+{
+private:
+	STextContainerIndex m_TextContainerIndex;
+	ColorRGBA m_Color = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
+	float m_FontSize = -INFINITY;
+	int m_Hundredths = -1;
+	bool m_Icon = false;
+	int m_IconDir = 0;
+
+	void DeleteContainer(CGameClient &This)
+	{
+		This.TextRender()->DeleteTextContainer(m_TextContainerIndex);
+		m_TextContainerIndex = STextContainerIndex();
+	}
+
+public:
+	CNamePlatePartCoord(CGameClient &This) :
+		CNamePlatePart(This) {}
+
+	void Reset(CGameClient &This) override
+	{
+		DeleteContainer(This);
+		m_Hundredths = -1;
+		m_FontSize = -INFINITY;
+	}
+
+	void Update(CGameClient &This, const CNamePlateData &Data) override
+	{
+		bool Show = false;
+		switch(g_Config.m_FcCoord)
+		{
+		case 0: Show = false; break;
+		case 1: Show = !Data.m_Local; break;
+		case 2: Show = Data.m_Local; break;
+		case 3: Show = true; break;
+		}
+		if(!Show || !Data.m_InGame || Data.m_ClientId < 0 || Data.m_ClientId >= MAX_CLIENTS)
+		{
+			DeleteContainer(This);
+			m_Visible = false;
+			m_Size = vec2(0.0f, 0.0f);
+			return;
+		}
+		m_Visible = true;
+		m_Color = Data.m_Color;
+
+		const float X = This.m_aClients[Data.m_ClientId].m_RenderPos.x / 32.0f;
+		float IntPart = 0.0f;
+		float Frac = std::modf(X, &IntPart);
+		if(Frac < 0.0f)
+			Frac += 1.0f;
+		int Hundredths = static_cast<int>(std::lround(Frac * 100.0f));
+		if(Hundredths >= 100)
+			Hundredths -= 100;
+		if(Hundredths < 0)
+			Hundredths = 0;
+
+		const float CoordSize = 14.0f * g_Config.m_FcCoordSize / 100.0f;
+		const bool Rebuild = m_Hundredths != Hundredths || m_FontSize != CoordSize || !m_TextContainerIndex.Valid();
+		m_Hundredths = Hundredths;
+		m_FontSize = CoordSize;
+
+		if(Hundredths == 44 || Hundredths == 53)
+		{
+			m_Icon = true;
+			m_IconDir = (Hundredths == 44) ? -1 : 1;
+			DeleteContainer(This);
+			m_Size = vec2(CoordSize * 1.15f, CoordSize);
+			return;
+		}
+
+		m_Icon = false;
+		char aText[8];
+		str_format(aText, sizeof(aText), ".%02d", Hundredths);
+		if(Rebuild)
+		{
+			CScreenRect ScreenRect = This.Graphics()->GetScreen();
+			This.Graphics()->MapScreenToInterface(This.m_Camera.m_Center.x, This.m_Camera.m_Center.y);
+			DeleteContainer(This);
+			const unsigned Flags = ETextRenderFlags::TEXT_RENDER_FLAG_NO_FIRST_CHARACTER_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_LAST_CHARACTER_ADVANCE | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT;
+			This.TextRender()->SetRenderFlags(Flags);
+			CTextCursor Cursor;
+			Cursor.m_FontSize = m_FontSize;
+			This.TextRender()->CreateOrAppendTextContainer(m_TextContainerIndex, &Cursor, aText);
+			This.TextRender()->SetRenderFlags(0);
+			This.Graphics()->MapScreen(ScreenRect);
+		}
+		const STextBoundingBox Box = This.TextRender()->GetBoundingBoxTextContainer(m_TextContainerIndex);
+		m_Size = vec2(Box.m_W, Box.m_H);
+	}
+
+	void Render(CGameClient &This, vec2 Pos) const override
+	{
+		if(!m_Visible)
+			return;
+
+		if(!m_Icon)
+		{
+			if(!m_TextContainerIndex.Valid())
+				return;
+			const ColorRGBA OutlineColor(0.0f, 0.0f, 0.0f, 0.5f * m_Color.a);
+			This.TextRender()->RenderTextContainer(m_TextContainerIndex, m_Color, OutlineColor, Pos.x - Size().x / 2.0f, Pos.y - Size().y / 2.0f);
+			return;
+		}
+
+		const float H = m_Size.y;
+		const float W = m_Size.x;
+		const float LineW = std::max(1.5f, H * 0.14f);
+		const float Gap = H * 0.4f;
+		const float ArrowLen = H * 0.55f;
+		const float Left = Pos.x - W / 2.0f;
+		const float Right = Pos.x + W / 2.0f;
+		const float Top = Pos.y - H / 2.0f;
+
+		const float WallX = (m_IconDir < 0) ? Left + LineW * 0.5f : Right - LineW * 0.5f;
+		const float TipX = (m_IconDir < 0) ? Left + LineW + Gap : Right - LineW - Gap;
+		const float TailX = (m_IconDir < 0) ? TipX + ArrowLen : TipX - ArrowLen;
+		const float Back = (m_IconDir < 0) ? 1.0f : -1.0f;
+
+		This.Graphics()->TextureClear();
+		This.Graphics()->QuadsBegin();
+		This.Graphics()->SetColor(m_Color);
+		IGraphics::CQuadItem Wall(WallX - LineW / 2.0f, Top, LineW, H);
+		This.Graphics()->QuadsDrawTL(&Wall, 1);
+		This.Graphics()->QuadsEnd();
+
+		const float ShaftY = Pos.y;
+		const float HeadLen = H * 0.3f;
+		IGraphics::CLineItem aLines[3] = {
+			IGraphics::CLineItem(TailX, ShaftY, TipX, ShaftY),
+			IGraphics::CLineItem(TipX, ShaftY, TipX + Back * HeadLen, ShaftY - HeadLen),
+			IGraphics::CLineItem(TipX, ShaftY, TipX + Back * HeadLen, ShaftY + HeadLen),
+		};
+		This.Graphics()->LinesBegin();
+		This.Graphics()->SetColor(m_Color);
+		This.Graphics()->LinesDraw(aLines, 3);
+		This.Graphics()->LinesEnd();
+	}
+};
+
 // ***** Name Plates *****
 
 class CNamePlate
@@ -825,6 +967,9 @@ private:
 		AddPart<CNamePlatePartDirection>(This, DIRECTION_LEFT);
 		AddPart<CNamePlatePartDirection>(This, DIRECTION_UP);
 		AddPart<CNamePlatePartDirection>(This, DIRECTION_RIGHT);
+
+		AddPart<CNamePlatePartNewLine>(This);
+		AddPart<CNamePlatePartCoord>(This);
 	}
 
 public:

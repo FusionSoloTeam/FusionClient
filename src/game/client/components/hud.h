@@ -76,6 +76,7 @@ class CHud : public CComponent
 	int CountCps(int Button) const;
 
 	void RenderCursor();
+	void RenderDynamicCrosshair();
 
 	void RenderTextInfo();
 	void RenderConnectionWarning();
@@ -197,6 +198,8 @@ private:
 	float m_FinishPredictionWindowDistance = -1.0f;
 	float m_FinishPredictionMeasuredSpeed = -1.0f;
 	float m_FinishPredictionLastRemaining = -1.0f;
+
+	float m_CrosshairAngle = 0.0f;
 
 	int m_aAmmoOffset[NUM_WEAPONS];
 	int m_HealthOffset;

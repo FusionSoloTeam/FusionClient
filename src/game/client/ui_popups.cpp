@@ -6,6 +6,7 @@
 #include <base/dbg.h>
 #include <base/math.h>
 #include <base/str.h>
+#include <base/time.h>
 
 #include <engine/graphics.h>
 #include <engine/shared/config.h>
@@ -30,6 +31,7 @@ void CUi::DoPopupMenu(const SPopupMenuId *pId, float X, float Y, float Width, fl
 	pNewMenu->m_Rect.h = Height;
 	pNewMenu->m_pContext = pContext;
 	pNewMenu->m_pfnFunc = pfnFunc;
+	pNewMenu->m_OpenTime = time_get_nanoseconds();
 }
 
 void CUi::RenderPopupMenus()
@@ -72,15 +74,37 @@ void CUi::RenderPopupMenus()
 			SetHotScrollRegion(nullptr);
 		}
 
-		CUIRect PopupRect = PopupMenu.m_Rect;
-		PopupRect.Draw(PopupMenu.m_Props.m_BorderColor, PopupMenu.m_Props.m_Corners, 3.0f);
-		PopupRect.Margin(SPopupMenu::POPUP_BORDER, &PopupRect);
-		PopupRect.Draw(PopupMenu.m_Props.m_BackgroundColor, PopupMenu.m_Props.m_Corners, 3.0f);
-		PopupRect.Margin(SPopupMenu::POPUP_MARGIN, &PopupRect);
+		float Ease = 1.0f;
+		if(g_Config.m_FcModernUiAnim && PopupMenu.m_OpenTime.count() != 0)
+		{
+			constexpr float POPUP_OPEN_SECONDS = 0.14f;
+			const float Since = std::chrono::duration_cast<std::chrono::duration<float>>(time_get_nanoseconds() - PopupMenu.m_OpenTime).count();
+			const float T = std::clamp(Since / POPUP_OPEN_SECONDS, 0.0f, 1.0f);
+			Ease = 1.0f - (1.0f - T) * (1.0f - T); // ease-out
+		}
+
+		CUIRect ContentRect = PopupMenu.m_Rect;
+		ContentRect.Margin(SPopupMenu::POPUP_BORDER + SPopupMenu::POPUP_MARGIN, &ContentRect);
+
+		CUIRect Shown = PopupMenu.m_Rect;
+		Shown.h *= Ease;
+		ColorRGBA BorderColor = PopupMenu.m_Props.m_BorderColor;
+		BorderColor.a *= Ease;
+		Shown.Draw(BorderColor, PopupMenu.m_Props.m_Corners, 3.0f);
+		Shown.Margin(SPopupMenu::POPUP_BORDER, &Shown);
+		ColorRGBA BackgroundColor = PopupMenu.m_Props.m_BackgroundColor;
+		BackgroundColor.a *= Ease;
+		Shown.Draw(BackgroundColor, PopupMenu.m_Props.m_Corners, 3.0f);
+		Shown.Margin(SPopupMenu::POPUP_MARGIN, &Shown);
 
 		// The popup render function can open/close popups, which may resize the vector and thus
 		// invalidate the variable PopupMenu. We therefore store pId in a separate variable.
-		EPopupMenuFunctionResult Result = PopupMenu.m_pfnFunc(PopupMenu.m_pContext, PopupRect, Active);
+		const bool bAnimating = Ease < 1.0f;
+		if(bAnimating)
+			ClipEnable(&Shown);
+		EPopupMenuFunctionResult Result = PopupMenu.m_pfnFunc(PopupMenu.m_pContext, ContentRect, Active);
+		if(bAnimating)
+			ClipDisable();
 		if(Result != POPUP_KEEP_OPEN || (Active && ConsumeHotkey(HOTKEY_ESCAPE)))
 			ClosePopupMenu(pId, Result == POPUP_CLOSE_CURRENT_AND_DESCENDANTS);
 	}
@@ -346,8 +370,17 @@ int CUi::DoDropDown(CUIRect *pRect, int CurSelection, const char **pStrs, int Nu
 	if(DoButton_Menu(State.m_UiElement, &State.m_ButtonContainer, LabelFunc, pRect, Props))
 	{
 		State.m_SelectionPopupContext.Reset();
-		State.m_SelectionPopupContext.m_Props.m_BorderColor = ColorRGBA(0.7f, 0.7f, 0.7f, 0.9f);
-		State.m_SelectionPopupContext.m_Props.m_BackgroundColor = ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f);
+		if(g_Config.m_FcModernUi != 0)
+		{
+			const bool bWhite = g_Config.m_FcModernUi == 2;
+			State.m_SelectionPopupContext.m_Props.m_BorderColor = bWhite ? ColorRGBA(0.82f, 0.84f, 0.87f, 1.0f) : ColorRGBA(0.22f, 0.24f, 0.28f, 1.0f);
+			State.m_SelectionPopupContext.m_Props.m_BackgroundColor = bWhite ? ColorRGBA(0.96f, 0.965f, 0.975f, 1.0f) : ColorRGBA(0.09f, 0.095f, 0.115f, 1.0f);
+		}
+		else
+		{
+			State.m_SelectionPopupContext.m_Props.m_BorderColor = ColorRGBA(0.7f, 0.7f, 0.7f, 0.9f);
+			State.m_SelectionPopupContext.m_Props.m_BackgroundColor = ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f);
+		}
 		for(int i = 0; i < Num; ++i)
 			State.m_SelectionPopupContext.m_vEntries.emplace_back(pStrs[i]);
 		State.m_SelectionPopupContext.m_EntryHeight = pRect->h;

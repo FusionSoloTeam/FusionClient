@@ -378,6 +378,7 @@ public:
 		AREA_ONLY,
 		AREA_WALLS,
 		OUTLINE,
+		REPLACE,
 		NUM_MODES,
 	};
 	EFillMode m_FillMode = EFillMode::AREA_ONLY;
@@ -497,6 +498,16 @@ public:
 	// editor_ui.cpp
 	void UpdateTooltip(const void *pId, const CUIRect *pRect, const char *pToolTip);
 	ColorRGBA GetButtonColor(const void *pId, int Checked);
+	
+	static bool ModernUiActive();
+	static ColorRGBA ModernPanelBg();
+	static ColorRGBA ModernMenuBarBg();
+	static ColorRGBA ModernButtonBg();
+	static ColorRGBA ModernButtonHover();
+	static ColorRGBA ModernText();
+	static ColorRGBA ModernAccent();
+	static float ModernRounding();
+	static float ModernRoundingFor(const CUIRect *pRect);
 	int DoButtonLogic(const void *pId, int Checked, const CUIRect *pRect, int Flags, const char *pToolTip);
 	int DoButton_Editor(const void *pId, const char *pText, int Checked, const CUIRect *pRect, int Flags, const char *pToolTip);
 	int DoButton_Env(const void *pId, const char *pText, int Checked, const CUIRect *pRect, const char *pToolTip, ColorRGBA Color, int Corners);
@@ -508,6 +519,7 @@ public:
 	bool DoClearableEditBox(CLineInput *pLineInput, const CUIRect *pRect, float FontSize, int Corners = IGraphics::CORNER_ALL, const char *pToolTip = nullptr, const std::vector<STextColorSplit> &vColorSplits = {});
 	SEditResult<int> UiDoValueSelector(const void *pId, CUIRect *pRect, const char *pLabel, int Current, int Min, int Max, int Step, float Scale, const char *pToolTip, bool IsDegree = false, bool IsHex = false, int Corners = IGraphics::CORNER_ALL, const ColorRGBA *pColor = nullptr, bool ShowValue = true);
 	void RenderBackground(CUIRect View, IGraphics::CTextureHandle Texture, float Size, float Brightness) const;
+	void RenderEditorPanelBg(const CUIRect &View, const ColorRGBA &Color) const;
 
 	// editor_server_settings.cpp
 	void DoMapSettingsEditBox(CMapSettingsBackend::CContextWithInput *pContext, const CUIRect *pRect, float FontSize, float DropdownMaxHeight, int Corners = IGraphics::CORNER_ALL, const char *pToolTip = nullptr);

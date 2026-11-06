@@ -21,6 +21,7 @@
 #include <game/client/components/menus_ingame_touch_controls.h>
 #include <game/client/components/menus_settings_controls.h>
 #include <game/client/components/menus_start.h>
+#include <game/client/components/tclient/menus_modern_ui.h>
 #include <game/client/components/skins7.h>
 #include <game/client/components/tclient/warlist.h>
 #include <game/client/components/tclient/heartlist.h>
@@ -30,6 +31,7 @@
 #include <game/voting.h>
 
 #include <chrono>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -64,6 +66,7 @@ public:
 	bool DoEditBoxWithLabel(CLineInput *LineInput, const CUIRect *pRect, const char *pLabel, const char *pDefault, char *pBuf, size_t BufSize);
 	bool DoLine_RadioMenu(CUIRect &View, const char *pLabel, std::vector<CButtonContainer> &vButtonContainers, const std::vector<const char *> &vLabels, const std::vector<int> &vValues, int &Value);
 	bool DoLine_KeyReader(CUIRect &View, CButtonContainer &ReaderButton, CButtonContainer &ClearButton, const char *pName, const char *pCommand);
+	void TcCollapseGroup(CUIRect &Column, const void *pId, bool bOpen, const std::function<void(CUIRect &)> &RenderBody);
 
 private:
 	CUi::SColorPickerPopupContext m_ColorPickerPopupContext;
@@ -962,6 +965,8 @@ private:
 	CMenusSettingsControls m_MenusSettingsControls;
 	friend CMenusSettingsControls;
 	CMenusStart m_MenusStart;
+	CMenusModern m_MenusModern;
+	friend class CMenusModern;
 
 	static int GhostlistFetchCallback(const CFsFileInfo *pInfo, int IsDir, int StorageType, void *pUser);
 

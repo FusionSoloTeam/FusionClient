@@ -1280,6 +1280,14 @@ void CTClient::FinishTClientInfo()
 	const json_value &LegacyVersion = Json["version"];
 	const json_value &CurrentVersion = TagName.type == json_string ? TagName : LegacyVersion;
 
+	const json_value &Body = Json["body"];
+	m_aReleaseTag[0] = '\0';
+	m_aReleaseNotesBody[0] = '\0';
+	if(TagName.type == json_string)
+		str_copy(m_aReleaseTag, (const char *)TagName, sizeof(m_aReleaseTag));
+	if(Body.type == json_string)
+		str_copy(m_aReleaseNotesBody, (const char *)Body, sizeof(m_aReleaseNotesBody));
+
 	if(CurrentVersion.type == json_string)
 	{
 		char aNewVersionStr[64];
