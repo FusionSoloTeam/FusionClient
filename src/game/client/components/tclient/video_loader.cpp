@@ -21,6 +21,12 @@ extern "C" {
 #ifdef NOGDI
 #undef NOGDI
 #endif
+#undef _WIN32_WINNT
+#undef WINVER
+#undef NTDDI_VERSION
+#define _WIN32_WINNT 0x0602
+#define WINVER 0x0602
+#define NTDDI_VERSION 0x06020000
 #include <windows.h>
 
 #include <mfapi.h>
