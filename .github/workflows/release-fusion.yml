@@ -77,6 +77,11 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Pin Rust toolchain
+        run: |
+          rustup toolchain install 1.99.1
+          rustup default 1.99.1
+
       - name: Add Rust target
         run: rustup target add ${{ matrix.rust-target }}
 
