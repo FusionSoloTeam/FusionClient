@@ -2,7 +2,7 @@
 
 [![Build status](https://github.com/TaterClient/TClient/workflows/Build/badge.svg)](https://github.com/TaterClient/TClient/actions/workflows/build.yml)
 
-### Official VClient repository
+### Official TClient repository
 
 Not guaranteed to be bug free, but I will try to fix them.
 
