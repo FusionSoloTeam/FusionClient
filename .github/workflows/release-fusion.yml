@@ -232,6 +232,11 @@ jobs:
     container: archlinux:base
     continue-on-error: true
     steps:
+      - name: Install git
+        run: |
+          set -euo pipefail
+          pacman -Sy --noconfirm --needed git --refresh
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -240,7 +245,7 @@ jobs:
         run: |
           set -euo pipefail
           pacman -Syu --noconfirm --needed --refresh \
-            base-devel git cmake ninja pkgconf rust python3 \
+            base-devel cmake ninja pkgconf rust python3 \
             curl openssl zlib tar gzip \
             ffmpeg libcurl freetype2 glew libminiupnpc libnotify libogg opus opusfile libpng \
             sdl2 sqlite libwebsockets x264 wavpack
