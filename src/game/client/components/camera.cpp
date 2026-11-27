@@ -36,6 +36,7 @@ CCamera::CCamera()
 	std::fill(std::begin(m_aLastPos), std::end(m_aLastPos), vec2(0.0f, 0.0f));
 	m_PrevCenter = vec2(0, 0);
 	m_Center = vec2(0, 0);
+	m_DeadzoneAnchor = vec2(0, 0);
 
 	m_PrevSpecId = -1;
 	m_WasSpectating = false;
@@ -562,9 +563,45 @@ void CCamera::OnRender()
 		}
 
 		if(GameClient()->m_Snap.m_SpecInfo.m_Active)
+		{
 			m_Center = GameClient()->m_Snap.m_SpecInfo.m_Position + m_aDyncamCurrentCameraOffset[g_Config.m_ClDummy];
+		}
 		else
-			m_Center = GameClient()->m_LocalCharacterPos + m_aDyncamCurrentCameraOffset[g_Config.m_ClDummy];
+		{
+			const float Deadzone = (float)g_Config.m_FcCameraDeadzone;
+			float TeeSpeed = -1.0f;
+			if(Deadzone > 0.0f && g_Config.m_FcCameraDeadzoneSpeed > 0)
+			{
+				const int ClientId = GameClient()->m_aLocalIds[g_Config.m_ClDummy];
+				if(ClientId >= 0 && ClientId < MAX_CLIENTS && GameClient()->m_Snap.m_aCharacters[ClientId].m_Active)
+				{
+					const CNetObj_Character *pPrev = &GameClient()->m_Snap.m_aCharacters[ClientId].m_Prev;
+					const CNetObj_Character *pCur = &GameClient()->m_Snap.m_aCharacters[ClientId].m_Cur;
+					const float Intra = Client()->IntraGameTick(g_Config.m_ClDummy);
+					const vec2 Vel = mix(vec2(pPrev->m_VelX, pPrev->m_VelY), vec2(pCur->m_VelX, pCur->m_VelY), Intra) / 256.0f * Client()->GameTickSpeed();
+					TeeSpeed = length(Vel);
+				}
+			}
+
+			const vec2 CharPos = GameClient()->m_LocalCharacterPos;
+			const vec2 Offset = CharPos - m_DeadzoneAnchor;
+			const float Dist = length(Offset);
+			const bool Bypass = TeeSpeed >= 0.0f && TeeSpeed >= (float)g_Config.m_FcCameraDeadzoneSpeed;
+			if(Deadzone <= 0.0f || Dist > Deadzone * 4.0f)
+			{
+				m_DeadzoneAnchor = CharPos;
+			}
+			else if(Bypass)
+			{
+				m_DeadzoneAnchor += Offset * std::min(Client()->RenderFrameTime() * 25.0f, 1.0f);
+			}
+			else if(Dist > Deadzone)
+			{
+				m_DeadzoneAnchor = CharPos - normalize_pre_length(Offset, Dist) * Deadzone;
+			}
+
+			m_Center = m_DeadzoneAnchor + m_aDyncamCurrentCameraOffset[g_Config.m_ClDummy];
+		}
 	}
 
 	if(m_ForceFreeview && m_CamType == CAMTYPE_SPEC)

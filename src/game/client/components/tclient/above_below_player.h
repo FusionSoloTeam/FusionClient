@@ -1,6 +1,7 @@
 #ifndef GAME_CLIENT_COMPONENTS_TCLIENT_ABOVE_BELOW_PLAYER_H
 #define GAME_CLIENT_COMPONENTS_TCLIENT_ABOVE_BELOW_PLAYER_H
 #include "game/client/component.h"
+#include "game/client/ui_rect.h"
 
 class CAboveBelowPlayer : public CComponent
 {
@@ -11,6 +12,8 @@ class CAboveBelowPlayer : public CComponent
 	bool m_PlayerAbove = false;
 	bool m_PlayerSame = false;
 	bool m_PlayerBelow = false;
+	int m_EditorLines = 0;
+	float m_EditorHeight = 0.0f;
 
 	static float EaseInOutQuad(float T);
 
@@ -19,6 +22,7 @@ public:
 	int Sizeof() const override { return sizeof(*this); }
 	void OnReset() override;
 	void OnRender() override;
+	CUIRect GetHudEditorRect() const;
 };
 
 #endif

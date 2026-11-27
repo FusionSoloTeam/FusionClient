@@ -30,7 +30,9 @@
 static constexpr float MARGIN = 10.0f;
 
 static constexpr const char *PLAYER_NOTES_FILE = "player_notes.txt";
+static constexpr const char *PLAYER_SKINS_FILE = "player_skins.txt";
 static constexpr int MAX_PLAYER_NOTE_LENGTH = 128;
+static constexpr int MAX_PLAYER_SKIN_LENGTH = 64;
 
 CScoreboard::CScoreboard()
 {
@@ -114,6 +116,7 @@ void CScoreboard::OnInit()
 {
 	m_DeadTeeTexture = Graphics()->LoadTexture("deadtee.png", IStorage::TYPE_ALL);
 	LoadNotes();
+	LoadSkins();
 }
 
 void CScoreboard::OnReset()
@@ -147,6 +150,8 @@ void CScoreboard::OnShutdown()
 {
 	if(m_NotesDirty)
 		SaveNotes();
+	if(m_SkinsDirty)
+		SaveSkins();
 	ResetTexts();
 }
 
@@ -168,11 +173,29 @@ void CScoreboard::SetPlayerNote(const char *pName, const char *pNote)
 	m_NotesDirty = true;
 }
 
-void CScoreboard::LoadNotes()
+void CScoreboard::SetPlayerGameSkin(const char *pName, const char *pSkin)
 {
-	m_Notes.clear();
+	if(pName[0] == '\0')
+		return;
 
-	IOHANDLE File = Storage()->OpenFile(PLAYER_NOTES_FILE, IOFLAG_READ, IStorage::TYPE_SAVE);
+	if(pSkin[0] == '\0')
+		m_Skins.erase(pName);
+	else
+		m_Skins[pName] = pSkin;
+	m_SkinsDirty = true;
+}
+
+const char *CScoreboard::PlayerGameSkin(const char *pName) const
+{
+	const auto It = m_Skins.find(pName);
+	return It != m_Skins.end() ? It->second.c_str() : "";
+}
+
+static void LoadPlayerDataFile(IStorage *pStorage, const char *pFileName, std::map<std::string, std::string> &Entries, int MaxValueLength)
+{
+	Entries.clear();
+
+	IOHANDLE File = pStorage->OpenFile(pFileName, IOFLAG_READ, IStorage::TYPE_SAVE);
 	if(!File)
 		return;
 
@@ -196,10 +219,10 @@ void CScoreboard::LoadNotes()
 		if(pTab > pLine && pTab + 1 < pLineEnd)
 		{
 			char aName[MAX_NAME_LENGTH];
-			char aNote[MAX_PLAYER_NOTE_LENGTH];
+			char aValue[128];
 			str_truncate(aName, sizeof(aName), pLine, (int)(pTab - pLine));
-			str_truncate(aNote, sizeof(aNote), pTab + 1, (int)(pLineEnd - pTab - 1));
-			m_Notes[aName] = aNote;
+			str_truncate(aValue, MaxValueLength < (int)sizeof(aValue) ? MaxValueLength : (int)sizeof(aValue), pTab + 1, (int)(pLineEnd - pTab - 1));
+			Entries[aName] = aValue;
 		}
 
 		pLine = pNext;
@@ -207,19 +230,39 @@ void CScoreboard::LoadNotes()
 	std::free(pContent);
 }
 
-void CScoreboard::SaveNotes() const
+static void SavePlayerDataFile(IStorage *pStorage, const char *pFileName, const std::map<std::string, std::string> &Entries)
 {
-	IOHANDLE File = Storage()->OpenFile(PLAYER_NOTES_FILE, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+	IOHANDLE File = pStorage->OpenFile(pFileName, IOFLAG_WRITE, IStorage::TYPE_SAVE);
 	if(!File)
 		return;
 
-	for(const auto &[Name, Note] : m_Notes)
+	for(const auto &[Name, Value] : Entries)
 	{
-		char aLine[MAX_NAME_LENGTH + MAX_PLAYER_NOTE_LENGTH + 4];
-		str_format(aLine, sizeof(aLine), "%s\t%s\n", Name.c_str(), Note.c_str());
+		char aLine[MAX_NAME_LENGTH + 256];
+		str_format(aLine, sizeof(aLine), "%s\t%s\n", Name.c_str(), Value.c_str());
 		io_write(File, aLine, str_length(aLine));
 	}
 	io_close(File);
+}
+
+void CScoreboard::LoadNotes()
+{
+	LoadPlayerDataFile(Storage(), PLAYER_NOTES_FILE, m_Notes, MAX_PLAYER_NOTE_LENGTH);
+}
+
+void CScoreboard::SaveNotes() const
+{
+	SavePlayerDataFile(Storage(), PLAYER_NOTES_FILE, m_Notes);
+}
+
+void CScoreboard::LoadSkins()
+{
+	LoadPlayerDataFile(Storage(), PLAYER_SKINS_FILE, m_Skins, MAX_PLAYER_SKIN_LENGTH);
+}
+
+void CScoreboard::SaveSkins() const
+{
+	SavePlayerDataFile(Storage(), PLAYER_SKINS_FILE, m_Skins);
 }
 
 void CScoreboard::OnWindowResize()
@@ -550,9 +593,10 @@ void CScoreboard::RenderSpectators(CUIRect Spectators)
 								     (Client()->DummyConnected() && GameClient()->m_aLocalIds[1] == pInfo->m_ClientId);
 				m_ScoreboardPopupContext.m_IsSpectating = true;
 				m_ScoreboardPopupContext.m_NoteInput.Set(PlayerNote(GameClient()->m_aClients[pInfo->m_ClientId].m_aName));
+				m_ScoreboardPopupContext.m_SkinInput.Set(PlayerGameSkin(GameClient()->m_aClients[pInfo->m_ClientId].m_aName));
 
 				Ui()->DoPopupMenu(&m_ScoreboardPopupContext, Ui()->MouseX(), Ui()->MouseY(), 150.0f,
-					m_ScoreboardPopupContext.m_IsLocal ? 54.0f : 84.0f, &m_ScoreboardPopupContext, CScoreboardPopupContext::Render);
+					m_ScoreboardPopupContext.m_IsLocal ? 75.5f : 105.5f, &m_ScoreboardPopupContext, CScoreboardPopupContext::Render);
 			}
 
 			if(Ui()->HotItem() == &m_aPlayers[pInfo->m_ClientId].m_PlayerButtonId ||
@@ -881,9 +925,10 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 									     (Client()->DummyConnected() && GameClient()->m_aLocalIds[1] == pInfo->m_ClientId);
 					m_ScoreboardPopupContext.m_IsSpectating = false;
 					m_ScoreboardPopupContext.m_NoteInput.Set(PlayerNote(ClientData.m_aName));
+					m_ScoreboardPopupContext.m_SkinInput.Set(PlayerGameSkin(ClientData.m_aName));
 
 					Ui()->DoPopupMenu(&m_ScoreboardPopupContext, Ui()->MouseX(), Ui()->MouseY(), 150.0f,
-						m_ScoreboardPopupContext.m_IsLocal ? 82.5f : 111.5f, &m_ScoreboardPopupContext, CScoreboardPopupContext::Render);
+						m_ScoreboardPopupContext.m_IsLocal ? 104.0f : 133.0f, &m_ScoreboardPopupContext, CScoreboardPopupContext::Render);
 				}
 
 				if(Ui()->HotItem() == &Player.m_PlayerButtonId ||
@@ -1346,10 +1391,18 @@ void CScoreboard::OnRender()
 
 	RenderRecordingNotification((Screen.w / 7) * 4 + 10);
 
-	if(m_NotesDirty && !Ui()->IsPopupOpen(&m_ScoreboardPopupContext))
+	if(!Ui()->IsPopupOpen(&m_ScoreboardPopupContext))
 	{
-		SaveNotes();
-		m_NotesDirty = false;
+		if(m_NotesDirty)
+		{
+			SaveNotes();
+			m_NotesDirty = false;
+		}
+		if(m_SkinsDirty)
+		{
+			SaveSkins();
+			m_SkinsDirty = false;
+		}
 	}
 
 	if(!GameClient()->m_Menus.IsActive() && !GameClient()->m_Chat.IsActive())
@@ -1533,6 +1586,14 @@ CUi::EPopupMenuFunctionResult CScoreboard::CScoreboardPopupContext::Render(void 
 	pUi->DoLabel(&NoteLabel, Localize("Note"), FontSize, TEXTALIGN_ML);
 	if(pUi->DoEditBox(&pPopupContext->m_NoteInput, &NoteBox, FontSize))
 		pScoreboard->SetPlayerNote(Client.m_aName, pPopupContext->m_NoteInput.GetString());
+
+	View.HSplitTop(ItemSpacing * 2, nullptr, &View);
+	View.HSplitTop(ButtonSize, &Container, &View);
+	CUIRect SkinLabel, SkinBox;
+	Container.VSplitLeft(30.0f, &SkinLabel, &SkinBox);
+	pUi->DoLabel(&SkinLabel, Localize("Game skin"), FontSize, TEXTALIGN_ML);
+	if(pUi->DoEditBox(&pPopupContext->m_SkinInput, &SkinBox, FontSize))
+		pScoreboard->SetPlayerGameSkin(Client.m_aName, pPopupContext->m_SkinInput.GetString());
 
 	return CUi::POPUP_KEEP_OPEN;
 }

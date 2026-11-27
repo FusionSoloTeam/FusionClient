@@ -43,6 +43,8 @@ public:
 	void Emote(int Emoticon);
 	void EyeEmote(int EyeEmote);
 
+	CUIRect GetHudEditorRect() const;
+
 	bool IsActive() const { return m_Active; }
 
 	friend class CBindWheel;

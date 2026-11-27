@@ -16,6 +16,7 @@
 #include <game/client/gameclient.h>
 #include <game/client/ui_listbox.h>
 #include <game/client/ui_scrollregion.h>
+#include <game/collision.h>
 #include <game/editor/mapitems/image.h>
 #include <game/editor/mapitems/sound.h>
 
@@ -258,6 +259,667 @@ CUi::EPopupMenuFunctionResult CEditor::PopupUnusedTeleports(void *pContext, CUIR
 	return CUi::POPUP_KEEP_OPEN;
 }
 
+static std::vector<ivec2> s_vHookSpots;
+
+static bool HookSpotIsTeeBlocker(int Tile)
+{
+	return Tile == TILE_SOLID || Tile == TILE_NOHOOK;
+}
+
+static bool HookSpotIsHookBlocker(int Tile)
+{
+	switch(Tile)
+	{
+	case TILE_SOLID:
+	case TILE_NOHOOK:
+	case TILE_THROUGH_ALL:
+	case TILE_THROUGH_DIR:
+	case TILE_TELEINHOOK:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static bool HookSpotStopsHook(int Tile)
+{
+	switch(Tile)
+	{
+	case TILE_NOHOOK:
+	case TILE_THROUGH_ALL:
+	case TILE_THROUGH_DIR:
+	case TILE_TELEINHOOK:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static bool HookSpotIsFrozen(int Tile)
+{
+	return Tile == TILE_FREEZE || Tile == TILE_DFREEZE;
+}
+
+static bool HookSpotIsTele(int Tile)
+{
+	switch(Tile)
+	{
+	case TILE_TELEIN:
+	case TILE_TELEOUT:
+	case TILE_TELECHECK:
+	case TILE_TELECHECKOUT:
+	case TILE_TELECHECKIN:
+	case TILE_TELEINEVIL:
+	case TILE_TELECHECKINEVIL:
+	case TILE_TELEINHOOK:
+	case TILE_TELEINWEAPON:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static int HookSpotStopperMask(int Tile, int Flags)
+{
+	Flags &= TILEFLAG_XFLIP | TILEFLAG_YFLIP | TILEFLAG_ROTATE;
+	switch(Tile)
+	{
+	case TILE_STOP:
+		switch(Flags)
+		{
+		case ROTATION_0:
+			return CANTMOVE_DOWN;
+		case ROTATION_90:
+			return CANTMOVE_LEFT;
+		case ROTATION_180:
+			return CANTMOVE_UP;
+		case ROTATION_270:
+			return CANTMOVE_RIGHT;
+		case static_cast<int>(TILEFLAG_YFLIP) ^ static_cast<int>(ROTATION_0):
+			return CANTMOVE_UP;
+		case static_cast<int>(TILEFLAG_YFLIP) ^ static_cast<int>(ROTATION_90):
+			return CANTMOVE_RIGHT;
+		case static_cast<int>(TILEFLAG_YFLIP) ^ static_cast<int>(ROTATION_180):
+			return CANTMOVE_DOWN;
+		case static_cast<int>(TILEFLAG_YFLIP) ^ static_cast<int>(ROTATION_270):
+			return CANTMOVE_LEFT;
+		}
+		break;
+	case TILE_STOPS:
+		switch(Flags)
+		{
+		case ROTATION_0:
+		case ROTATION_180:
+		case static_cast<int>(TILEFLAG_YFLIP) ^ static_cast<int>(ROTATION_0):
+		case static_cast<int>(TILEFLAG_YFLIP) ^ static_cast<int>(ROTATION_180):
+			return CANTMOVE_DOWN | CANTMOVE_UP;
+		case ROTATION_90:
+		case ROTATION_270:
+		case static_cast<int>(TILEFLAG_YFLIP) ^ static_cast<int>(ROTATION_90):
+		case static_cast<int>(TILEFLAG_YFLIP) ^ static_cast<int>(ROTATION_270):
+			return CANTMOVE_LEFT | CANTMOVE_RIGHT;
+		}
+		break;
+	case TILE_STOPA:
+		return CANTMOVE_LEFT | CANTMOVE_RIGHT | CANTMOVE_UP | CANTMOVE_DOWN;
+	}
+	return 0;
+}
+
+class CHookSpotGrid
+{
+public:
+	int m_W = 0;
+	int m_H = 0;
+	std::vector<uint8_t> m_aWall;
+	std::vector<uint8_t> m_aSolid;
+	std::vector<uint8_t> m_aHookStop;
+	std::vector<uint8_t> m_aStop;
+	std::vector<uint8_t> m_aFrozen;
+	std::vector<uint8_t> m_aTele;
+	std::vector<uint8_t> m_aThroughDir;
+	std::vector<uint8_t> m_aThrough;
+	std::vector<uint8_t> m_aFlags;
+	std::vector<uint8_t> m_aStart;
+
+	void Init(int W, int H)
+	{
+		m_W = W;
+		m_H = H;
+		const size_t Num = (size_t)W * H;
+		m_aWall.assign(Num, 0);
+		m_aSolid.assign(Num, 0);
+		m_aHookStop.assign(Num, 0);
+		m_aStop.assign(Num, 0);
+		m_aFrozen.assign(Num, 0);
+		m_aTele.assign(Num, 0);
+		m_aThroughDir.assign(Num, 0);
+		m_aThrough.assign(Num, 0);
+		m_aFlags.assign(Num, 0);
+		m_aStart.assign(Num, 0);
+	}
+
+	size_t Idx(int x, int y) const { return (size_t)y * m_W + x; }
+	bool Inside(int x, int y) const { return x >= 0 && y >= 0 && x < m_W && y < m_H; }
+	bool Wall(int x, int y) const { return !Inside(x, y) || m_aWall[Idx(x, y)]; }
+	bool Walk(int x, int y) const { return Inside(x, y) && !m_aWall[Idx(x, y)]; }
+	bool Solid(int x, int y) const { return Inside(x, y) && m_aSolid[Idx(x, y)]; }
+
+	void AddGameTile(int x, int y, const CTile &Tile, bool Overlay = false)
+	{
+		if(!Inside(x, y))
+			return;
+		const size_t i = Idx(x, y);
+		const int Index = Tile.m_Index;
+		if(Overlay && Index == TILE_AIR)
+			return;
+		const int Stop = HookSpotStopperMask(Index, Tile.m_Flags);
+		if(Stop)
+			m_aStop[i] = (uint8_t)Stop;
+		if(HookSpotIsTeeBlocker(Index))
+			m_aWall[i] = 1;
+		if(Index == TILE_SOLID)
+			m_aSolid[i] = 1;
+		if(HookSpotStopsHook(Index))
+			m_aHookStop[i] = 1;
+		if(HookSpotIsFrozen(Index))
+			m_aFrozen[i] = 1;
+		if(Index == TILE_THROUGH_DIR)
+			m_aThroughDir[i] = 1;
+		if(Index == TILE_THROUGH)
+			m_aThrough[i] = 1;
+		if(Index == TILE_START)
+			m_aStart[i] = 1;
+		m_aFlags[i] = (uint8_t)Tile.m_Flags;
+	}
+
+	void AddTeleTile(int x, int y, int Type)
+	{
+		if(!Inside(x, y) || !HookSpotIsTele(Type))
+			return;
+		m_aTele[Idx(x, y)] = 1;
+	}
+
+	bool StopsHook(int x, int y, int dx, int dy) const
+	{
+		if(!Inside(x, y))
+			return true;
+		const size_t i = Idx(x, y);
+		if(!m_aHookStop[i])
+			return false;
+		if(m_aThroughDir[i])
+		{
+			const int Flags = m_aFlags[i] & (TILEFLAG_XFLIP | TILEFLAG_YFLIP | TILEFLAG_ROTATE);
+			return (Flags == ROTATION_0 && dy > 0) ||
+			       (Flags == ROTATION_90 && dx < 0) ||
+			       (Flags == ROTATION_180 && dy < 0) ||
+			       (Flags == ROTATION_270 && dx > 0);
+		}
+		return true;
+	}
+
+	bool BlocksHook(int x, int y, int dx, int dy) const
+	{
+		if(!Inside(x, y))
+			return true;
+		if(m_aWall[Idx(x, y)])
+			return true;
+		return StopsHook(x, y, dx, dy);
+	}
+
+	bool ThroughPassable(int x, int y, int OffX, int OffY) const
+	{
+		const int nx = x + OffX;
+		const int ny = y + OffY;
+		return Inside(nx, ny) && m_aThrough[Idx(nx, ny)];
+	}
+
+
+	bool Grounded(int x, int y) const
+	{
+		return Wall(x, y + 1);
+	}
+
+	static constexpr int MAX_JUMP = 5;
+
+	bool CanMove(int x, int y, int ToX, int ToY) const
+	{
+		if(!Inside(x, y) || !Inside(ToX, ToY))
+			return false;
+		const size_t i = Idx(x, y);
+		if(m_aWall[i])
+			return false;
+		if(m_aWall[Idx(ToX, ToY)])
+			return false;
+		const int Dx = ToX - x;
+		const int Dy = ToY - y;
+		if(Dx == 0 && Dy > 0)
+			return true;
+		if(Dx == 1 && Dy == 0)
+			return !(m_aStop[i] & CANTMOVE_RIGHT);
+		if(Dx == -1 && Dy == 0)
+			return !(m_aStop[i] & CANTMOVE_LEFT);
+		if(Dx == 0 && Dy < 0)
+		{
+			if(-Dy > MAX_JUMP)
+				return false;
+			if(!Grounded(x, y) || (m_aStop[i] & CANTMOVE_UP))
+				return false;
+			for(int k = 1; k <= -Dy; k++)
+			{
+				if(Wall(x, y - k))
+					return false;
+			}
+			return true;
+		}
+		return false;
+	}
+};
+
+	static bool RayHooks(const CHookSpotGrid &Grid, float x0, float y0, float x1, float y1)
+	{
+		const float Dx = x1 - x0;
+		const float Dy = y1 - y0;
+		const float Len = sqrtf(Dx * Dx + Dy * Dy);
+		if(Len < 1.0f)
+			return false;
+
+		int OffX = 0, OffY = 0;
+		if(fabsf(Dx) > fabsf(Dy))
+			OffX = (Dx > 0.0f) ? -1 : 1;
+		else
+			OffY = (Dy > 0.0f) ? -1 : 1;
+
+		const int Steps = (int)Len + 1;
+		for(int i = 1; i <= Steps; i++)
+		{
+			const float t = (float)i / (float)Steps;
+			const int ix = (int)roundf(x0 + Dx * t) / 32;
+			const int iy = (int)roundf(y0 + Dy * t) / 32;
+			if(!Grid.Inside(ix, iy))
+				return false;
+			const size_t m = Grid.Idx(ix, iy);
+			if(Grid.m_aSolid[m])
+				return !Grid.ThroughPassable(ix, iy, OffX, OffY);
+			if(Grid.BlocksHook(ix, iy, OffX, OffY))
+				return false;
+		}
+		return false;
+	}
+
+static void AnalyzeHookSpots(CHookSpotGrid &Grid);
+
+static void RebuildHookSpots(CEditor *pEditor)
+{
+	s_vHookSpots.clear();
+
+	CEditorMap *pMap = pEditor->Map();
+	std::shared_ptr<CLayerTiles> pGame = pMap->m_pGameLayer;
+	if(!pGame)
+	{
+		for(const auto &pGroup : pMap->m_vpGroups)
+		{
+			for(const auto &pLayer : pGroup->m_vpLayers)
+			{
+				if(pLayer->m_Type != LAYERTYPE_TILES)
+					continue;
+				auto pTiles = std::static_pointer_cast<CLayerTiles>(pLayer);
+				if(pTiles->m_HasGame)
+				{
+					pGame = pTiles;
+					break;
+				}
+			}
+			if(pGame)
+				break;
+		}
+	}
+	if(!pGame || pGame->m_Width <= 0 || pGame->m_Height <= 0)
+	{
+		pEditor->ShowFileDialogError("No game layer found");
+		return;
+	}
+
+	CHookSpotGrid Grid;
+	Grid.Init(pGame->m_Width, pGame->m_Height);
+
+	for(int y = 0; y < Grid.m_H; y++)
+		for(int x = 0; x < Grid.m_W; x++)
+			Grid.AddGameTile(x, y, pGame->m_pTiles[Grid.Idx(x, y)]);
+
+	if(pMap->m_pFrontLayer && pMap->m_pFrontLayer->m_Width == Grid.m_W && pMap->m_pFrontLayer->m_Height == Grid.m_H)
+	{
+		for(int y = 0; y < Grid.m_H; y++)
+			for(int x = 0; x < Grid.m_W; x++)
+				Grid.AddGameTile(x, y, pMap->m_pFrontLayer->m_pTiles[Grid.Idx(x, y)], true);
+	}
+
+	if(pMap->m_pTeleLayer && pMap->m_pTeleLayer->m_Width == Grid.m_W && pMap->m_pTeleLayer->m_Height == Grid.m_H)
+	{
+		for(int y = 0; y < Grid.m_H; y++)
+			for(int x = 0; x < Grid.m_W; x++)
+				Grid.AddTeleTile(x, y, pMap->m_pTeleLayer->m_pTeleTile[Grid.Idx(x, y)].m_Type);
+	}
+
+	AnalyzeHookSpots(Grid);
+}
+
+static void AnalyzeHookSpots(CHookSpotGrid &Grid)
+{
+	s_vHookSpots.clear();
+
+	const size_t Num = (size_t)Grid.m_W * Grid.m_H;
+
+	std::vector<int> aComp(Num, -1);
+	std::vector<ivec2> vQ;
+	int BestComp = -1;
+	size_t BestSize = 0;
+	int CompCount = 0;
+	for(int y = 0; y < Grid.m_H; y++)
+	{
+		for(int x = 0; x < Grid.m_W; x++)
+		{
+			const size_t s = Grid.Idx(x, y);
+			if(Grid.m_aWall[s] || aComp[s] >= 0)
+				continue;
+			vQ.clear();
+			vQ.emplace_back(x, y);
+			aComp[s] = CompCount;
+			for(size_t Head = 0; Head < vQ.size(); Head++)
+			{
+				const ivec2 Cur = vQ[Head];
+				static const ivec2 s_aDirs[] = {ivec2(1, 0), ivec2(-1, 0), ivec2(0, 1), ivec2(0, -1)};
+				for(const ivec2 &Dir : s_aDirs)
+				{
+					const int nx = Cur.x + Dir.x;
+					const int ny = Cur.y + Dir.y;
+					if(!Grid.Inside(nx, ny))
+						continue;
+					const size_t n = Grid.Idx(nx, ny);
+					if(Grid.m_aWall[n] || aComp[n] >= 0)
+						continue;
+					aComp[n] = CompCount;
+					vQ.emplace_back(nx, ny);
+				}
+			}
+			if(vQ.size() > BestSize)
+			{
+				BestSize = vQ.size();
+				BestComp = CompCount;
+			}
+			CompCount++;
+		}
+	}
+
+	if(BestComp < 0)
+		return;
+
+	constexpr int NUM_RAYS = 256;
+	const float HookLenTiles = 380.0f / 32.0f;
+
+	static float s_aRayX[NUM_RAYS];
+	static float s_aRayY[NUM_RAYS];
+	static int s_aRayDX[NUM_RAYS];
+	static int s_aRayDY[NUM_RAYS];
+	static bool s_RaysReady = false;
+	if(!s_RaysReady)
+	{
+		for(int r = 0; r < NUM_RAYS; r++)
+		{
+			const float Angle = (float)r * 2.0f * pi / (float)NUM_RAYS;
+			s_aRayX[r] = cosf(Angle);
+			s_aRayY[r] = sinf(Angle);
+			s_aRayDX[r] = (int)roundf(s_aRayX[r]);
+			s_aRayDY[r] = (int)roundf(s_aRayY[r]);
+		}
+		s_RaysReady = true;
+	}
+
+	std::vector<uint8_t> aStand(Num, 0);
+	for(int y = 0; y < Grid.m_H - 1; y++)
+	{
+		for(int x = 0; x < Grid.m_W; x++)
+		{
+			const size_t s = Grid.Idx(x, y);
+			if(Grid.m_aWall[s] || aComp[s] != BestComp)
+				continue;
+			if(Grid.Wall(x, y + 1))
+				aStand[s] = 1;
+		}
+	}
+
+	auto CanWalkTo = [&](int fx, int fy, int tx2, int ty2) {
+		if(!Grid.Inside(tx2, ty2))
+			return false;
+		const int Dy = fy - ty2;
+		const int Dx = tx2 - fx;
+		if(Dy < 0 || Dy > 3 || Dx < -5 || Dx > 5 || Dx == 0)
+			return false;
+		if(!aStand[Grid.Idx(tx2, ty2)])
+			return false;
+		for(int k = 1; k <= Dy; k++)
+			if(Grid.m_aWall[Grid.Idx(fx, fy - k)])
+				return false;
+		for(int k = 1; k < std::abs(Dx); k++)
+		{
+			const int mx = fx + (Dx > 0 ? k : -k);
+			if(Grid.m_aWall[Grid.Idx(mx, ty2)])
+				return false;
+		}
+		return true;
+	};
+
+	std::vector<uint8_t> aWalk(Num, 0);
+	{
+		std::vector<ivec2> vQ;
+		std::vector<ivec2> vBest;
+		std::vector<uint8_t> aSeen(Num, 0);
+		for(int y = 0; y < Grid.m_H; y++)
+		{
+			for(int x = 0; x < Grid.m_W; x++)
+			{
+				const size_t s0 = Grid.Idx(x, y);
+				if(!aStand[s0] || aSeen[s0])
+					continue;
+				vQ.clear();
+				vQ.emplace_back(x, y);
+				aSeen[s0] = 1;
+				for(size_t Head = 0; Head < vQ.size(); Head++)
+				{
+					const ivec2 Cur = vQ[Head];
+					for(int dx = -3; dx <= 3; dx++)
+					{
+						for(int up = 0; up <= 3; up++)
+						{
+							if(dx == 0 && up == 0)
+								continue;
+							const int nx = Cur.x + dx;
+							const int ny = Cur.y - up;
+							if(!Grid.Inside(nx, ny))
+								continue;
+							const size_t n = Grid.Idx(nx, ny);
+							if(aSeen[n] || !CanWalkTo(Cur.x, Cur.y, nx, ny))
+								continue;
+							aSeen[n] = 1;
+							vQ.emplace_back(nx, ny);
+						}
+					}
+				}
+				if(vQ.size() > vBest.size())
+					vBest = vQ;
+			}
+		}
+		for(const ivec2 &C : vBest)
+			aWalk[Grid.Idx(C.x, C.y)] = 1;
+	}
+
+	std::vector<uint8_t> aTeeReach(Num, 0);
+	{
+		std::vector<ivec2> vQ;
+		for(int y = 0; y < Grid.m_H; y++)
+			for(int x = 0; x < Grid.m_W; x++)
+				if(aWalk[Grid.Idx(x, y)])
+				{
+					aTeeReach[Grid.Idx(x, y)] = 1;
+					vQ.emplace_back(x, y);
+				}
+		static const ivec2 s_aMoves[] = {ivec2(1, 0), ivec2(-1, 0), ivec2(0, 1), ivec2(0, -1), ivec2(0, -2)};
+		for(size_t Head = 0; Head < vQ.size(); Head++)
+		{
+			const ivec2 Cur = vQ[Head];
+			for(const ivec2 &M : s_aMoves)
+			{
+				const int nx = Cur.x + M.x;
+				const int ny = Cur.y + M.y;
+				if(!Grid.Inside(nx, ny))
+					continue;
+				const size_t n = Grid.Idx(nx, ny);
+				if(aTeeReach[n] || Grid.m_aWall[n])
+					continue;
+				if(!Grid.CanMove(Cur.x, Cur.y, nx, ny))
+					continue;
+				aTeeReach[n] = 1;
+				vQ.emplace_back(nx, ny);
+			}
+		}
+	}
+
+	std::vector<uint8_t> aOrigin(Num, 0);
+	for(int y = 0; y < Grid.m_H; y++)
+	{
+		for(int x = 0; x < Grid.m_W; x++)
+		{
+			const size_t s = Grid.Idx(x, y);
+			if(!aWalk[s])
+				continue;
+			for(int up = 0; up <= 5 && y - up >= 0; up++)
+			{
+				const size_t u = Grid.Idx(x, y - up);
+				if(Grid.m_aWall[u])
+					break;
+				aOrigin[u] = 1;
+			}
+		}
+	}
+
+	std::vector<uint8_t> aHookReach(Num, 0);
+
+
+	for(int y = 0; y < Grid.m_H; y++)
+	{
+		for(int x = 0; x < Grid.m_W; x++)
+		{
+			const size_t s = Grid.Idx(x, y);
+			if(aComp[s] != BestComp)
+				continue;
+			if(!aOrigin[s])
+				continue;
+			aHookReach[s] = 1;
+
+			const float fx0 = (float)x + 0.5f;
+			const float fy0 = (float)y + 0.5f;
+
+			for(int r = 0; r < NUM_RAYS; r++)
+			{
+				const float Dx = s_aRayX[r];
+				const float Dy = s_aRayY[r];
+				const float Adx = fabsf(Dx);
+				const float Ady = fabsf(Dy);
+				const int StepX = Dx > 0.0f ? 1 : -1;
+				const int StepY = Dy > 0.0f ? 1 : -1;
+				const float DeltaX = Adx < 1e-6f ? 1e30f : 1.0f / Adx;
+				const float DeltaY = Ady < 1e-6f ? 1e30f : 1.0f / Ady;
+				float MaxX = Adx < 1e-6f ? 1e30f : ((Dx > 0.0f ? (float)(x + 1) - fx0 : fx0 - (float)x) / Adx);
+				float MaxY = Ady < 1e-6f ? 1e30f : ((Dy > 0.0f ? (float)(y + 1) - fy0 : fy0 - (float)y) / Ady);
+
+				int tx = x;
+				int ty = y;
+				for(int k = 0; k < 64; k++)
+				{
+					if(MaxX < MaxY)
+					{
+						tx += StepX;
+						MaxX += DeltaX;
+					}
+					else if(MaxY < MaxX)
+					{
+						ty += StepY;
+						MaxY += DeltaY;
+					}
+					else
+					{
+						const int Ax = tx + StepX;
+						const int Ay = ty;
+						const int Bx = tx;
+						const int By = ty + StepY;
+						if(Grid.BlocksHook(Ax, Ay, s_aRayDX[r], s_aRayDY[r]) || Grid.BlocksHook(Bx, By, s_aRayDX[r], s_aRayDY[r]))
+							break;
+						tx = Ax;
+						ty = By;
+						MaxX += DeltaX;
+						MaxY += DeltaY;
+					}
+					if(!Grid.Inside(tx, ty))
+						break;
+					if(std::min(MaxX, MaxY) > HookLenTiles)
+						break;
+					if(Grid.BlocksHook(tx, ty, s_aRayDX[r], s_aRayDY[r]))
+						break;
+					aHookReach[Grid.Idx(tx, ty)] = 1;
+				}
+			}
+		}
+	}
+
+	for(int y = 0; y < Grid.m_H; y++)
+	{
+		for(int x = 0; x < Grid.m_W; x++)
+		{
+			const size_t i0 = Grid.Idx(x, y);
+			if(!aStand[i0] || !aTeeReach[i0] || aHookReach[i0])
+				continue;
+			s_vHookSpots.emplace_back(x, y);
+		}
+	}
+
+}
+
+bool CEditor::HasHookSpots() const
+{
+	return !s_vHookSpots.empty();
+}
+
+int CEditor::HookSpotCount() const
+{
+	return (int)s_vHookSpots.size();
+}
+
+void CEditor::ClearHookSpots()
+{
+	s_vHookSpots.clear();
+}
+
+void CEditor::RenderHookSpots()
+{
+	if(s_vHookSpots.empty())
+		return;
+
+	Map()->m_pGameGroup->MapScreen();
+
+	Graphics()->TextureClear();
+	Graphics()->QuadsBegin();
+	Graphics()->SetColor(1.0f, 0.15f, 0.15f, 0.45f);
+	for(const ivec2 &Cell : s_vHookSpots)
+	{
+		IGraphics::CQuadItem Quad(Cell.x * 32.0f, Cell.y * 32.0f, 32.0f, 32.0f);
+		Graphics()->QuadsDrawTL(&Quad, 1);
+	}
+	Graphics()->QuadsEnd();
+	Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+
+	Ui()->MapScreen();
+}
+
 CUi::EPopupMenuFunctionResult CEditor::PopupShapes(void *pContext, CUIRect View, bool Active)
 {
 	CEditor *pEditor = static_cast<CEditor *>(pContext);
@@ -389,6 +1051,29 @@ CUi::EPopupMenuFunctionResult CEditor::PopupMenuTools(void *pContext, CUIRect Vi
 	if(pEditor->DoButton_MenuItem(&s_AddShapesButton, "Add shapes", 0, &Slot, BUTTONFLAG_LEFT, "Place perfect shapes (circle, square, diamond, hexagon, octagon) with adjustable radius and thickness."))
 	{
 		pEditor->m_PopupShapesActivated = true;
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	static int s_HookSpotsButton = 0;
+	View.HSplitTop(2.0f, nullptr, &View);
+	View.HSplitTop(12.0f, &Slot, &View);
+	char aHookSpotText[64];
+	if(pEditor->m_ShowHookSpots)
+		str_format(aHookSpotText, sizeof(aHookSpotText), "Hide unhookable spots (%d)", pEditor->HookSpotCount());
+	else
+		str_copy(aHookSpotText, "Find unhookable spots");
+	if(pEditor->DoButton_MenuItem(&s_HookSpotsButton, aHookSpotText, pEditor->m_ShowHookSpots ? 1 : 0, &Slot, BUTTONFLAG_LEFT, "Highlight every spot a tee can walk or fall into but no hook can reach from the main playable area. Red cells mark places where a fallen tee cannot be saved."))
+	{
+		if(pEditor->m_ShowHookSpots)
+		{
+			pEditor->m_ShowHookSpots = false;
+			pEditor->ClearHookSpots();
+		}
+		else
+		{
+			RebuildHookSpots(pEditor);
+			pEditor->m_ShowHookSpots = true;
+		}
 		return CUi::POPUP_CLOSE_CURRENT;
 	}
 

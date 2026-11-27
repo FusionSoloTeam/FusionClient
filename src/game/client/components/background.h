@@ -1,6 +1,8 @@
 #ifndef GAME_CLIENT_COMPONENTS_BACKGROUND_H
 #define GAME_CLIENT_COMPONENTS_BACKGROUND_H
 
+#include <base/str.h>
+
 #include <engine/map.h>
 
 #include <game/client/components/maplayers.h>
@@ -36,6 +38,9 @@ public:
 
 	void LoadBackground();
 	const char *MapName() const { return m_aMapName; }
+
+	// true when a custom background map replaces the current map, not for CURRENT_MAP
+	bool ReplacesMapBackground() const { return m_Loaded && str_comp(m_aMapName, CURRENT_MAP) != 0; }
 };
 
 #endif

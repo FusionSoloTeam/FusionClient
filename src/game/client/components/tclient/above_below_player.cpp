@@ -1,5 +1,6 @@
 #include "above_below_player.h"
 
+#include "game/client/components/hud_layout.h"
 #include "game/client/gameclient.h"
 #include "game/mapitems.h"
 #include "engine/shared/config.h"
@@ -41,6 +42,8 @@ static bool IsWallBetween(const CCollision *pCollision, vec2 From, vec2 To)
 void CAboveBelowPlayer::OnRender()
 {
 	if(!g_Config.m_TcNotifyWhenAbovePosPlayer && !g_Config.m_TcNotifyWhenBelowPosPlayer && !g_Config.m_TcNotifyWhenSamePosPlayer)
+		return;
+	if(!HudLayout::IsEnabled(HudLayout::MODULE_ABOVE_BELOW))
 		return;
 
 	const int LocalClientId = GameClient()->m_Snap.m_SpecInfo.m_Active ? GameClient()->m_Snap.m_SpecInfo.m_SpectatorId : GameClient()->m_Snap.m_LocalClientId;
@@ -113,21 +116,29 @@ void CAboveBelowPlayer::OnRender()
 	}
 
 	m_LinesNum = (m_PlayerAbove ? 1 : m_AboveAnim > m_HideAnim ? 1 : 0) + (m_PlayerSame ? 1 : m_SameAnim > m_HideAnim ? 1 : 0) + (m_PlayerBelow ? 1 : m_BelowAnim > m_HideAnim ? 1 : 0);
+	m_EditorLines = m_LinesNum;
+	m_EditorHeight = 0.0f;
 
 	if(!m_LinesNum)
 		return;
 
 	Ui()->MapScreen();
 	const CUIRect *pScreen = Ui()->Screen();
-	const float LineSize = 20.0f;
-	const float FontSize = 14.0f;
-	const float Margin = 5.0f;
-	float LineHeight = 20 * m_LinesNum + 5 * (m_LinesNum - 1);
+	const float HudWidth = HudLayout::CANVAS_HEIGHT * Graphics()->ScreenAspect();
+	const float HudHeight = HudLayout::CANVAS_HEIGHT;
+	const auto Layout = HudLayout::Get(HudLayout::MODULE_ABOVE_BELOW, HudWidth, HudHeight);
+	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
+	const float UiPerHud = pScreen->h / HudHeight;
+	const float LineSize = 20.0f * Scale;
+	const float FontSize = 14.0f * Scale;
+	const float Margin = 5.0f * Scale;
+	float LineHeight = (20.0f * m_LinesNum + 5.0f * (m_LinesNum - 1)) * Scale;
+	m_EditorHeight = LineHeight / UiPerHud;
 	CUIRect Line, CurLine;
-	Line.w = pScreen->w / 6.0f;
+	Line.w = pScreen->w / 6.0f * Scale;
 	Line.h = LineHeight;
-	Line.x = (pScreen->w - Line.w) * g_Config.m_TcNotifyWhenPosPlayerPosX / 100.0f;
-	Line.y = (pScreen->h - Line.h) * g_Config.m_TcNotifyWhenPosPlayerPosY / 100.0f;
+	Line.x = Layout.m_X * UiPerHud;
+	Line.y = Layout.m_Y * UiPerHud;
 
 	if(m_PlayerAbove || m_AboveAnim > m_HideAnim)
 	{
@@ -197,4 +208,19 @@ void CAboveBelowPlayer::OnRender()
 			Ui()->DoLabel(&CurLine, aBelow, FontSize, TEXTALIGN_MC, Props);
 		}
 	}
+}
+
+CUIRect CAboveBelowPlayer::GetHudEditorRect() const
+{
+	const float HudWidth = HudLayout::CANVAS_HEIGHT * Graphics()->ScreenAspect();
+	const float HudHeight = HudLayout::CANVAS_HEIGHT;
+	const auto Layout = HudLayout::Get(HudLayout::MODULE_ABOVE_BELOW, HudWidth, HudHeight);
+	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
+	const int Lines = maximum(m_EditorLines, 1);
+	const float BlockW = HudWidth / 6.0f * Scale;
+	float BlockH = m_EditorHeight;
+	if(BlockH <= 0.0f)
+		BlockH = (10.0f * Lines + 2.5f * (Lines - 1)) * Scale;
+	CUIRect Rect = {Layout.m_X, Layout.m_Y, BlockW, BlockH};
+	return Rect;
 }

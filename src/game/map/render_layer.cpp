@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cmath>
+#include <limits>
 
 /************************
  * Render Buffer Helper *
@@ -207,7 +208,8 @@ bool CRenderLayer::IsVisibleInClipRegion(const std::optional<CClipRegion> &ClipR
 	if(!ClipRegion.has_value())
 		return true;
 
-	CScreenRect ScreenRect = Graphics()->GetScreen();
+	// cull against the expanded rect so corners survive the camera tilt
+	const CScreenRect ScreenRect = Graphics()->GetScreenRectForCulling();
 	float Left = ClipRegion->m_X;
 	float Top = ClipRegion->m_Y;
 	float Right = ClipRegion->m_X + ClipRegion->m_Width;
@@ -249,7 +251,10 @@ bool CRenderLayerGroup::DoRender(const CRenderLayerParams &Params)
 			float Right = m_pGroup->m_ClipX + m_pGroup->m_ClipW - ScreenRect.m_TopLeft.x;
 			float Bottom = m_pGroup->m_ClipY + m_pGroup->m_ClipH - ScreenRect.m_TopLeft.y;
 
-			if(Right < 0.0f || Left > ScreenWidth || Bottom < 0.0f || Top > ScreenHeight)
+			// tilt means the tight rect would cull visible corners
+			const CScreenRect CullRect = Graphics()->GetScreenRectForCulling();
+			if(m_pGroup->m_ClipX + m_pGroup->m_ClipW < CullRect.m_TopLeft.x || m_pGroup->m_ClipX > CullRect.m_BottomRight.x ||
+				m_pGroup->m_ClipY + m_pGroup->m_ClipH < CullRect.m_TopLeft.y || m_pGroup->m_ClipY > CullRect.m_BottomRight.y)
 				return false;
 
 			// Render debug before enabling the clip
@@ -313,7 +318,7 @@ void CRenderLayerTile::RenderTileLayer(const ColorRGBA &Color, const CRenderLaye
 	if(Visuals.m_BufferContainerIndex == -1)
 		return; // no visuals were created
 
-	CScreenRect ScreenRect = Graphics()->GetScreen();
+	const CScreenRect ScreenRect = Graphics()->GetScreenRectForCulling();
 
 	int ScreenRectY0 = std::floor(ScreenRect.m_TopLeft.y / 32);
 	int ScreenRectX0 = std::floor(ScreenRect.m_TopLeft.x / 32);
@@ -494,7 +499,7 @@ void CRenderLayerTile::RenderKillTileBorder(const ColorRGBA &Color)
 	if(Visuals.m_BufferContainerIndex == -1)
 		return; // no visuals were created
 
-	CScreenRect ScreenRect = Graphics()->GetScreen();
+	const CScreenRect ScreenRect = Graphics()->GetScreenRectForCulling();
 
 	int BorderY0 = std::floor(ScreenRect.m_TopLeft.y / 32);
 	int BorderX0 = std::floor(ScreenRect.m_TopLeft.x / 32);
@@ -618,7 +623,7 @@ void CRenderLayerTile::RenderAnimatedTileLayer(const ColorRGBA &Color, const CRe
 		m_PreviousAnimationBounds.reset();
 	}
 
-	const CScreenRect ScreenRect = Graphics()->GetScreen();
+	const CScreenRect ScreenRect = Graphics()->GetScreenRectForCulling();
 	const int StartX = std::clamp((int)std::floor(ScreenRect.m_TopLeft.x / 32.0f), 0, Width);
 	const int StartY = std::clamp((int)std::floor(ScreenRect.m_TopLeft.y / 32.0f), 0, Height);
 	const int EndX = std::clamp((int)std::ceil(ScreenRect.m_BottomRight.x / 32.0f), 0, Width);
@@ -799,7 +804,7 @@ void CRenderLayerTile::RenderAnimatedTileLayerOverlays(const ColorRGBA &Color, c
 	if(!Params.m_RenderTileBorder || !m_VisualTiles.has_value() || m_VisualTiles->m_BufferContainerIndex == -1)
 		return;
 
-	const CScreenRect ScreenRect = Graphics()->GetScreen();
+	const CScreenRect ScreenRect = Graphics()->GetScreenRectForCulling();
 	const int ScreenRectY0 = std::floor(ScreenRect.m_TopLeft.y / 32);
 	const int ScreenRectX0 = std::floor(ScreenRect.m_TopLeft.x / 32);
 	const int ScreenRectY1 = std::ceil(ScreenRect.m_BottomRight.y / 32);
@@ -1828,6 +1833,98 @@ void CRenderLayerEntityTele::Init()
 void CRenderLayerEntityTele::InitTileData()
 {
 	m_pTeleTiles = GetData<CTeleTile>();
+	BuildTeleLinks();
+}
+
+void CRenderLayerEntityTele::BuildTeleLinks()
+{
+	m_vTeleLinks.clear();
+	const int w = m_pLayerTilemap->m_Width;
+	const int h = m_pLayerTilemap->m_Height;
+	if(m_pTeleTiles == nullptr || w <= 0 || h <= 0)
+		return;
+	if(m_pMap->GetDataSize(GetDataIndex()) < w * h * (int)sizeof(CTeleTile))
+		return;
+
+	// group by number and checkpoint-ness, so tele-in #3 stays apart from checkpoint #3
+	std::vector<vec2> aPoints[512];
+	for(int y = 0; y < h; y++)
+	{
+		for(int x = 0; x < w; x++)
+		{
+			const CTeleTile &Tile = m_pTeleTiles[y * w + x];
+			if(Tile.m_Number != 0 && IsTeleTileNumberUsedAny(Tile.m_Type))
+			{
+				const int GroupIndex = Tile.m_Number * 2 + (IsTeleTileCheckpoint(Tile.m_Type) ? 1 : 0);
+				aPoints[GroupIndex].push_back(vec2(x * 32.0f + 16.0f, y * 32.0f + 16.0f));
+			}
+		}
+	}
+	// one minimal spanning tree keeps the interlinks short
+	for(int GroupIndex = 0; GroupIndex < 512; GroupIndex++)
+	{
+		const std::vector<vec2> &vPoints = aPoints[GroupIndex];
+		const int n = (int)vPoints.size();
+		if(n < 2)
+			continue;
+
+		std::vector<char> aInTree(n, 0);
+		std::vector<float> aDist(n, 0.0f);
+		std::vector<int> aParent(n, -1);
+		aInTree[0] = 1;
+		for(int i = 1; i < n; i++)
+		{
+			const vec2 d = vPoints[i] - vPoints[0];
+			aDist[i] = d.x * d.x + d.y * d.y;
+			aParent[i] = 0;
+		}
+		for(int Added = 1; Added < n; Added++)
+		{
+			int Best = -1;
+			float BestDist = std::numeric_limits<float>::max();
+			for(int i = 0; i < n; i++)
+			{
+				if(!aInTree[i] && aDist[i] < BestDist)
+				{
+					BestDist = aDist[i];
+					Best = i;
+				}
+			}
+			if(Best < 0)
+				break;
+			aInTree[Best] = 1;
+			// skip links over 50 tiles, they only bridge distant clusters
+			const vec2 LinkVec = vPoints[Best] - vPoints[aParent[Best]];
+			if(LinkVec.x * LinkVec.x + LinkVec.y * LinkVec.y <= 1600.0f * 1600.0f)
+				m_vTeleLinks.emplace_back(vPoints[aParent[Best]], vPoints[Best]);
+			for(int i = 0; i < n; i++)
+			{
+				if(aInTree[i])
+					continue;
+				const vec2 d = vPoints[i] - vPoints[Best];
+				const float Dist = d.x * d.x + d.y * d.y;
+				if(Dist < aDist[i])
+				{
+					aDist[i] = Dist;
+					aParent[i] = Best;
+				}
+			}
+		}
+	}
+}
+
+void CRenderLayerEntityTele::RenderTeleLinks(const CRenderLayerParams &Params, const ColorRGBA &Color)
+{
+	if(!g_Config.m_FcTeleLinks || !Params.m_RenderText || m_vTeleLinks.empty())
+		return;
+
+	Graphics()->TextureClear();
+	Graphics()->SetColor(Color);
+	Graphics()->LinesBegin();
+	// capped chunks avoid overflowing the vertex buffer
+	for(size_t Offset = 0; Offset < m_vTeleLinks.size(); Offset += 512)
+		Graphics()->LinesDraw(m_vTeleLinks.data() + Offset, std::min<size_t>(512, m_vTeleLinks.size() - Offset));
+	Graphics()->LinesEnd();
 }
 
 void CRenderLayerEntityTele::Unload()
@@ -1845,8 +1942,15 @@ void CRenderLayerEntityTele::RenderTileLayerWithTileBuffer(const ColorRGBA &Colo
 	RenderTileLayer(Color, Params);
 	if(Params.m_RenderText)
 	{
-		Graphics()->TextureSet(m_pMapImages->GetOverlayCenter());
-		RenderTileLayer(Color, Params, &m_VisualTeleNumbers.value());
+		if(g_Config.m_FcTeleLinks)
+		{
+			RenderTeleLinks(Params, Color);
+		}
+		else
+		{
+			Graphics()->TextureSet(m_pMapImages->GetOverlayCenter());
+			RenderTileLayer(Color, Params, &m_VisualTeleNumbers.value());
+		}
 	}
 }
 
@@ -1856,15 +1960,21 @@ void CRenderLayerEntityTele::RenderTileLayerNoTileBuffer(const ColorRGBA &Color,
 	RenderMap()->RenderTelemap(m_pTeleTiles, m_pLayerTilemap->m_Width, m_pLayerTilemap->m_Height, 32.0f, Color, (Params.m_RenderTileBorder ? TILERENDERFLAG_EXTEND : 0) | LAYERRENDERFLAG_OPAQUE);
 	Graphics()->BlendNormal();
 	RenderMap()->RenderTelemap(m_pTeleTiles, m_pLayerTilemap->m_Width, m_pLayerTilemap->m_Height, 32.0f, Color, (Params.m_RenderTileBorder ? TILERENDERFLAG_EXTEND : 0) | LAYERRENDERFLAG_TRANSPARENT);
-	int OverlayRenderFlags = (Params.m_RenderText ? OVERLAYRENDERFLAG_TEXT : 0) | (Params.m_RenderInvalidTiles ? OVERLAYRENDERFLAG_EDITOR : 0);
+	const bool bTeleLinks = g_Config.m_FcTeleLinks != 0;
+	int OverlayRenderFlags = ((Params.m_RenderText && !bTeleLinks) ? OVERLAYRENDERFLAG_TEXT : 0) | (Params.m_RenderInvalidTiles ? OVERLAYRENDERFLAG_EDITOR : 0);
 	RenderMap()->RenderTeleOverlay(m_pTeleTiles, m_pLayerTilemap->m_Width, m_pLayerTilemap->m_Height, 32.0f, OverlayRenderFlags, Color.a);
+	if(bTeleLinks)
+		RenderTeleLinks(Params, Color);
 }
 
 void CRenderLayerEntityTele::RenderAnimatedTileLayerOverlays(const ColorRGBA &Color, const CRenderLayerParams &Params)
 {
 	CRenderLayerTile::RenderAnimatedTileLayerOverlays(Color, Params);
-	const int OverlayRenderFlags = (Params.m_RenderText ? OVERLAYRENDERFLAG_TEXT : 0) | (Params.m_RenderInvalidTiles ? OVERLAYRENDERFLAG_EDITOR : 0);
+	const bool bTeleLinks = g_Config.m_FcTeleLinks != 0;
+	const int OverlayRenderFlags = ((Params.m_RenderText && !bTeleLinks) ? OVERLAYRENDERFLAG_TEXT : 0) | (Params.m_RenderInvalidTiles ? OVERLAYRENDERFLAG_EDITOR : 0);
 	RenderMap()->RenderTeleOverlay(m_pTeleTiles, m_pLayerTilemap->m_Width, m_pLayerTilemap->m_Height, 32.0f, OverlayRenderFlags, Color.a);
+	if(bTeleLinks)
+		RenderTeleLinks(Params, Color);
 }
 
 void CRenderLayerEntityTele::GetTileData(unsigned char *pIndex, unsigned char *pFlags, int *pAngleRotate, unsigned int x, unsigned int y, int CurOverlay) const

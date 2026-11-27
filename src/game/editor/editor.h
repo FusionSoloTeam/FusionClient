@@ -357,6 +357,7 @@ public:
 	int m_PopupEventActivated;
 	int m_PopupEventWasActivated;
 	bool m_PopupUnusedTeleportsActivated = false;
+	bool m_ShowHookSpots = false;
 	bool m_PopupShapesActivated = false;
 	bool m_LargeLayerWasWarned;
 	bool m_PreventUnusedTilesWasWarned;
@@ -540,6 +541,10 @@ public:
 	static CUi::EPopupMenuFunctionResult PopupMenuFile(void *pContext, CUIRect View, bool Active);
 	static CUi::EPopupMenuFunctionResult PopupMenuTools(void *pContext, CUIRect View, bool Active);
 	static CUi::EPopupMenuFunctionResult PopupUnusedTeleports(void *pContext, CUIRect View, bool Active);
+	bool HasHookSpots() const;
+	int HookSpotCount() const;
+	void ClearHookSpots();
+	void RenderHookSpots();
 	static CUi::EPopupMenuFunctionResult PopupShapes(void *pContext, CUIRect View, bool Active);
 	static CUi::EPopupMenuFunctionResult PopupMenuSettings(void *pContext, CUIRect View, bool Active);
 	class CPopupMapTab : public SPopupMenuId

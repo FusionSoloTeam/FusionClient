@@ -76,6 +76,8 @@ class CChat : public CComponent
 		int m_TimesRepeated;
 
 		std::shared_ptr<CTranslateResponse> m_pTranslateResponse;
+
+		int m_GifChatId = -1;
 	};
 
 	bool m_PrevScoreBoardShowed;
@@ -107,6 +109,8 @@ class CChat : public CComponent
 	bool m_SmoothWasDeleting = false;
 	char m_aSmoothSentText[MAX_CHAT_LENGTH] = "";
 	std::vector<STextColorSplit> m_vSmoothSentGradientSplits;
+	std::string m_GhostHint;
+	int64_t m_GhostHintChangeTime = -1;
 
 	float m_ChatSlide = 0.0f;
 	float m_LastGradientPhase = -1.0f;
@@ -244,6 +248,7 @@ public:
 
 	void RebuildChat();
 	void ClearLines();
+	void InvalidateGifLines();
 
 	void EnsureCoherentFontSize() const;
 	void EnsureCoherentWidth() const;
@@ -261,6 +266,7 @@ public:
 	// @param Team MODE_ALL=0 MODE_TEAM=1
 	// @param pLine the chat message
 	void SendChat(int Team, const char *pLine);
+	void SendChatToConn(int Conn, int Team, const char *pLine);
 
 	// Sends a chat message to the server.
 	//
@@ -277,6 +283,7 @@ public:
 
 	bool GetLayoutFixCommand(char *pOut, int OutSize) const;
 	const char *FindCommandByPrefix(const char *pName) const;
+	void GetGhostHint(const char **ppText, int *pSkip, int *pAnchorOffset) const;
 	void TagPlayerUnderCursor();
 	bool TagChatNameUnderCursor(const CLine &Line, const CUIRect &RowRect, float LineWidth, const vec2 &MousePos);
 	void InsertChatTag(const char *pName);

@@ -223,6 +223,76 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
+
+  arch:
+    name: Arch Linux
+    needs: meta
+    # Arch Linux has no GitHub-hosted runner, so the build runs inside the Arch base image
+    runs-on: ubuntu-24.04
+    container: archlinux:base
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          pacman -Syu --noconfirm --needed --refresh \
+            base-devel git cmake ninja pkgconf rust python3 \
+            curl openssl zlib tar gzip \
+            ffmpeg libcurl freetype2 glew libminiupnpc libnotify libogg opus opusfile libpng \
+            sdl2 sqlite libwebsockets x264 wavpack
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=.
+          -DVULKAN=OFF
+          -DDISCORD=OFF
+          -DTOOLS=OFF
+          -DAUTOUPDATE=OFF
+          -DDOWNLOAD_GTEST=OFF
+
+      - name: Build
+        run: |
+          set -o pipefail
+          cmake --build build --target game-client game-server 2>&1 | tee build.log
+
+      - name: Report build errors
+        if: failure()
+        run: |
+          [ -f build.log ] || exit 0
+          emit() { sed 's/%/%25/g; s/\r//g' | while IFS= read -r line; do echo "::error::[arch] ${line}"; done; }
+          grep -E 'error:|Error [0-9]+|undefined reference|CMake Error' build.log | head -n 5 | emit
+          tail -n 5 build.log | emit
+          exit 0
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          folder="${{ needs.meta.outputs.folder }}"
+          cmake --install build --component portable --prefix stage
+          dirs=($(find stage -mindepth 1 -maxdepth 1 -type d))
+          if [ "${#dirs[@]}" -ne 1 ]; then
+            echo "expected exactly one staged directory, found ${#dirs[@]}"
+            ls -la stage
+            exit 1
+          fi
+          mv "${dirs[0]}" "stage/${folder}"
+          mkdir -p dist
+          tar -czf "dist/${folder}-linux-arch.tar.gz" -C stage "${folder}"
+          ls -l dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.meta.outputs.folder }}-linux-arch
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
   android:
     name: Android (arm64)
     needs: meta
@@ -294,7 +364,7 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [meta, windows, linux, android]
+    needs: [meta, windows, linux, arch, android]
     if: ${{ !cancelled() && needs.windows.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
@@ -324,6 +394,7 @@ jobs:
             | Windows 64-bit | `${{ needs.meta.outputs.folder }}-win64.zip` |
             | Windows 32-bit | `${{ needs.meta.outputs.folder }}-win32.zip` |
             | Linux x86_64 | `${{ needs.meta.outputs.folder }}-linux-x86_64.tar.gz` |
+            | Linux (Arch) | `${{ needs.meta.outputs.folder }}-linux-arch.tar.gz` |
             | Android (arm64) | `${{ needs.meta.outputs.folder }}-android.apk` |
 
             Every archive extracts into a `${{ needs.meta.outputs.folder }}` folder.

@@ -12,6 +12,7 @@
 #include <game/client/components/menu_background.h>
 #include <game/client/gameclient.h>
 #include <game/client/ui.h>
+#include <game/client/ui_scrollregion.h>
 #include <game/localization.h>
 
 void CMenus::SetNeedSendInfo()
@@ -41,14 +42,15 @@ int CMenus::SettingsGroupOfPage(int Page) const
 	case SETTINGS_TCLIENT:
 	case SETTINGS_TCLIENT_BINDWHEEL:
 	case SETTINGS_TCLIENT_WARLIST:
-	case SETTINGS_TCLIENT_FRIENDLIST:
 	case SETTINGS_TCLIENT_CHATBINDS:
 	case SETTINGS_TCLIENT_STATUSBAR:
 	case SETTINGS_TCLIENT_INFO:
 		return SETTINGS_GROUP_TCLIENT;
+	case SETTINGS_TCLIENT_FRIENDLIST:
 	case SETTINGS_FUSION:
 	case SETTINGS_FUSION_INFO:
 	case SETTINGS_FUSION_CHATLOG:
+	case SETTINGS_FUSION_GAMES:
 		return SETTINGS_GROUP_FUSION;
 	default:
 		return -1;
@@ -83,6 +85,15 @@ void CMenus::RenderSettings(CUIRect MainView)
 	TabBar.HSplitTop(50.0f, &Button, &TabBar);
 	Button.Draw(ms_ColorTabbarActive, IGraphics::CORNER_BR, 10.0f);
 
+	// fixed heights push tabs past the screen at large scales, so the bar scrolls
+	static CScrollRegion s_TabBarScrollRegion;
+	CScrollRegionParams TabBarScrollParams;
+	TabBarScrollParams.m_ScrollUnit = 40.0f;
+	TabBarScrollParams.m_ScrollbarThickness = 8.0f;
+	TabBarScrollParams.m_ScrollbarMargin = 2.0f;
+	s_TabBarScrollRegion.Begin(&TabBar, &TabBarScrollParams);
+	const float TabBarContentTop = TabBar.y;
+
 	struct SSubTab
 	{
 		int m_Page;
@@ -104,14 +115,15 @@ void CMenus::RenderSettings(CUIRect MainView)
 		{SETTINGS_TCLIENT, TCLocalize("Settings")},
 		{SETTINGS_TCLIENT_BINDWHEEL, TCLocalize("Bind Wheel")},
 		{SETTINGS_TCLIENT_WARLIST, TCLocalize("War List")},
-		{SETTINGS_TCLIENT_FRIENDLIST, TCLocalize("Friendlist")},
 		{SETTINGS_TCLIENT_CHATBINDS, TCLocalize("Chat Binds")},
 		{SETTINGS_TCLIENT_STATUSBAR, TCLocalize("Status Bar")},
 		{SETTINGS_TCLIENT_INFO, TCLocalize("Info")},
 	};
 	const SSubTab aFusionTabs[] = {
 		{SETTINGS_FUSION, TCLocalize("Settings")},
+		{SETTINGS_TCLIENT_FRIENDLIST, TCLocalize("Friendlist")},
 		{SETTINGS_FUSION_CHATLOG, TCLocalize("Chat Logs")},
+		{SETTINGS_FUSION_GAMES, TCLocalize("Games")},
 		{SETTINGS_FUSION_INFO, "Info"},
 	};
 
@@ -204,9 +216,47 @@ void CMenus::RenderSettings(CUIRect MainView)
 			g_Config.m_UiSettingsPage = SETTINGS_ASSETS;
 	}
 
+	CUIRect TabBarContent = TabBar;
+	TabBarContent.y = TabBarContentTop;
+	TabBarContent.h = TabBar.y - TabBarContentTop;
+	s_TabBarScrollRegion.AddRect(TabBarContent);
+	s_TabBarScrollRegion.End();
+
 	const int NewPageGroup = SettingsGroupOfPage(g_Config.m_UiSettingsPage);
 	if(NewPageGroup >= 0)
 		m_aSettingsGroupLastPage[NewPageGroup] = g_Config.m_UiSettingsPage;
+
+	// pages are designed for 600px, so larger scales need a design-height region
+	// budget must match the space above MainView (10px margins + 24px menu bar + 20px panel)
+	constexpr float SettingsPageDesignHeight = 600.0f - 2.0f * 10.0f - 24.0f - 2.0f * 20.0f;
+	const float PageDesignHeight = SettingsPageDesignHeight - (NeedRestart ? 30.0f : 0.0f);
+	const int SettingsPage = g_Config.m_UiSettingsPage;
+	// drop the bet field focus, or typing goes there
+	if(SettingsPage != SETTINGS_FUSION_GAMES)
+		GameClient()->m_Casino.ReleaseTextInput();
+	const bool PageScrollsItself =
+		SettingsPage == SETTINGS_CONTROLS || SettingsPage == SETTINGS_CREDITS ||
+		SettingsPage == SETTINGS_TCLIENT || SettingsPage == SETTINGS_FUSION ||
+		SettingsPage == SETTINGS_TCLIENT_CHATBINDS;
+	static CScrollRegion s_PageScrollRegion;
+	static int s_PageScrollRegionPage = -1;
+	// 1px tolerance keeps scale 100 from enabling the scrollbar
+	const bool ScrollPage = !PageScrollsItself && MainView.h < PageDesignHeight - 1.0f;
+	if(ScrollPage && s_PageScrollRegionPage != SettingsPage)
+	{
+		// shared region must start at the top after a page switch
+		s_PageScrollRegion.Reset();
+		s_PageScrollRegionPage = SettingsPage;
+	}
+	if(ScrollPage)
+	{
+		CScrollRegionParams ScrollParams;
+		ScrollParams.m_ScrollUnit = 60.0f;
+		ScrollParams.m_ScrollbarMargin = 5.0f;
+		s_PageScrollRegion.Begin(&MainView, &ScrollParams);
+		MainView.VSplitRight(5.0f, &MainView, nullptr); // padding for the scrollbar
+		MainView.h = PageDesignHeight;
+	}
 
 	switch(g_Config.m_UiSettingsPage)
 	{
@@ -275,6 +325,10 @@ void CMenus::RenderSettings(CUIRect MainView)
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_LANGUAGE);
 		RenderSettingsFusionChatLog(MainView);
 		break;
+	case SETTINGS_FUSION_GAMES:
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_LANGUAGE);
+		GameClient()->m_Casino.Render(MainView);
+		break;
 	case SETTINGS_PROFILES:
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GENERAL);
 		RenderSettingsTClientProfiles(MainView);
@@ -292,6 +346,11 @@ void CMenus::RenderSettings(CUIRect MainView)
 		break;
 	}
 
+	if(ScrollPage)
+	{
+		s_PageScrollRegion.AddRect(MainView);
+		s_PageScrollRegion.End();
+	}
 
 	if(NeedRestart)
 	{

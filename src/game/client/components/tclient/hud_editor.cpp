@@ -194,7 +194,10 @@ namespace
 		       Module == HudLayout::MODULE_KEYSTROKES ||
 		       Module == HudLayout::MODULE_FINISH_PREDICTION ||
 		       Module == HudLayout::MODULE_VOTE ||
-		       Module == HudLayout::MODULE_VRAM_INFO;
+		       Module == HudLayout::MODULE_VRAM_INFO ||
+		       Module == HudLayout::MODULE_ABOVE_BELOW ||
+		       Module == HudLayout::MODULE_LAST_NOTIFY ||
+		       Module == HudLayout::MODULE_EMOTE_WHEEL;
 	}
 
 	bool PointInRect(vec2 Point, const CUIRect &Rect)
@@ -487,6 +490,22 @@ CUIRect CHudEditor::GetFallbackModuleRect(HudLayout::EModule Module) const
 		Rect = {Layout.m_X, Layout.m_Y, SampleWidth * Scale, 7.0f * Scale};
 		break;
 	}
+	case HudLayout::MODULE_ABOVE_BELOW:
+	{
+		const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
+		Rect = {Layout.m_X, Layout.m_Y, Width / 6.0f * Scale, 12.5f * Scale};
+		break;
+	}
+	case HudLayout::MODULE_LAST_NOTIFY:
+	{
+		const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
+		const float TextW = TextRender()->TextWidth(10.0f, "Last!");
+		Rect = {Layout.m_X, Layout.m_Y, TextW * Scale, 14.0f * Scale};
+		break;
+	}
+	case HudLayout::MODULE_EMOTE_WHEEL:
+		Rect = GameClient()->m_Emoticon.GetHudEditorRect();
+		break;
 	default:
 		Rect = {Layout.m_X, Layout.m_Y, 78.0f, 18.0f};
 		break;
@@ -564,6 +583,18 @@ CHudEditor::SModuleVisual CHudEditor::GetModuleVisual(HudLayout::EModule Module)
 		Visual.m_Rect = GameClient()->m_TClient.GetInfoOverlayHudEditorRect();
 		Visual.m_Rounding = 5.0f;
 		break;
+	case HudLayout::MODULE_ABOVE_BELOW:
+		Visual.m_Rect = GameClient()->m_AboveBelowPlayer.GetHudEditorRect();
+		Visual.m_Rounding = 6.0f;
+		break;
+	case HudLayout::MODULE_LAST_NOTIFY:
+		Visual.m_Rect = GameClient()->m_Hud.GetLastNotifyHudEditorRect();
+		Visual.m_Rounding = 5.0f;
+		break;
+	case HudLayout::MODULE_EMOTE_WHEEL:
+		Visual.m_Rect = GameClient()->m_Emoticon.GetHudEditorRect();
+		Visual.m_Rounding = 12.0f;
+		break;
 	default:
 		Visual.m_Rect = GetFallbackModuleRect(Module);
 		Visual.m_Rounding = 5.0f;
@@ -610,6 +641,10 @@ void CHudEditor::CollectModuleVisuals(SModuleVisual *pOut, int &Count) const
 	AddModule(HudLayout::MODULE_FINISH_PREDICTION);
 	AddModule(HudLayout::MODULE_VOTE);
 	AddModule(HudLayout::MODULE_VRAM_INFO);
+	AddModule(HudLayout::MODULE_ABOVE_BELOW);
+	AddModule(HudLayout::MODULE_LAST_NOTIFY);
+	if(g_Config.m_FcEmoteWheelLayout != 0)
+		AddModule(HudLayout::MODULE_EMOTE_WHEEL);
 }
 
 HudLayout::EModule CHudEditor::HitTestModule(vec2 MousePos) const
@@ -689,6 +724,11 @@ void CHudEditor::ApplyDraggedPosition(HudLayout::EModule Module, const CUIRect &
 	if(Module == HudLayout::MODULE_FROZEN_TEXT)
 	{
 		HudLayout::SetPosition(Module, (Rect.x + Rect.w * 0.5f) * CanvasScale, Rect.y);
+		return;
+	}
+	if(Module == HudLayout::MODULE_EMOTE_WHEEL)
+	{
+		HudLayout::SetPosition(Module, (Rect.x + Rect.w * 0.5f) * CanvasScale, Rect.y + Rect.h * 0.5f);
 		return;
 	}
 	HudLayout::SetPosition(Module, Rect.x * CanvasScale, Rect.y);

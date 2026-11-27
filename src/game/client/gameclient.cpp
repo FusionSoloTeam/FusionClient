@@ -155,6 +155,10 @@ void CGameClient::OnConsoleInit()
 					      &m_TClient, // TClient (Must be before chat and players)
 					      &m_FgfMotionBlur,
 					      &m_DeathTracker,
+					      &m_WeaponIdle, // Fusion (before m_Players)
+					      &m_CelestialAura, // Fusion (before m_Players so the wings render behind the tee)
+					      &m_BlackFrost, // Fusion (before m_Players so the ice disc renders behind the tee)
+					      &m_Casino, // Fusion
 					      &m_Players,
 						  &m_MovingTilesBackground, // TClient
 						  &m_FastPractice,
@@ -186,6 +190,7 @@ void CGameClient::OnConsoleInit()
 					      &m_FreezeBars,
 					      &m_DamageInd,
 					      &m_PlayerIndicator, // TClient
+					      &m_PlatformRender, // Fusion
 					      &m_AboveBelowPlayer, // TClient
 					      &m_SwapTimer, // TClient
 					      &m_ChatBinds, // TClient
@@ -205,6 +210,7 @@ void CGameClient::OnConsoleInit()
 				      &m_NotifyOnMove, // TClient
 					      &m_StatusBar, // TClient
 					      &m_InfoMessages,
+					      &m_GifChat, // Fusion
 					      &m_Chat,
 					      &m_Broadcast,
 					      &m_ImportantAlert,
@@ -4631,10 +4637,11 @@ void CGameClient::UpdateRenderedCharacters()
 			if(i == m_Snap.m_LocalClientId || IsDummy)
 			{
 				m_aClients[i].m_IsPredictedLocal = true;
+				if(i == m_Snap.m_LocalClientId)
+					TcInputs::SetAscendSpeed(length(pChar->GetCore().m_Vel) * Client()->GameTickSpeed());
 				if(!TcInputs::FusionActive())
 				{
-					m_aClients[i].m_FusionLeadX = 0.0f;
-					m_aClients[i].m_FusionLeadY = 0.0f;
+					m_aClients[i].m_FusionPosInit = false;
 				}
 				if((AntiPingGunfire() || PredictOwnWeapons()) && ((pChar->m_NinjaJetpack && pChar->m_FreezeTime == 0) || m_Snap.m_aCharacters[i].m_Cur.m_Weapon != WEAPON_NINJA || m_Snap.m_aCharacters[i].m_Cur.m_Weapon == m_aClients[i].m_Predicted.m_ActiveWeapon))
 				{
@@ -4898,19 +4905,19 @@ vec2 CGameClient::GetFusionPos(int ClientId)
 	const vec2 Ahead = GetFastInputPos(ClientId);
 	const vec2 Regular = mix(m_aClients[ClientId].m_PrevRegularPredicted.m_Pos, m_aClients[ClientId].m_RegularPredicted.m_Pos, PredIntraTick);
 
-
+	CClientData &c = m_aClients[ClientId];
 	const float Dt = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.033f);
 	const float Rate = g_Config.m_FcFusionSmoothing <= 0 ? 1000.0f : mix(24.0f, 2.5f, g_Config.m_FcFusionSmoothing / 100.0f);
 
-	const auto Ease = [Rate, Dt](float &fFactor)
+	if(!c.m_FusionPosInit || distance(Ahead, c.m_FusionShownPos) > 160.0f)
 	{
-		fFactor = fFactor + Rate * Dt >= 1.0f ? 1.0f : fFactor + Rate * Dt;
-	};
+		c.m_FusionShownPos = Regular;
+		c.m_FusionPosInit = true;
+		return Regular;
+	}
 
-	Ease(m_aClients[ClientId].m_FusionLeadX);
-	Ease(m_aClients[ClientId].m_FusionLeadY);
-
-	return vec2(mix(Regular.x, Ahead.x, m_aClients[ClientId].m_FusionLeadX), mix(Regular.y, Ahead.y, m_aClients[ClientId].m_FusionLeadY));
+	c.m_FusionShownPos += (Ahead - c.m_FusionShownPos) * (1.0f - std::exp(-Rate * Dt));
+	return c.m_FusionShownPos;
 }
 
 void CGameClient::UpdateLagStall()
@@ -5448,8 +5455,24 @@ void CGameClient::LoadDummyGameSkin()
 	LoadGameSkinInto(g_Config.m_FcDummyGameSkin, false, m_DummyGameSkin, m_DummyGameSkinLoaded, "game_dummy");
 }
 
-const CGameClient::SClientGameSkin &CGameClient::GameSkinForClient(int ClientId) const
+CGameClient::SClientGameSkin &CGameClient::GameSkinForClient(int ClientId)
 {
+	if(ClientId >= 0 && ClientId < MAX_CLIENTS && m_aClients[ClientId].m_Active)
+	{
+		const char *pSkinName = m_Scoreboard.PlayerGameSkin(m_aClients[ClientId].m_aName);
+		if(pSkinName[0] != '\0' && str_find(pSkinName, "/") == nullptr && str_find(pSkinName, "\\") == nullptr && str_comp(pSkinName, "..") != 0)
+		{
+			auto &Entry = m_PlayerGameSkins[pSkinName];
+			if(!Entry.second)
+			{
+				char aAnimatedName[128];
+				str_format(aAnimatedName, sizeof(aAnimatedName), "game_player_%s", pSkinName);
+				LoadGameSkinInto(pSkinName, false, Entry.first, Entry.second, aAnimatedName);
+			}
+			return Entry.first;
+		}
+	}
+
 	if(m_DummyGameSkinLoaded && g_Config.m_FcDummyGameSkin[0] != '\0' &&
 		ClientId >= 0 && ClientId < MAX_CLIENTS && ClientId == m_aLocalIds[1] && ClientId != m_aLocalIds[0])
 		return m_DummyGameSkin;
@@ -6020,6 +6043,11 @@ void CGameClient::DummyResetInput()
 bool CGameClient::CanDisplayWarning() const
 {
 	return m_Menus.CanDisplayWarning();
+}
+
+bool CGameClient::AllowsFrameGeneration() const
+{
+	return !m_Menus.IsActive() && !m_GameConsole.IsActive() && !m_HudEditor.IsActive();
 }
 
 CNetObjHandler *CGameClient::GetNetObjHandler()

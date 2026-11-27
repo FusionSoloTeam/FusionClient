@@ -44,8 +44,14 @@ class CScoreboard : public CComponent
 	void LoadNotes();
 	void SaveNotes() const;
 
+	void SetPlayerGameSkin(const char *pName, const char *pSkin);
+	void LoadSkins();
+	void SaveSkins() const;
+
 	std::map<std::string, std::string> m_Notes;
 	bool m_NotesDirty = false;
+	std::map<std::string, std::string> m_Skins;
+	bool m_SkinsDirty = false;
 
 	bool m_Active;
 
@@ -72,6 +78,7 @@ class CScoreboard : public CComponent
 		bool m_IsSpectating;
 
 		CLineInputBuffered<128> m_NoteInput;
+		CLineInputBuffered<64> m_SkinInput;
 
 		static CUi::EPopupMenuFunctionResult Render(void *pContext, CUIRect View, bool Active);
 	} m_ScoreboardPopupContext;
@@ -126,6 +133,7 @@ public:
 	bool OnInput(const IInput::CEvent &Event) override;
 
 	bool IsActive() const;
+	const char *PlayerGameSkin(const char *pName) const;
 };
 
 #endif

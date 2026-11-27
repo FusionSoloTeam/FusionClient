@@ -129,6 +129,7 @@ struct SBackendCapabilities
 	bool m_2DArrayTextures;
 	bool m_2DArrayTexturesAsExtension;
 	bool m_ShaderSupport;
+	std::atomic<bool> m_FrameGeneration{false};
 
 	// use quads as much as possible, even if the user config says otherwise
 	bool m_TrianglesAsQuads;
@@ -287,6 +288,7 @@ public:
 
 	bool GetDriverVersion(EGraphicsDriverAgeType DriverAgeType, int &Major, int &Minor, int &Patch, const char *&pName, EBackendType BackendType) override;
 	bool IsConfigModernAPI() override { return IsModernAPI(m_BackendType); }
+	bool SupportsFrameGeneration() const override { return m_BackendType == BACKEND_TYPE_VULKAN && m_Capabilities.m_FrameGeneration; }
 	bool UseTrianglesAsQuad() override { return m_Capabilities.m_TrianglesAsQuads; }
 	bool HasTileBuffering() override { return m_Capabilities.m_TileBuffering; }
 	bool HasQuadBuffering() override { return m_Capabilities.m_QuadBuffering; }

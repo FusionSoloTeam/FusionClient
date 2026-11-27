@@ -1,5 +1,6 @@
 #include <base/log.h>
 #include <base/math.h>
+#include <base/str.h>
 #include <base/types.h>
 
 #include <engine/font_icons.h>
@@ -456,6 +457,8 @@ static const char *const s_apCameraKeywords[] = {"camera", "respawn", "smooth ca
 static const char *const s_apLyricsKeywords[] = {"lyrics", "song", "music", "karaoke", "lrc", "3d text", "sing"};
 static const char *const s_apVignetteKeywords[] = {"vignette", "blur", "edge", "screen", "color"};
 static const char *const s_apDiscordKeywords[] = {"discord", "rpc", "rich presence", "status"};
+static const char *const s_apCelestialKeywords[] = {"celestial", "halo", "wings", "feathers", "eclipse", "embers", "particles", "tee"};
+static const char *const s_apBlackFrostKeywords[] = {"black frost", "frost", "ice", "crown", "crystal", "shards", "snow", "winter", "dark ice", "tee", "radius", "distance"};
 
 static const SSettingsSectionKeywords s_AllSettingsSections[] = {
 	{s_apVisualKeywords, 4},
@@ -490,6 +493,8 @@ static const SSettingsSectionKeywords s_AllSettingsSections[] = {
 	{s_apLyricsKeywords, 7},
 	{s_apVignetteKeywords, 5},
 	{s_apDiscordKeywords, 4},
+	{s_apCelestialKeywords, 8},
+	{s_apBlackFrostKeywords, 12},
 };
 static const int s_NumAllSettingsSections = (int)(sizeof(s_AllSettingsSections) / sizeof(s_AllSettingsSections[0]));
 
@@ -724,6 +729,15 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcFrozenKatana, TCLocalize("Show katan on frozen players"), &g_Config.m_TcFrozenKatana, &Column, LineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcRenderWeaponsAsGun, TCLocalize("Render weapons as the gun sprite"), &g_Config.m_TcRenderWeaponsAsGun, &Column, LineSize);
 
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcWeaponIdleAnim, TCLocalize("Weapon idle animations"), &g_Config.m_FcWeaponIdleAnim, &Column, LineSize);
+	TcCollapseGroup(Column, &g_Config.m_FcWeaponIdleAnim, g_Config.m_FcWeaponIdleAnim, [&](CUIRect &Column)
+	{
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcWeaponIdleDelay, &g_Config.m_FcWeaponIdleDelay, &Button, TCLocalize("Idle time before animation"), 1, 20, &CUi::ms_LinearScrollbarScale, 0, "s");
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcWeaponIdleOthers, TCLocalize("Idle animations on other players"), &g_Config.m_FcWeaponIdleOthers, &Column, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcWeaponIdleTrail, TCLocalize("Weapon animation trail"), &g_Config.m_FcWeaponIdleTrail, &Column, LineSize);
+	});
+
 	Column.HSplitTop(LineSize, &Button, &Column);
 	{
 		static std::vector<const char *> s_ModernUiNames;
@@ -859,7 +873,7 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 		s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
 	}
 
-	if(SectionEnabled(true, pSettingsSearch, {"cinematic", "camera", "spectate", "freeview", "smooth", "ease", "pan"}))
+	if(SectionEnabled(true, pSettingsSearch, {"cinematic", "camera", "spectate", "freeview", "smooth", "ease", "pan", "platform"}))
 	{
 		Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 		s_SectionBoxes.push_back(Column);
@@ -874,6 +888,33 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 			Ui()->DoScrollbarOption(&g_Config.m_FcCinematicCam, &g_Config.m_FcCinematicCam, &Button, TCLocalize("Cinematic strength"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
 		});
 
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcPlatformRender, TCLocalize("Show platforms while spectating"), &g_Config.m_FcPlatformRender, &Column, LineSize);
+		TcCollapseGroup(Column, &g_Config.m_FcPlatformRender, g_Config.m_FcPlatformRender != 0, [&](CUIRect &Column)
+		{
+			Column.HSplitTop(LineSize, &Button, &Column);
+			static CButtonContainer s_PlatformRenderColor;
+			DoLine_ColorPicker(&s_PlatformRenderColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &Button, TCLocalize("Platform color"), &g_Config.m_FcPlatformRenderColor, ColorRGBA(0.17f, 0.80f, 0.44f), false);
+		});
+
+		Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+		s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+	}
+
+	if(SectionEnabled(true, pSettingsSearch, {"emote", "wheel", "layout"}))
+	{
+		Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+		s_SectionBoxes.push_back(Column);
+		Column.HSplitTop(HeadlineHeight, &Label, &Column);
+		Ui()->DoLabel(&Label, TCLocalize("Emote Wheel"), HeadlineFontSize, TEXTALIGN_ML);
+		Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+		{
+			static std::vector<CButtonContainer> s_vWheelLayoutButtons = {{}, {}, {}};
+			int LayoutValue = std::clamp(g_Config.m_FcEmoteWheelLayout, 0, 2);
+			if(DoLine_RadioMenu(Column, TCLocalize("Layout"), s_vWheelLayoutButtons, {Localize("Circle"), Localize("Row"), Localize("Column")}, {0, 1, 2}, LayoutValue))
+				g_Config.m_FcEmoteWheelLayout = LayoutValue;
+		}
+
 		Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
 		s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
 	}
@@ -887,7 +928,6 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 	Column.HSplitTop(MarginSmall, nullptr, &Column);
 
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcSkinGradient, TCLocalize("Animated glowing gradient on skins"), &g_Config.m_FcSkinGradient, &Column, LineSize);
-	Column.HSplitTop(LineSize, &Button, &Column);	
 
 	TcCollapseGroup(Column, &g_Config.m_FcSkinGradient, g_Config.m_FcSkinGradient, [&](CUIRect &Column)
 	{
@@ -921,6 +961,73 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcSkinGradientOthers, TCLocalize("Apply to other players"), &g_Config.m_FcSkinGradientOthers, &Column, LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcSkinGradientFeet, TCLocalize("Apply to feet"), &g_Config.m_FcSkinGradientFeet, &Column, LineSize);
+	});
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+	}
+
+	if(SectionEnabled(true, pSettingsSearch, {"celestial", "halo", "wings", "feathers", "eclipse", "embers", "particles", "tee"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Celestial Effect"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcCelestial, TCLocalize("Golden eclipse halo and crimson wings"), &g_Config.m_FcCelestial, &Column, LineSize);
+
+	TcCollapseGroup(Column, &g_Config.m_FcCelestial, g_Config.m_FcCelestial, [&](CUIRect &Column)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcCelestialHalo, TCLocalize("Halo"), &g_Config.m_FcCelestialHalo, &Column, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcCelestialWings, TCLocalize("Wings"), &g_Config.m_FcCelestialWings, &Column, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcCelestialParticles, TCLocalize("Particles"), &g_Config.m_FcCelestialParticles, &Column, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcCelestialDummy, TCLocalize("Show on dummy"), &g_Config.m_FcCelestialDummy, &Column, LineSize);
+
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcCelestialHaloSize, &g_Config.m_FcCelestialHaloSize, &Button, TCLocalize("Halo size"), 50, 250, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcCelestialWingScale, &g_Config.m_FcCelestialWingScale, &Button, TCLocalize("Wing scale"), 50, 250, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcCelestialGlow, &g_Config.m_FcCelestialGlow, &Button, TCLocalize("Glow strength"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcCelestialAnim, &g_Config.m_FcCelestialAnim, &Button, TCLocalize("Animation intensity"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcCelestialDensity, &g_Config.m_FcCelestialDensity, &Button, TCLocalize("Particle density"), 0, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcCelestialHaloFollow, &g_Config.m_FcCelestialHaloFollow, &Button, TCLocalize("Halo follow speed"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+	});
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+	}
+
+	if(SectionEnabled(true, pSettingsSearch, {"black frost", "frost", "ice", "crown", "crystal", "shards", "snow", "winter", "dark ice", "tee"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Black Frost"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcBlackFrost, TCLocalize("Ice shards flying around your tee"), &g_Config.m_FcBlackFrost, &Column, LineSize);
+
+	TcCollapseGroup(Column, &g_Config.m_FcBlackFrost, g_Config.m_FcBlackFrost, [&](CUIRect &Column)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcBlackFrostShards, TCLocalize("Flying ice shards"), &g_Config.m_FcBlackFrostShards, &Column, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcBlackFrostParticles, TCLocalize("Drifting frost motes"), &g_Config.m_FcBlackFrostParticles, &Column, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcBlackFrostDummy, TCLocalize("Show on dummy"), &g_Config.m_FcBlackFrostDummy, &Column, LineSize);
+
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcBlackFrostScale, &g_Config.m_FcBlackFrostScale, &Button, TCLocalize("Effect scale"), 50, 250, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcBlackFrostGlow, &g_Config.m_FcBlackFrostGlow, &Button, TCLocalize("Glow intensity"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcBlackFrostAnim, &g_Config.m_FcBlackFrostAnim, &Button, TCLocalize("Animation intensity"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcBlackFrostRadiusMin, &g_Config.m_FcBlackFrostRadiusMin, &Button, TCLocalize("Min radius from tee"), 0, 400, &CUi::ms_LinearScrollbarScale, 0, "px");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcBlackFrostRadiusMax, &g_Config.m_FcBlackFrostRadiusMax, &Button, TCLocalize("Max radius from tee"), 0, 400, &CUi::ms_LinearScrollbarScale, 0, "px");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcBlackFrostDensity, &g_Config.m_FcBlackFrostDensity, &Button, TCLocalize("Particle density"), 0, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
 	});
 	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
 	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
@@ -1119,7 +1226,7 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 
 	}
 	// ***** Input ***** //
-	if(SectionEnabled(false, pSettingsSearch, {"input", "mouse", "sens", "fast", "subtick"}))
+	if(SectionEnabled(false, pSettingsSearch, {"input", "mouse", "sens", "fast", "subtick", "ascend"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -1128,9 +1235,9 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 	Column.HSplitTop(MarginSmall, nullptr, &Column);
 
 	{
-		static std::vector<CButtonContainer> s_vInputModeButtons = {{}, {}, {}, {}};
-		int InputModeValue = g_Config.m_TcInputs == 7 ? 7 : (g_Config.m_TcInputs == 2 ? 2 : (g_Config.m_TcFastInput || g_Config.m_TcInputs == 1 ? 1 : 0));
-		if(DoLine_RadioMenu(Column, TCLocalize("Mode"), s_vInputModeButtons, {Localize("None"), Localize("Tater"), Localize("Best"), Localize("Fusion")}, {0, 1, 2, 7}, InputModeValue))
+		static std::vector<CButtonContainer> s_vInputModeButtons = {{}, {}, {}, {}, {}};
+		int InputModeValue = g_Config.m_TcInputs == 8 ? 8 : (g_Config.m_TcInputs == 7 ? 7 : (g_Config.m_TcInputs == 2 ? 2 : (g_Config.m_TcFastInput || g_Config.m_TcInputs == 1 ? 1 : 0)));
+		if(DoLine_RadioMenu(Column, TCLocalize("Mode"), s_vInputModeButtons, {Localize("None"), Localize("Tater"), Localize("Best"), Localize("Fusion"), Localize("Ascend")}, {0, 1, 2, 7, 8}, InputModeValue))
 		{
 			g_Config.m_TcInputs = InputModeValue;
 			g_Config.m_TcFastInput = InputModeValue == 1 ? 1 : 0;
@@ -1166,6 +1273,18 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 		Ui()->DoScrollbarOption(&g_Config.m_FcFusionAmount, &g_Config.m_FcFusionAmount, &Button, TCLocalize("Amount"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "ms");
 		Column.HSplitTop(LineSize, &Button, &Column);
 		Ui()->DoScrollbarOption(&g_Config.m_FcFusionSmoothing, &g_Config.m_FcFusionSmoothing, &Button, TCLocalize("Smoothing"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+	}
+	if(g_Config.m_TcInputs == 8)
+	{
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcAscendInputAmount, &g_Config.m_FcAscendInputAmount, &Button, TCLocalize("Amount"), 0, 1000, &CUi::ms_LinearScrollbarScale, 0, "0.01t");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcAscendInputSpeed, &g_Config.m_FcAscendInputSpeed, &Button, TCLocalize("Full speed at"), 200, 4000, &CUi::ms_LinearScrollbarScale, 0, "u/s");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcAscendInputIdle, &g_Config.m_FcAscendInputIdle, &Button, TCLocalize("Standstill offset"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcAscendInputSmoothing, &g_Config.m_FcAscendInputSmoothing, &Button, TCLocalize("Smoothing"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcAscendInputOthers, TCLocalize("Ascend Input others"), &g_Config.m_FcAscendInputOthers, &Column, LineSize);
 	}
 
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClSubTickAiming, TCLocalize("Sub-Tick aiming"), &g_Config.m_ClSubTickAiming, &Column, LineSize);
@@ -1450,11 +1569,6 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 			g_Config.m_TcAboveBelowSkew = Value;
 		}
 	}
-	Column.HSplitTop(LineSize, &Button, &Column);
-	Ui()->DoScrollbarOption(&g_Config.m_TcNotifyWhenPosPlayerPosX, &g_Config.m_TcNotifyWhenPosPlayerPosX, &Button, TCLocalize("Text pos x"), 0, 100, &CUi::ms_LinearScrollbarScale, 0);
-	Column.HSplitTop(LineSize, &Button, &Column);
-	Ui()->DoScrollbarOption(&g_Config.m_TcNotifyWhenPosPlayerPosY, &g_Config.m_TcNotifyWhenPosPlayerPosY, &Button, TCLocalize("Text pos y"), 0, 100, &CUi::ms_LinearScrollbarScale, 0);
-
 	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
 	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
 
@@ -2244,12 +2358,6 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 		Ui()->DoEditBox(&s_LastInput, &Button, EditBoxFontSize);
 		static CButtonContainer s_ClientNotifyWhenLastColor;
 		DoLine_ColorPicker(&s_ClientNotifyWhenLastColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &NotificationConfig, "", &g_Config.m_TcNotifyWhenLastColor, ColorRGBA(1.0f, 1.0f, 1.0f), false);
-		Column.HSplitTop(LineSize, &Button, &Column);
-		Ui()->DoScrollbarOption(&g_Config.m_TcNotifyWhenLastX, &g_Config.m_TcNotifyWhenLastX, &Button, TCLocalize("Horizontal Position"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
-		Column.HSplitTop(LineSize, &Button, &Column);
-		Ui()->DoScrollbarOption(&g_Config.m_TcNotifyWhenLastY, &g_Config.m_TcNotifyWhenLastY, &Button, TCLocalize("Vertical Position"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
-		Column.HSplitTop(LineSize, &Button, &Column);
-		Ui()->DoScrollbarOption(&g_Config.m_TcNotifyWhenLastSize, &g_Config.m_TcNotifyWhenLastSize, &Button, TCLocalize("Font Size"), 1, 50);
 	}
 
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcShowCenter, TCLocalize("Show screen center lines"), &g_Config.m_TcShowCenter, &Column, LineSize);
@@ -2642,7 +2750,7 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 
 	}
 
-	if(SectionEnabled(true, pSettingsSearch, {"automation", "notify", "join", "move", "name", "message", "afk", "spectate", "spec", "unspectate", "unspec", "bypass", "nick", "mute", "war", "heart"}))
+	if(SectionEnabled(true, pSettingsSearch, {"automation", "notify", "join", "move", "name", "message", "afk", "spectate", "spec", "unspectate", "unspec", "bypass", "nick", "mute", "war", "heart", "practice", "dummy"}))
 	{
 	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 	s_SectionBoxes.push_back(Column);
@@ -2686,6 +2794,8 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcReactBypass, TCLocalize("React to bypass (re-apply mute/war/heart on nick)"), &g_Config.m_TcReactBypass, &Column, LineSize);
 
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiUnspectate, TCLocalize("Anti-unspectate in player (confirm inside a tee)"), &g_Config.m_TcAntiUnspectate, &Column, LineSize);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcPracticeAutoDummy, TCLocalize("Send /practice for the dummy tee automatically"), &g_Config.m_FcPracticeAutoDummy, &Column, LineSize);
 
 	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
 
@@ -2805,6 +2915,56 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcChatLog, TCLocalize("Save chat to chatlog/ (logs older than a week are deleted)"), &g_Config.m_FcChatLog, &Column, LineSize);
 
 	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	if(SectionEnabled(true, pSettingsSearch, {"cute chat", "uwu", "kawaii", "pet word", "soft sign", "cute", "stutter"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Cute Chat (uwu)"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcUwuChat, TCLocalize("Rewrite my outgoing messages in a cute style"), &g_Config.m_FcUwuChat, &Column, LineSize);
+	Column.HSplitTop(LineSize, &Button, &Column);
+	Ui()->DoLabel(&Button, TCLocalize("Commands (/team, /w) and chatbinds (!sendpos) are never rewritten"), FontSize, TEXTALIGN_ML);
+
+	TcCollapseGroup(Column, &g_Config.m_FcUwuChat, g_Config.m_FcUwuChat, [&](CUIRect &Column)
+	{
+		Column.HSplitTop(MarginSmall, nullptr, &Column);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcUwuChatTeam, TCLocalize("Also rewrite team chat"), &g_Config.m_FcUwuChatTeam, &Column, LineSize);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcUwuChatSoftSign, &g_Config.m_FcUwuChatSoftSign, &Button, TCLocalize("Soft sign after a final consonant"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcUwuChatWords, &g_Config.m_FcUwuChatWords, &Button, TCLocalize("Insert a pet word"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcUwuChatEmotes, &g_Config.m_FcUwuChatEmotes, &Button, TCLocalize("Emote on inserted words"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcUwuChatEnd, &g_Config.m_FcUwuChatEnd, &Button, TCLocalize("Emote at the end of the message"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcUwuChatStutter, &g_Config.m_FcUwuChatStutter, &Button, TCLocalize("Stutter the first letter"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcUwuChatDouble, &g_Config.m_FcUwuChatDouble, &Button, TCLocalize("Duplicate a random letter"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcUwuChatVowels, &g_Config.m_FcUwuChatVowels, &Button, TCLocalize("Shift vowels"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoScrollbarOption(&g_Config.m_FcUwuChatConsonants, &g_Config.m_FcUwuChatConsonants, &Button, TCLocalize("Shift consonants"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+
+		Column.HSplitTop(MarginSmall, nullptr, &Column);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoLabel(&Button, TCLocalize("Pet words (space or comma separated):"), FontSize, TEXTALIGN_ML);
+		Column.HSplitTop(LineSize + MarginExtraSmall, &Button, &Column);
+		static CLineInput s_UwuWordList(g_Config.m_FcUwuChatWordList, sizeof(g_Config.m_FcUwuChatWordList));
+		Ui()->DoEditBox(&s_UwuWordList, &Button, EditBoxFontSize);
+		Column.HSplitTop(MarginSmall, nullptr, &Column);
+		Column.HSplitTop(LineSize, &Button, &Column);
+		Ui()->DoLabel(&Button, TCLocalize("Emotes (space or comma separated):"), FontSize, TEXTALIGN_ML);
+		Column.HSplitTop(LineSize + MarginExtraSmall, &Button, &Column);
+		static CLineInput s_UwuEmoteList(g_Config.m_FcUwuChatEmoteList, sizeof(g_Config.m_FcUwuChatEmoteList));
+		Ui()->DoEditBox(&s_UwuEmoteList, &Button, EditBoxFontSize);
+	});
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+	}
+
 	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
 	}
 
@@ -2947,6 +3107,23 @@ void CMenus::RenderTClientSettingsPage(CUIRect MainView, bool FusionPage)
 
 		Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
 	}
+	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
+
+	}
+	if(SectionEnabled(true, pSettingsSearch, {"deadzone", "camera"}))
+	{
+	Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+	s_SectionBoxes.push_back(Column);
+	Column.HSplitTop(HeadlineHeight, &Label, &Column);
+	Ui()->DoLabel(&Label, TCLocalize("Camera Deadzone"), HeadlineFontSize, TEXTALIGN_ML);
+	Column.HSplitTop(MarginSmall, nullptr, &Column);
+
+	Column.HSplitTop(LineSize, &Button, &Column);
+	Ui()->DoScrollbarOption(&g_Config.m_FcCameraDeadzone, &g_Config.m_FcCameraDeadzone, &Button, TCLocalize("Deadzone size (0 = off)"), 0, 1000, &CUi::ms_LinearScrollbarScale, 0, " units");
+	Column.HSplitTop(LineSize, &Button, &Column);
+	Ui()->DoScrollbarOption(&g_Config.m_FcCameraDeadzoneSpeed, &g_Config.m_FcCameraDeadzoneSpeed, &Button, TCLocalize("Disable above speed (0 = never)"), 0, 10000, &CUi::ms_LinearScrollbarScale, 0, " units/s");
+
+	Column.HSplitTop(MarginExtraSmall, nullptr, &Column);
 	s_SectionBoxes.back().h = Column.y - s_SectionBoxes.back().y;
 
 	}

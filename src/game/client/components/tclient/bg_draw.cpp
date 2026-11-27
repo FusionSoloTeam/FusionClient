@@ -633,7 +633,7 @@ void CBgDraw::OnRender()
 	// Remove extra items
 	MakeSpaceFor(0);
 	// Update age of items, delete old items, render items
-	const CScreenRect ScreenRect = Graphics()->GetScreen();
+	const CScreenRect ScreenRect = Graphics()->GetScreenRectForCulling();
 	for(CBgDrawItem &Item : *m_pvItems)
 	{
 		// If this item is currently active

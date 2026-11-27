@@ -723,6 +723,9 @@ void CMapView::Render(CUIRect View)
 		ClipRect.DrawOutline(ColorRGBA(1.0f, 0.0f, 0.0f, 1.0f));
 	}
 
+	if(!Editor()->m_ShowPicker && Editor()->m_ShowHookSpots)
+		Editor()->RenderHookSpots();
+
 	if(!Editor()->m_ShowPicker)
 		ProofMode()->RenderScreenSizes();
 

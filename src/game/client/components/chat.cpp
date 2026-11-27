@@ -6,6 +6,7 @@
 #include <base/color.h>
 #include <base/io.h>
 #include <base/log.h>
+#include <base/math.h>
 #include <base/log_color.h>
 #include <base/mem.h>
 #include <base/time.h>
@@ -28,6 +29,7 @@
 #include <game/client/components/sounds.h>
 #include <game/client/components/tclient/colored_parts.h>
 #include <game/client/components/tclient/gradient.h>
+#include <game/client/components/tclient/uwu_chat.h>
 #include <game/client/gameclient.h>
 #include <game/localization.h>
 
@@ -95,6 +97,7 @@ void CChat::CLine::Reset(CChat &This)
 	m_TimesRepeated = 0;
 	m_pManagedTeeRenderInfo = nullptr;
 	m_pTranslateResponse = nullptr;
+	m_GifChatId = -1;
 }
 
 CChat::CChat()
@@ -226,12 +229,14 @@ void CChat::OnStateChange(int NewState, int OldState)
 
 void CChat::ConSay(IConsole::IResult *pResult, void *pUserData)
 {
-	((CChat *)pUserData)->SendChat(0, pResult->GetString(0));
+	char aCute[MAX_CHAT_LENGTH];
+	((CChat *)pUserData)->SendChat(0, UwuChat::Transform(0, pResult->GetString(0), aCute, sizeof(aCute)));
 }
 
 void CChat::ConSayTeam(IConsole::IResult *pResult, void *pUserData)
 {
-	((CChat *)pUserData)->SendChat(1, pResult->GetString(0));
+	char aCute[MAX_CHAT_LENGTH];
+	((CChat *)pUserData)->SendChat(1, UwuChat::Transform(1, pResult->GetString(0), aCute, sizeof(aCute)));
 }
 
 void CChat::ConChat(IConsole::IResult *pResult, void *pUserData)
@@ -513,8 +518,10 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			; // Do nothing as outgoing translate was queued
 		else
 		{
-			StartSmoothSend(m_Input.GetString());
-			SendChatQueued(m_Input.GetString());
+			char aCute[MAX_CHAT_LENGTH];
+			const char *pCute = UwuChat::Transform(m_Mode == MODE_TEAM ? 1 : 0, m_Input.GetString(), aCute, sizeof(aCute));
+			StartSmoothSend(pCute);
+			SendChatQueued(pCute);
 		}
 		m_pHistoryEntry = nullptr;
 		DisableMode();
@@ -809,6 +816,8 @@ void CChat::DisableMode()
 	m_SearchActive = false;
 	m_SearchInput.Clear();
 	m_HistoryScrollOffset = 0;
+	m_GhostHint.clear();
+	m_GhostHintChangeTime = -1;
 }
 
 bool CChat::LineMatchesSearch(const CLine &Line) const
@@ -829,9 +838,8 @@ void CChat::TagPlayerUnderCursor()
 	const CScreenRect WorldRect = Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0.0f, 0.0f, Graphics()->WorldAspect(), GameClient()->m_Camera.m_RenderZoom);
 
 	const vec2 UiSize = vec2(600.0f * Graphics()->ScreenAspect(), 600.0f);
-	const vec2 WorldPos = vec2(
-		WorldRect.m_TopLeft.x + (m_ChatCursorPos.x / UiSize.x) * WorldRect.Size().x,
-		WorldRect.m_TopLeft.y + (m_ChatCursorPos.y / UiSize.y) * WorldRect.Size().y);
+	const vec2 ScreenOffset = (m_ChatCursorPos / UiSize - vec2(0.5f, 0.5f)) * WorldRect.Size();
+	const vec2 WorldPos = Center + rotate_radians(ScreenOffset, -GameClient()->m_Camera.TiltAngle());
 
 	int BestId = -1;
 	float BestDist = CCharacterCore::PhysicalSize() * (float)std::clamp(g_Config.m_TcChatTagCursorHitbox, 50, 500) / 100.0f;
@@ -1338,7 +1346,21 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	}
 
 	// TClient
+	CurrentLine.m_GifChatId = GameClient()->m_GifChat.OnChatText(pLine);
 	GameClient()->m_Translate.AutoTranslate(CurrentLine);
+}
+
+void CChat::InvalidateGifLines()
+{
+	for(auto &Line : m_aLines)
+	{
+		if(!Line.m_Initialized)
+			continue;
+		TextRender()->DeleteTextContainer(Line.m_TextContainerIndex);
+		Graphics()->DeleteQuadContainer(Line.m_QuadContainerIndex);
+		Line.m_aYOffset[0] = -1.0f;
+		Line.m_aYOffset[1] = -1.0f;
+	}
 }
 
 int CChat::GetInitializedLineCount() const
@@ -1826,6 +1848,13 @@ void CChat::OnPrepareLines(float y)
 			}
 
 			Line.m_aYOffset[OffsetType] = AppendCursor.Height() + RealMsgPaddingY;
+
+			if(auto *pGif = GameClient()->m_GifChat.GetEntry(Line.m_GifChatId))
+			{
+				float GifW = 0.0f, GifH = 0.0f;
+				if(CGifChat::GetDrawSize(pGif, GifW, GifH))
+					Line.m_aYOffset[OffsetType] += GifH + RealMsgPaddingY * 0.5f;
+			}
 		}
 
 		y -= Line.m_aYOffset[OffsetType] * (i == m_HistoryScrollOffset ? m_SmoothSlotScale : 1.0f);
@@ -1942,7 +1971,7 @@ void CChat::OnPrepareLines(float y)
 
 		TextRender()->TextColor(NameColor);
 		AppendChatPiece(&LineCursor, aClientId);
-		if(!RevealBuild && GradientNicknames && Line.m_ClientId >= 0 && Line.m_aName[0] != '\0' && !Line.m_CustomColor && !GameClient()->m_HeartList.IsFriend(Line.m_ClientId))
+		if(GradientNicknames && Line.m_ClientId >= 0 && Line.m_aName[0] != '\0' && !Line.m_CustomColor && !GameClient()->m_HeartList.IsFriend(Line.m_ClientId))
 			SetGradientSplits(&LineCursor, CBcGradient::BuildAnimatedTextSplits(Line.m_aName, Line.m_ClientId, GameClient(), GradientPhase));
 		AppendChatPiece(&LineCursor, Line.m_aName);
 
@@ -2092,7 +2121,8 @@ void CChat::StartSmoothSend(const char *pText)
 	m_SmoothWasDeleting = false;
 	m_SmoothCaretX = -1.0f;
 
-	if(g_Config.m_TcGradientChat && g_Config.m_TcGradientChatMessages)
+	const bool GradientMessages = g_Config.m_TcGradientChat && g_Config.m_TcGradientChatMessages;
+	if(g_Config.m_TcGradientChat && (GradientMessages || g_Config.m_TcGradientChatNicknames))
 	{
 		ColorRGBA Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
 		ColorRGBA GradientColor1, GradientColor2;
@@ -2100,7 +2130,7 @@ void CChat::StartSmoothSend(const char *pText)
 		std::vector<SChatGradientRange> vGradientRanges;
 		ChatCollectGradientRanges(GameClient(), pText, vGradientRanges);
 		const float GradientPhase = m_LastGradientPhase >= 0.0f ? m_LastGradientPhase : 0.0f;
-		m_vSmoothSentGradientSplits = ChatBuildGradientSplits(pText, vGradientRanges, GradientColor1, GradientColor2, GameClient(), GradientPhase, false);
+		m_vSmoothSentGradientSplits = ChatBuildGradientSplits(pText, vGradientRanges, GradientColor1, GradientColor2, GameClient(), GradientPhase, !GradientMessages);
 	}
 }
 
@@ -2364,36 +2394,25 @@ void CChat::OnRender()
 		{
 			const char *pGhost = nullptr;
 			int GhostSkip = 0;
-			if(m_Input.GetString()[0] == '/' && m_Input.GetString()[1] != '\0' && !m_vServerCommands.empty())
+			int GhostAnchor = -1;
+			GetGhostHint(&pGhost, &GhostSkip, &GhostAnchor);
+
+			const std::string GhostText = pGhost != nullptr ? pGhost + GhostSkip : "";
+			if(GhostText != m_GhostHint)
 			{
-				for(const auto &Command : m_vServerCommands)
-				{
-					if(str_startswith_nocase(Command.m_aName, m_Input.GetString() + 1))
-					{
-						pGhost = Command.m_aName;
-						GhostSkip = str_length(m_Input.GetString() + 1);
-						break;
-					}
-				}
-			}
-			else if(g_Config.m_TcChatFixLayout)
-			{
-				char aToken[512];
-				char aFixedToken[512];
-				ChatFirstToken(m_Input.GetString(), aToken, sizeof(aToken));
-				if(ChatTranslateLayoutToken(aToken, aFixedToken, sizeof(aFixedToken)))
-				{
-					pGhost = FindCommandByPrefix(aFixedToken + 1);
-					GhostSkip = str_length(aFixedToken + 1);
-				}
+				m_GhostHint = GhostText;
+				m_GhostHintChangeTime = time();
 			}
 
-			if(pGhost != nullptr)
+			if(!m_GhostHint.empty())
 			{
-				InputCursor.m_X += TextRender()->TextWidth(InputCursor.m_FontSize, m_Input.GetString(), -1, InputCursor.m_LineWidth);
-				InputCursor.m_Y = m_Input.GetCaretPosition().y;
-				TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.5f);
-				TextRender()->TextEx(&InputCursor, pGhost + GhostSkip);
+				const float T = std::clamp((time() - m_GhostHintChangeTime) / (float)time_freq() / 0.22f, 0.0f, 1.0f);
+				const float Ease = 1.0f - (1.0f - T) * (1.0f - T);
+				const float GhostBaseY = SmoothChat ? m_SmoothLastInputY : m_Input.GetCaretPosition().y;
+				InputCursor.m_X += TextRender()->TextWidth(InputCursor.m_FontSize, m_Input.GetString(), GhostAnchor, InputCursor.m_LineWidth);
+				InputCursor.m_Y = GhostBaseY - (1.0f - Ease) * 3.0f;
+				TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.5f * Ease);
+				TextRender()->TextEx(&InputCursor, m_GhostHint.c_str());
 				TextRender()->TextColor(TextRender()->DefaultTextColor());
 			}
 		}
@@ -2560,6 +2579,24 @@ void CChat::OnRender()
 
 			TextRender()->RenderTextContainer(Line.m_TextContainerIndex, TextColor, TextOutlineColor, 0, (y + RealMsgPaddingY / 2.0f) - Line.m_TextYOffset);
 		}
+
+		if(auto *pGif = GameClient()->m_GifChat.GetEntry(Line.m_GifChatId))
+		{
+			float GifW = 0.0f, GifH = 0.0f;
+			if(CGifChat::GetDrawSize(pGif, GifW, GifH) && pGif->m_Texture.IsValid() && !pGif->m_Texture.IsNullTexture())
+			{
+				pGif->m_bVisible = true;
+				const float GifX = x + RealMsgPaddingX / 2.0f;
+				const float GifY = y + Line.m_aYOffset[OffsetType] - GifH - RealMsgPaddingY * 0.25f;
+				const IGraphics::CQuadItem Quad(GifX, GifY, GifW, GifH);
+				Graphics()->TextureSet(pGif->m_Texture);
+				Graphics()->QuadsBegin();
+				Graphics()->SetColor(1.0f, 1.0f, 1.0f, Blend);
+				Graphics()->QuadsDrawTL(&Quad, 1);
+				Graphics()->QuadsEnd();
+				Graphics()->TextureClear();
+			}
+		}
 	}
 
 	if(ClickClientId >= 0)
@@ -2644,6 +2681,42 @@ const char *CChat::FindCommandByPrefix(const char *pName) const
 	return nullptr;
 }
 
+void CChat::GetGhostHint(const char **ppText, int *pSkip, int *pAnchorOffset) const
+{
+	*ppText = nullptr;
+	*pSkip = 0;
+	*pAnchorOffset = -1;
+
+	const char *pInput = m_Input.GetString();
+	if(pInput[0] == '/' && pInput[1] != '\0' && !m_vServerCommands.empty())
+	{
+		for(const auto &Command : m_vServerCommands)
+		{
+			if(str_startswith_nocase(Command.m_aName, pInput + 1))
+			{
+				*ppText = Command.m_aName;
+				*pSkip = str_length(pInput + 1);
+				return;
+			}
+		}
+	}
+	else if(g_Config.m_TcChatFixLayout)
+	{
+		char aToken[512];
+		char aFixedToken[512];
+		ChatFirstToken(pInput, aToken, sizeof(aToken));
+		if(ChatTranslateLayoutToken(aToken, aFixedToken, sizeof(aFixedToken)))
+		{
+			if(const char *pCommand = FindCommandByPrefix(aFixedToken + 1))
+			{
+				*ppText = pCommand;
+				*pSkip = str_length(aFixedToken + 1);
+				return;
+			}
+		}
+	}
+}
+
 bool CChat::GetLayoutFixCommand(char *pOut, int OutSize) const
 {
 	if(pOut == nullptr || OutSize < 2)
@@ -2667,6 +2740,18 @@ bool CChat::GetLayoutFixCommand(char *pOut, int OutSize) const
 	return true;
 }
 
+static bool IsPracticeChatCommand(const char *pLine)
+{
+	static const char s_Practice[] = "/practice";
+	const char *p = pLine;
+	while(*p == ' ')
+		++p;
+	if(str_comp_nocase_num(p, s_Practice, (int)sizeof(s_Practice) - 1) != 0)
+		return false;
+	const char Next = p[sizeof(s_Practice) - 1];
+	return Next == '\0' || Next == ' ' || Next == '\t' || Next == '\r' || Next == '\n';
+}
+
 void CChat::SendChat(int Team, const char *pLine)
 {
 	// don't send empty messages
@@ -2686,13 +2771,31 @@ void CChat::SendChat(int Team, const char *pLine)
 
 	m_LastChatSend = time();
 
+	SendChatToConn(g_Config.m_ClDummy, Team, pLine);
+
+	// the server needs every tee to confirm /practice, so both connections get it
+	if(g_Config.m_FcPracticeAutoDummy && IsPracticeChatCommand(pLine) && Client()->DummyConnected())
+	{
+		const int OtherConn = g_Config.m_ClDummy == IClient::CONN_MAIN ? IClient::CONN_DUMMY : IClient::CONN_MAIN;
+		const int OtherId = GameClient()->m_aLocalIds[OtherConn];
+		if(OtherId >= 0)
+		{
+			const int OtherTeam = GameClient()->m_aClients[OtherId].m_Team;
+			if(OtherTeam == TEAM_RED || OtherTeam == TEAM_BLUE)
+				SendChatToConn(OtherConn, Team, pLine);
+		}
+	}
+}
+
+void CChat::SendChatToConn(int Conn, int Team, const char *pLine)
+{
 	if(GameClient()->Client()->IsSixup())
 	{
 		protocol7::CNetMsg_Cl_Say Msg7;
 		Msg7.m_Mode = Team == 1 ? protocol7::CHAT_TEAM : protocol7::CHAT_ALL;
 		Msg7.m_Target = -1;
 		Msg7.m_pMessage = pLine;
-		Client()->SendPackMsgActive(&Msg7, MSGFLAG_VITAL, true);
+		Client()->SendPackMsg(Conn, &Msg7, MSGFLAG_VITAL, true);
 		return;
 	}
 
@@ -2700,7 +2803,7 @@ void CChat::SendChat(int Team, const char *pLine)
 	CNetMsg_Cl_Say Msg;
 	Msg.m_Team = Team;
 	Msg.m_pMessage = pLine;
-	Client()->SendPackMsgActive(&Msg, MSGFLAG_VITAL);
+	Client()->SendPackMsg(Conn, &Msg, MSGFLAG_VITAL);
 }
 
 void CChat::SendChatQueued(const char *pLine)

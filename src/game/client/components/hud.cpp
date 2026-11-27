@@ -772,16 +772,16 @@ void CHud::RenderTextInfo()
 		}
 
 		// Notify when last
-		if(g_Config.m_TcNotifyWhenLast)
+		if(g_Config.m_TcNotifyWhenLast && HudLayout::IsEnabled(HudLayout::MODULE_LAST_NOTIFY))
 		{
 			if(NumInTeam > 1 && NumInTeam - NumFrozen == 1)
 			{
+				const auto LastLayout = HudLayout::Get(HudLayout::MODULE_LAST_NOTIFY, m_Width, m_Height);
+				const float LastScale = std::clamp(LastLayout.m_Scale / 100.0f, 0.25f, 3.0f);
 				TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_TcNotifyWhenLastColor)));
-				float FontSize = g_Config.m_TcNotifyWhenLastSize;
-				float XPos = std::clamp((g_Config.m_TcNotifyWhenLastX / 100.0f) * m_Width, 1.0f, m_Width - FontSize);
-				float YPos = std::clamp((g_Config.m_TcNotifyWhenLastY / 100.0f) * m_Height, 1.0f, m_Height - FontSize);
-
-				TextRender()->Text(XPos, YPos, FontSize, g_Config.m_TcNotifyWhenLastText, -1.0f);
+				Graphics()->MapScreen(-LastLayout.m_X / LastScale, -LastLayout.m_Y / LastScale, -LastLayout.m_X / LastScale + m_Width / LastScale, -LastLayout.m_Y / LastScale + m_Height / LastScale);
+				TextRender()->Text(0.0f, 0.0f, g_Config.m_TcNotifyWhenLastSize, g_Config.m_TcNotifyWhenLastText, -1.0f);
+				Graphics()->MapScreen(0.0f, 0.0f, m_Width, m_Height);
 				TextRender()->TextColor(TextRender()->DefaultTextColor());
 			}
 		}
@@ -950,7 +950,8 @@ void CHud::RenderCursor()
 	CScreenRect ScreenRect = Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->WorldAspect(), 1.0f);
 	Graphics()->MapScreen(ScreenRect);
 
-	if(Client()->State() != IClient::STATE_DEMOPLAYBACK && GameClient()->m_Snap.m_pLocalCharacter)
+	const bool LocalCursor = Client()->State() != IClient::STATE_DEMOPLAYBACK && GameClient()->m_Snap.m_pLocalCharacter;
+	if(LocalCursor)
 	{
 		// Render local cursor
 		CurWeapon = std::max(0, GameClient()->m_aClients[GameClient()->m_Snap.m_LocalClientId].m_Predicted.m_ActiveWeapon);
@@ -988,7 +989,8 @@ void CHud::RenderCursor()
 		Graphics()->SetColor(1.0f, 1.0f, 1.0f, CursorAlpha);
 		Graphics()->RenderQuadContainerAsSprite(m_HudQuadContainerIndex, m_aCursorOffset[CurWeapon], Pos.x, Pos.y, CursorScale, CursorScale);
 	};
-	if(!(g_Config.m_FcCrosshair && g_Config.m_FcCrosshairHideDefault))
+	// only the own cursor gets a dynamic crosshair, others stay visible
+	if(!LocalCursor || !(g_Config.m_FcCrosshair && g_Config.m_FcCrosshairHideDefault))
 		GameClient()->m_FgfMotionBlur.RenderCrosshair(Center, TargetPos, Alpha, Scale, DrawCursor);
 }
 
@@ -1004,31 +1006,51 @@ void CHud::RenderDynamicCrosshair()
 		return;
 
 	const vec2 Center = GameClient()->m_Camera.m_Center;
-	const float Zoom = std::max(GameClient()->m_Camera.m_RenderZoom, 0.01f);
 	const float Aspect = Graphics()->WorldAspect();
 
 	const vec2 AimPos = GameClient()->m_Controls.m_aTargetPos[g_Config.m_ClDummy];
 	const CScreenRect PrevScreen = Graphics()->GetScreen();
 	const CScreenRect MapRect = Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0.0f, 0.0f, Aspect, 1.0f);
 	Graphics()->MapScreen(MapRect);
-	const float ZoomScale = 1.0f / Zoom;
 
-	if(g_Config.m_FcCrosshairRotate)
+	float Target = 0.0f;
+	if(g_Config.m_FcCrosshairRotate && GameClient()->m_Snap.m_aCharacters[ActiveId].m_Active)
 	{
-		const float Speed = length(GameClient()->m_aClients[ActiveId].m_Predicted.m_Vel);
-		const float Dt = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.033f);
-		const float Spin = Speed * (g_Config.m_FcCrosshairRotateSpeed / 100.0f) * 0.02f;
-		m_CrosshairAngle = std::fmod(m_CrosshairAngle + Spin * Dt, 2.0f * pi);
+		const CNetObj_Character *pPrev = &GameClient()->m_Snap.m_aCharacters[ActiveId].m_Prev;
+		const CNetObj_Character *pCur = &GameClient()->m_Snap.m_aCharacters[ActiveId].m_Cur;
+		const float Intra = Client()->IntraGameTick(g_Config.m_ClDummy);
+		const vec2 Vel = mix(vec2(pPrev->m_VelX, pPrev->m_VelY), vec2(pCur->m_VelX, pCur->m_VelY), Intra) / 256.0f * Client()->GameTickSpeed();
+		const float Speed = length(Vel);
+		if(Speed > 1.0f)
+		{
+			float MoveAngle = std::atan2(Vel.y, Vel.x);
+			if(m_HasCrosshairMoveAngle)
+			{
+				while(MoveAngle - m_LastCrosshairMoveAngle > pi)
+					MoveAngle -= 2.0f * pi;
+				while(MoveAngle - m_LastCrosshairMoveAngle < -pi)
+					MoveAngle += 2.0f * pi;
+			}
+			m_LastCrosshairMoveAngle = MoveAngle;
+			m_HasCrosshairMoveAngle = true;
+			Target = MoveAngle * std::clamp(Speed / 1200.0f, 0.0f, 1.0f);
+		}
+		else
+			m_HasCrosshairMoveAngle = false;
 	}
+
+	const float Dt = std::clamp(Client()->RenderFrameTime(), 0.0f, 0.033f);
+	const float RotateRate = 2.0f + (float)g_Config.m_FcCrosshairRotateSpeed / 100.0f * 8.0f;
+	m_CrosshairAngle += (Target - m_CrosshairAngle) * (1.0f - std::exp(-Dt * RotateRate));
 	const float Rotation = m_CrosshairAngle;
 
 	float Pulse = 0.0f;
 	if(g_Config.m_FcCrosshairPulse)
 		Pulse = GameClient()->m_Outlines.SystemAudio().Level() * (g_Config.m_FcCrosshairPulseStrength / 100.0f);
 
-	const float Size = (float)g_Config.m_FcCrosshairSize * (1.0f + Pulse) * ZoomScale;
-	const float Thickness = std::max(0.5f, (float)g_Config.m_FcCrosshairThickness * (1.0f + Pulse * 0.5f)) * ZoomScale;
-	const float Gap = (float)g_Config.m_FcCrosshairGap * ZoomScale;
+	const float Size = (float)g_Config.m_FcCrosshairSize * (1.0f + Pulse);
+	const float Thickness = std::max(0.5f, (float)g_Config.m_FcCrosshairThickness * (1.0f + Pulse * 0.5f));
+	const float Gap = (float)g_Config.m_FcCrosshairGap;
 	const ColorRGBA Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_FcCrosshairColor, true));
 
 	const auto Bar = [&](vec2 A, vec2 B, float W) {
@@ -1969,6 +1991,7 @@ void CHud::EnsureFinishPredictionData()
 
 void CHud::RenderFinishPrediction()
 {
+	m_HasFinishPredictionText = false;
 	if(!g_Config.m_TcFinishPrediction || !GameClient()->m_GameInfo.m_Race)
 		return;
 
@@ -2112,6 +2135,9 @@ void CHud::RenderFinishPrediction()
 	else
 		str_format(aBuf, sizeof(aBuf), "%.0f%%", Progress * 100.0f);
 
+	str_copy(m_FinishPredictionText, aBuf);
+	m_HasFinishPredictionText = true;
+
 	const auto Layout = HudLayout::Get(HudLayout::MODULE_FINISH_PREDICTION, m_Width, m_Height);
 	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
 	const float FontSize = 10.0f;
@@ -2139,9 +2165,25 @@ CUIRect CHud::GetFinishPredictionHudEditorRect() const
 	const auto Layout = HudLayout::Get(HudLayout::MODULE_FINISH_PREDICTION, m_Width, m_Height);
 	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
 	const float FontSize = 10.0f;
-	const float BoxW = TextRender()->TextWidth(FontSize, "0:00.000 (100%)") + 4.0f;
+	const char *pText = m_HasFinishPredictionText ? m_FinishPredictionText : "0:00.000 (100%)";
+	const float BoxW = TextRender()->TextWidth(FontSize, pText) + 4.0f;
 	const float BoxH = FontSize + 4.0f;
 	CUIRect Rect = {Layout.m_X, Layout.m_Y, BoxW * Scale, BoxH * Scale};
+	return Rect;
+}
+
+CUIRect CHud::GetLastNotifyHudEditorRect() const
+{
+	if(!g_Config.m_TcNotifyWhenLast)
+	{
+		CUIRect EmptyRect = {0.0f, 0.0f, 0.0f, 0.0f};
+		return EmptyRect;
+	}
+	const auto Layout = HudLayout::Get(HudLayout::MODULE_LAST_NOTIFY, m_Width, m_Height);
+	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
+	const float FontSize = (float)g_Config.m_TcNotifyWhenLastSize;
+	const float TextW = TextRender()->TextWidth(FontSize, g_Config.m_TcNotifyWhenLastText);
+	CUIRect Rect = {Layout.m_X, Layout.m_Y, TextW * Scale, FontSize * 1.4f * Scale};
 	return Rect;
 }
 

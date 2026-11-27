@@ -480,6 +480,10 @@ public:
 	{
 		SCommand_Swap() :
 			SCommand(CMD_SWAP) {}
+		int m_FrameGenerationMultiplier = 1;
+		int m_BaseRenderRate = 0;
+		int m_OutputCount = 0;
+		int m_DisplayRate = 0;
 	};
 
 	struct SCommand_VSync : public SCommand
@@ -730,6 +734,7 @@ public:
 	virtual bool GetDriverVersion(EGraphicsDriverAgeType DriverAgeType, int &Major, int &Minor, int &Patch, const char *&pName, EBackendType BackendType) = 0;
 	// checks if the current values of the config are a graphics modern API
 	virtual bool IsConfigModernAPI() { return false; }
+	virtual bool SupportsFrameGeneration() const { return false; }
 	virtual bool UseTrianglesAsQuad() { return false; }
 	virtual bool HasTileBuffering() { return false; }
 	virtual bool HasQuadBuffering() { return false; }
@@ -980,6 +985,7 @@ public:
 	void MapScreen(const CScreenRect &ScreenRect) override;
 	void SetScreenRotation(float Angle) override;
 	CScreenRect GetScreen() const override;
+	float GetScreenRotation() const override;
 
 	void LinesBegin() override;
 	void LinesEnd() override;
@@ -1299,7 +1305,8 @@ public:
 	void TakeCustomScreenshot(const char *pFilename) override;
 	void ReadFramebuffer(CImageInfo &Image);
 	void SetScreenSize(int Width, int Height);
-	void Swap() override;
+	void Swap(int FrameGenerationMultiplier = 1, int BaseRenderRate = 0, int OutputCount = 0, int DisplayRate = 0) override;
+	bool SupportsFrameGeneration() const override { return m_pBackend && m_pBackend->SupportsFrameGeneration(); }
 	bool SetVSync(bool State) override;
 	bool SetMultiSampling(uint32_t ReqMultiSamplingCount, uint32_t &MultiSamplingCountBackend) override;
 

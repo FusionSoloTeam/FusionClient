@@ -152,6 +152,8 @@ void CItems::RenderPickup(const CNetObj_Pickup *pPrev, const CNetObj_Pickup *pCu
 	}
 	else if(pCurrent->m_Type == POWERUP_WEAPON)
 	{
+		if(g_Config.m_TcRenderWeaponsAsGun && (CurWeapon == WEAPON_SHOTGUN || CurWeapon == WEAPON_GRENADE || CurWeapon == WEAPON_LASER))
+			CurWeapon = WEAPON_GUN;
 		QuadOffset = m_aPickupWeaponOffset[CurWeapon];
 		Graphics()->TextureSet(GameClient()->m_GameSkin.m_aSpritePickupWeapons[CurWeapon]);
 	}
@@ -176,6 +178,16 @@ void CItems::RenderPickup(const CNetObj_Pickup *pPrev, const CNetObj_Pickup *pCu
 	}
 	Graphics()->QuadsSetRotation(0);
 	Graphics()->SetColor(1.f, 1.f, 1.f, 1.f);
+
+	if(g_Config.m_TcRenderWeaponsAsGun == 1 && pCurrent->m_Type == POWERUP_WEAPON)
+	{
+		if(pCurrent->m_Subtype == WEAPON_SHOTGUN)
+			Graphics()->SetColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClLaserShotgunInnerColor)));
+		else if(pCurrent->m_Subtype == WEAPON_GRENADE)
+			Graphics()->SetColor(ColorRGBA(0.866666f, 0.372549f, 0.372549f));
+		else if(pCurrent->m_Subtype == WEAPON_LASER)
+			Graphics()->SetColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClLaserRifleInnerColor)));
+	}
 
 	vec2 Scale = vec2(1, 1);
 	if(Flags & PICKUPFLAG_XFLIP)

@@ -43,8 +43,12 @@ void CTileUnderCursor::OnRender()
 	const ColorRGBA Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_FcOutlineUnderCursorColor, true));
 	const float Border = g_Config.m_FcOutlineUnderCursorWidth;
 
+	// the screen was reset, so re-apply the camera tilt to match the world
+	Graphics()->SetScreenRotation(GameClient()->m_Camera.TiltAngle());
 	Graphics()->DrawRect(TileX, TileY, 32.0f, Border, Color, IGraphics::CORNER_NONE, 0.0f);
 	Graphics()->DrawRect(TileX, TileY + 32.0f - Border, 32.0f, Border, Color, IGraphics::CORNER_NONE, 0.0f);
 	Graphics()->DrawRect(TileX, TileY, Border, 32.0f, Color, IGraphics::CORNER_NONE, 0.0f);
 	Graphics()->DrawRect(TileX + 32.0f - Border, TileY, Border, 32.0f, Color, IGraphics::CORNER_NONE, 0.0f);
+
+	Graphics()->SetScreenRotation(0.0f);
 }

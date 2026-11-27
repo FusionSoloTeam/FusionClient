@@ -103,6 +103,7 @@ MACRO_CONFIG_INT(TcDiscordNormalProcessPriority, tc_discord_normal_process_prior
 MACRO_CONFIG_INT(TcSpecMenuPrefixes, tc_specmenu_prefixes, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show prefixes next to names in the spectate menu")
 
 MACRO_CONFIG_INT(TcChatScroll, tc_chat_scroll, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable scrolling in chat")
+MACRO_CONFIG_INT(FcGifChat, fc_gif_chat, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Render tenor/giphy gif links in chat as animations")
 
 MACRO_CONFIG_INT(TcChatCursor, tc_chat_cursor, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Unlock the cursor while the chat is open")
 MACRO_CONFIG_INT(TcChatTagCursor, tc_chat_tag_cursor, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Tag with cursor: click a tee or a chat nickname to insert its name into the chat")
@@ -117,6 +118,7 @@ MACRO_CONFIG_INT(TcTextOnMoveInSpec, tc_text_on_move_in_spec, 0, 0, 1, CFGFLAG_C
 MACRO_CONFIG_INT(TcTextOnMoveInSpecPosX, tc_text_on_move_in_spec_pos_x, 50, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Text position X when moved in spec")
 MACRO_CONFIG_INT(TcTextOnMoveInSpecPosY, tc_text_on_move_in_spec_pos_y, 50, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Text position Y when moved in spec")
 MACRO_CONFIG_INT(TcTextOnMoveInSpecRemoveOnInput, tc_text_on_move_in_spec_remove_on_input, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Remove 'moved in spec' text on any input")
+MACRO_CONFIG_INT(FcPracticeAutoDummy, fc_practice_auto_dummy, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Send /practice for the other tee automatically")
 
 MACRO_CONFIG_INT(TcHideEnemyChat, tc_hide_enemy_chat, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Hide chat messages of war-list enemies")
 MACRO_CONFIG_INT(TcChatServerPrefix, tc_do_chat_server_prefix, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show server message prefix")
@@ -303,6 +305,9 @@ MACRO_CONFIG_INT(TcNotifyWhenLastSize, tc_last_notify_size, 10, 0, 50, CFGFLAG_C
 
 MACRO_CONFIG_INT(TcRenderCursorSpec, tc_cursor_in_spec, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Render your gun cursor when spectating in freeview")
 MACRO_CONFIG_INT(TcRenderCursorSpecAlpha, tc_cursor_in_spec_alpha, 100, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Alpha of cursor in freeview")
+MACRO_CONFIG_INT(FcPlatformRender, fc_platform_render, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show platform tiles while spectating")
+MACRO_CONFIG_COL(FcPlatformRenderColor, fc_platform_render_color, 0xFF2ECC71, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Platform render color")
+MACRO_CONFIG_INT(FcTeleLinks, fc_tele_links, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Connect teleporter tiles of the same number with lines instead of showing numbers")
 
 // MACRO_CONFIG_INT(TcRenderNameplateSpec, tc_render_nameplate_spec, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Render nameplates when spectating")
 
@@ -410,6 +415,7 @@ MACRO_CONFIG_STR(TcTranslateOutgoingTarget, tc_translate_outgoing_target, 16, "e
 
 // Animations
 MACRO_CONFIG_INT(TcAnimateWheelTime, tc_animate_wheel_time, 80, 0, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Duration of emote and bind wheel animations, in milliseconds (0 == no animation, 1000 = 1 second)")
+MACRO_CONFIG_INT(FcEmoteWheelLayout, fc_emote_wheel_layout, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Emote wheel layout (0 = circle, 1 = horizontal, 2 = vertical)")
 
 // Pets
 MACRO_CONFIG_INT(TcPetShow, tc_pet_show, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show a pet")
@@ -494,6 +500,14 @@ MACRO_CONFIG_INT(TcDriftCameraSmooth, tc_drift_camera_smooth, 60, 0, 100, CFGFLA
 MACRO_CONFIG_INT(TcDriftCameraOthers, tc_drift_camera_others, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Apply drift camera while spectating other tees")
 MACRO_CONFIG_INT(TcDriftCameraFreeze, tc_drift_camera_freeze, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Apply drift camera while frozen")
 MACRO_CONFIG_INT(TcDriftCameraHook, tc_drift_camera_hook, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Apply drift camera while hooking")
+MACRO_CONFIG_INT(FcCameraDeadzone, fc_camera_deadzone, 100, 0, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Camera deadzone: the camera holds position while the tee stays within this radius of the screen center (units, 0 = off)")
+MACRO_CONFIG_INT(FcCameraDeadzoneSpeed, fc_camera_deadzone_speed, 0, 0, 10000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Disable camera deadzone when tee speed exceeds this (units/s, 0 = never)")
+
+MACRO_CONFIG_INT(FcWeaponIdleAnim, fc_weapon_idle_anim, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Weapon idle flourish animations when a tee stands still without aiming")
+MACRO_CONFIG_INT(FcWeaponIdleDelay, fc_weapon_idle_delay, 4, 1, 20, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Seconds of idleness before the weapon flourish animation plays")
+MACRO_CONFIG_INT(FcWeaponIdleOthers, fc_weapon_idle_others, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show weapon idle animations on other players")
+MACRO_CONFIG_INT(FcWeaponIdleTrail, fc_weapon_idle_trail, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show a motion trail behind the weapon during idle flourish animations")
+
 MACRO_CONFIG_INT(TcCameraTilt, tc_camera_tilt, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Camera tilt: the view rolls left and right with your speed")
 MACRO_CONFIG_INT(TcCameraTiltMode, tc_camera_tilt_mode, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Camera tilt axis (0 = horizontal speed, 1 = movement direction, 2 = movement direction inverted)")
 MACRO_CONFIG_INT(TcCameraTiltStrength, tc_camera_tilt_strength, 100, 0, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Camera tilt strength (% of the maximum angle)")
@@ -532,7 +546,7 @@ MACRO_CONFIG_INT(TcFinishPredictionSpeedMode, tc_finish_prediction_speed_mode, 1
 MACRO_CONFIG_INT(TcFinishPredictionSmooth, tc_finish_prediction_smooth, 60, 0, 95, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Smoothing of the predicted time (0 = instant, 95 = slow)")
 
 MACRO_CONFIG_INT(TcMuteOthersSounds, tc_mute_others_sounds, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Mute every sound that comes from other players")
-MACRO_CONFIG_INT(TcInputs, tc_inputs, 0, 0, 7, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Input prediction mode (0 = off, 1 = fast, 2 = best, 7 = fusion)")
+MACRO_CONFIG_INT(TcInputs, tc_inputs, 0, 0, 8, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Input prediction mode (0 = off, 1 = fast, 2 = best, 7 = fusion, 8 = ascend)")
 MACRO_CONFIG_INT(TcBestInputAmount, tc_best_input_amount, 0, 0, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Best input prediction amount in 0.01 ticks")
 MACRO_CONFIG_INT(TcBestInputSmoothing, tc_best_input_smoothing, 0, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Best input smoothing amount (0-100%)")
 MACRO_CONFIG_INT(TcBestInputLatencyComp, tc_best_input_latency_comp, 0, 0, 50, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Best input latency compensation (0-50%)")
@@ -545,6 +559,11 @@ MACRO_CONFIG_INT(TcDeltaInputOthers, tc_delta_input_others, 0, 0, 1, CFGFLAG_CLI
 MACRO_CONFIG_INT(TcFInputAmount, tc_f_input_amount, 0, 0, 5000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "F input amount in 0.001-tick units (0=off, 1000=1.000 ticks, max 5000=5.000 ticks)")
 MACRO_CONFIG_INT(TcFInputOthers, tc_f_input_others, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Apply F input to other tees")
 MACRO_CONFIG_INT(TcCloudInputOthers, tc_cloud_input_others, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Apply cloud input to other tees")
+MACRO_CONFIG_INT(FcAscendInputAmount, fc_ascend_input_amount, 200, 0, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Ascend input amount in 0.01 ticks")
+MACRO_CONFIG_INT(FcAscendInputIdle, fc_ascend_input_idle, 20, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Ascend input offset percentage at standstill")
+MACRO_CONFIG_INT(FcAscendInputSmoothing, fc_ascend_input_smoothing, 50, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Ascend input smoothing (0-100%)")
+MACRO_CONFIG_INT(FcAscendInputSpeed, fc_ascend_input_speed, 1200, 200, 4000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Ascend input speed reference in units/sec")
+MACRO_CONFIG_INT(FcAscendInputOthers, fc_ascend_input_others, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Apply Ascend input to other tees")
 MACRO_CONFIG_INT(TcLaserGlow, tc_laser_glow, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable Laser Glow visual effect")
 MACRO_CONFIG_INT(TcLaserGlowPower, tc_laser_glow_power, 50, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Laser Glow power/intensity (0-100)")
 MACRO_CONFIG_INT(TcLaserGlowMode, tc_laser_glow_mode, 0, 0, 5, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Laser Glow mode: 0=Classic, 1=Prism, 2=Pulse, 3=Crystal, 4=Plasma, 5=Aurora")

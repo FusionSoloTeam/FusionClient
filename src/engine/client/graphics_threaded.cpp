@@ -227,6 +227,11 @@ CScreenRect CGraphics_Threaded::GetScreen() const
 	return CScreenRect(m_State.m_ScreenTL, m_State.m_ScreenBR);
 }
 
+float CGraphics_Threaded::GetScreenRotation() const
+{
+	return m_State.m_ScreenRotation;
+}
+
 void CGraphics_Threaded::LinesBegin()
 {
 	dbg_assert(m_Drawing == EDrawing::NONE, "called Graphics()->LinesBegin twice");
@@ -3037,7 +3042,7 @@ void CGraphics_Threaded::ReadFramebuffer(CImageInfo &Image)
 	WaitForIdle();
 }
 
-void CGraphics_Threaded::Swap()
+void CGraphics_Threaded::Swap(int FrameGenerationMultiplier, int BaseRenderRate, int OutputCount, int DisplayRate)
 {
 #if defined(CONF_PLATFORM_IOS)
 	// Rotating the device by 180 degrees moves the cutout to the other side without
@@ -3057,6 +3062,10 @@ void CGraphics_Threaded::Swap()
 	if(!Swapped)
 	{
 		CCommandBuffer::SCommand_Swap Cmd;
+		Cmd.m_FrameGenerationMultiplier = FrameGenerationMultiplier;
+		Cmd.m_BaseRenderRate = BaseRenderRate;
+		Cmd.m_OutputCount = OutputCount;
+		Cmd.m_DisplayRate = DisplayRate;
 		AddCmd(Cmd);
 	}
 

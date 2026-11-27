@@ -803,6 +803,16 @@ void CPlayers::RenderPlayer(
 	vec2 Direction = direction(Angle);
 	vec2 Vel = mix(vec2(Prev.m_VelX / 256.0f, Prev.m_VelY / 256.0f), vec2(Player.m_VelX / 256.0f, Player.m_VelY / 256.0f), Intra);
 
+	// Fusion: fetch the idle flourish state for this tee
+	float WeaponAnimRot = 0.0f;
+	vec2 WeaponAnimPos = vec2(0.0f, 0.0f);
+	const std::vector<CWeaponIdle::STrailSample> *pWeaponTrail = nullptr;
+	if(ClientId >= 0 && !RenderGhost && (Local || g_Config.m_FcWeaponIdleOthers))
+	{
+		GameClient()->m_WeaponIdle.GetAnim(ClientId, Angle, WeaponAnimRot, WeaponAnimPos);
+		pWeaponTrail = GameClient()->m_WeaponIdle.GetTrail(ClientId);
+	}
+
 	// TClient: render the ghost as a circle instead of a tee
 	if(RenderGhost && g_Config.m_TcRenderGhostAsCircle && !FrozenSwappingHide)
 	{
@@ -920,26 +930,26 @@ void CPlayers::RenderPlayer(
 	{
 		if(!(RenderInfo.m_TeeRenderFlags & TEE_NO_WEAPON))
 		{
-			Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
-
-			// TClient
+			// TClient: keep the caller colour in a local so the trail ghosts can restore it
 			const bool DontOthers = !g_Config.m_TcRainbowOthers && !Local;
+			ColorRGBA CallerColor = ColorRGBA(1.0f, 1.0f, 1.0f, Alpha);
 			if(g_Config.m_TcRainbowWeapon && !DontOthers)
-				Graphics()->SetColor(GameClient()->m_Rainbow.m_RainbowColor.WithAlpha(Alpha));
+				CallerColor = GameClient()->m_Rainbow.m_RainbowColor.WithAlpha(Alpha);
 
 			if(g_Config.m_TcRenderWeaponsAsGun && (Player.m_Weapon == WEAPON_SHOTGUN || Player.m_Weapon == WEAPON_GRENADE || Player.m_Weapon == WEAPON_LASER))
 			{
 				if(g_Config.m_TcRenderWeaponsAsGun == 1)
 				{
 					if(Player.m_Weapon == WEAPON_SHOTGUN)
-						Graphics()->SetColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClLaserShotgunInnerColor).WithAlpha(Alpha)));
+						CallerColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClLaserShotgunInnerColor).WithAlpha(Alpha));
 					if(Player.m_Weapon == WEAPON_GRENADE)
-						Graphics()->SetColor(ColorRGBA(0.866666f, 0.372549f, 0.372549f).WithAlpha(Alpha));
+						CallerColor = ColorRGBA(0.866666f, 0.372549f, 0.372549f).WithAlpha(Alpha);
 					if(Player.m_Weapon == WEAPON_LASER)
-						Graphics()->SetColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClLaserRifleInnerColor).WithAlpha(Alpha)));
+						CallerColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClLaserRifleInnerColor).WithAlpha(Alpha));
 				}
 				Player.m_Weapon = WEAPON_GUN;
 			}
+			Graphics()->SetColor(CallerColor);
 
 			// normal weapons
 			int CurrentWeapon = std::clamp(Player.m_Weapon, 0, NUM_WEAPONS - 1);
@@ -949,6 +959,30 @@ void CPlayers::RenderPlayer(
 			float Recoil = 0.0f;
 			vec2 WeaponPosition;
 			bool IsSit = Inactive && !InAir && Stationary;
+
+			// Fusion: fading trail ghosts sell the flourish motion
+			auto DrawWeaponSprite = [&](const vec2 &Pos, float Rot)
+			{
+				if(g_Config.m_FcWeaponIdleTrail && pWeaponTrail && !pWeaponTrail->empty())
+				{
+					const float Now = Client()->GlobalTime();
+					const vec2 BasePos = Pos - WeaponAnimPos;
+					const float BaseRot = Rot - WeaponAnimRot;
+					for(const auto &Sample : *pWeaponTrail)
+					{
+						const float Fade = std::clamp(1.0f - (Now - Sample.m_Time) / CWeaponIdle::TRAIL_KEEP, 0.0f, 1.0f);
+						const float a = Alpha * 0.4f * Fade * Fade;
+						if(a <= 0.005f)
+							continue;
+						Graphics()->SetColor(RenderInfo.m_ColorBody.r, RenderInfo.m_ColorBody.g, RenderInfo.m_ColorBody.b, a);
+						Graphics()->QuadsSetRotation(BaseRot + Sample.m_Rot);
+						Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, BasePos.x + Sample.m_Pos.x, BasePos.y + Sample.m_Pos.y);
+					}
+				}
+				Graphics()->SetColor(CallerColor);
+				Graphics()->QuadsSetRotation(Rot);
+				Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, Pos.x, Pos.y);
+			};
 
 			if(Player.m_Weapon == WEAPON_HAMMER)
 			{
@@ -964,19 +998,15 @@ void CPlayers::RenderPlayer(
 						WeaponPosition.x -= g_pData->m_Weapons.m_aId[CurrentWeapon].m_Offsetx;
 					if(IsSit)
 						WeaponPosition.y += 3.0f;
+					WeaponPosition += WeaponAnimPos;
 
 					// if active and attack is under way, bash stuffs
+					float WeaponRot;
 					if(!Inactive || LastAttackTime * HammerAnimationTimeScale < 1.0f)
-					{
-						if(Direction.x < 0.0f)
-							Graphics()->QuadsSetRotation(-pi / 2.0f - State.GetAttach()->m_Angle * pi * 2.0f);
-						else
-							Graphics()->QuadsSetRotation(-pi / 2.0f + State.GetAttach()->m_Angle * pi * 2.0f);
-					}
+						WeaponRot = -pi / 2.0f + State.GetAttach()->m_Angle * pi * 2.0f * (Direction.x < 0.0f ? -1.0f : 1.0f) + WeaponAnimRot;
 					else
-						Graphics()->QuadsSetRotation(Direction.x < 0.0f ? 100.0f : 500.0f);
-
-					Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, WeaponPosition.x, WeaponPosition.y);
+						WeaponRot = (Direction.x < 0.0f ? 100.0f : 500.0f) + WeaponAnimRot;
+					DrawWeaponSprite(WeaponPosition, WeaponRot);
 					break;
 				}
 				case 1:
@@ -987,16 +1017,17 @@ void CPlayers::RenderPlayer(
 						WeaponPosition.x -= g_pData->m_Weapons.m_aId[CurrentWeapon].m_Offsetx;
 					if(IsSit)
 						WeaponPosition.y += 3.0f;
+					WeaponPosition += WeaponAnimPos;
 
 					// set rotation
 					float QuadsRotation = -pi / 2.0f;
 					QuadsRotation += State.GetAttach()->m_Angle * (Direction.x < 0.0f ? -1.0f : 1.0f) * pi * 2.0f;
 					QuadsRotation += Angle;
+					QuadsRotation += WeaponAnimRot;
 					if(Direction.x < 0.0f)
 						QuadsRotation += pi;
 
-					Graphics()->QuadsSetRotation(QuadsRotation);
-					Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, WeaponPosition.x, WeaponPosition.y);
+					DrawWeaponSprite(WeaponPosition, QuadsRotation);
 					break;
 				}
 				case 2:
@@ -1009,9 +1040,9 @@ void CPlayers::RenderPlayer(
 					WeaponPosition = Position - Direction * (Recoil * 10.0f - 5.0f);
 					if(IsSit)
 						WeaponPosition.y += 3.0f;
+					WeaponPosition += WeaponAnimPos;
 
-					Graphics()->QuadsSetRotation(Angle + 2 * pi);
-					Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, WeaponPosition.x, WeaponPosition.y);
+					DrawWeaponSprite(WeaponPosition, Angle + 2 * pi + WeaponAnimRot);
 					RenderHand(&RenderInfo,
 						Position + Direction * g_pData->m_Weapons.m_aId[WEAPON_GUN].m_Offsetx - Direction * Recoil * 10.0f + vec2(0.0f, g_pData->m_Weapons.m_aId[WEAPON_GUN].m_Offsety),
 						Direction, -3 * pi / 4, vec2(-15, 4), Alpha);
@@ -1026,19 +1057,21 @@ void CPlayers::RenderPlayer(
 				WeaponPosition.y += g_pData->m_Weapons.m_aId[CurrentWeapon].m_Offsety;
 				if(IsSit)
 					WeaponPosition.y += 3.0f;
+				WeaponPosition += WeaponAnimPos;
 
+				float NinjaRot;
 				if(Direction.x < 0.0f)
 				{
-					Graphics()->QuadsSetRotation(-pi / 2 - State.GetAttach()->m_Angle * pi * 2.0f);
+					NinjaRot = -pi / 2 - State.GetAttach()->m_Angle * pi * 2.0f + WeaponAnimRot;
 					WeaponPosition.x -= g_pData->m_Weapons.m_aId[CurrentWeapon].m_Offsetx;
 					GameClient()->m_Effects.PowerupShine(WeaponPosition + vec2(32.0f, 0.0f), vec2(32.0f, 12.0f), Alpha);
 				}
 				else
 				{
-					Graphics()->QuadsSetRotation(-pi / 2 + State.GetAttach()->m_Angle * pi * 2.0f);
+					NinjaRot = -pi / 2 + State.GetAttach()->m_Angle * pi * 2.0f + WeaponAnimRot;
 					GameClient()->m_Effects.PowerupShine(WeaponPosition - vec2(32.0f, 0.0f), vec2(32.0f, 12.0f), Alpha);
 				}
-				Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, WeaponPosition.x, WeaponPosition.y);
+				DrawWeaponSprite(WeaponPosition, NinjaRot);
 
 				// HADOKEN
 				if(AttackTime <= 1.0f / 6.0f && g_pData->m_Weapons.m_aId[CurrentWeapon].m_NumSpriteMuzzles)
@@ -1093,8 +1126,8 @@ void CPlayers::RenderPlayer(
 					WeaponPosition.y += 3.0f;
 				if(Player.m_Weapon == WEAPON_GUN && g_Config.m_ClOldGunPosition)
 					WeaponPosition.y -= 8.0f;
-				Graphics()->QuadsSetRotation(State.GetAttach()->m_Angle * pi * 2.0f + Angle);
-				Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, WeaponPosition.x, WeaponPosition.y);
+				WeaponPosition += WeaponAnimPos;
+				DrawWeaponSprite(WeaponPosition, State.GetAttach()->m_Angle * pi * 2.0f + Angle + WeaponAnimRot);
 			}
 
 			if(Player.m_Weapon == WEAPON_GUN || Player.m_Weapon == WEAPON_SHOTGUN)

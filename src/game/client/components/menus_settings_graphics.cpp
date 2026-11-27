@@ -14,6 +14,7 @@
 #include <game/client/ui_scrollregion.h>
 #include <game/localization.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <numeric>
@@ -167,6 +168,28 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 	if(DoButton_CheckBox(&g_Config.m_GfxVsync, aBuf, g_Config.m_GfxVsync, &Button))
 	{
 		Graphics()->SetVSync(!g_Config.m_GfxVsync);
+	}
+
+	MainView.HSplitTop(20.0f, &Button, &MainView);
+	CUIRect FrameGenerationLabel, FrameGenerationDropDown;
+	Button.VSplitLeft(160.0f, &FrameGenerationLabel, &FrameGenerationDropDown);
+	Ui()->DoLabel(&FrameGenerationLabel, Localize("Frame Generation"), 12.0f, TEXTALIGN_ML);
+	if(Graphics()->SupportsFrameGeneration())
+	{
+		const char *apModes[] = {Localize("Off", "Frame Generation"), "2x", "3x", "4x"};
+		static CUi::SDropDownState s_FrameGenerationState;
+		static CScrollRegion s_FrameGenerationScrollRegion;
+		s_FrameGenerationState.m_SelectionPopupContext.m_pScrollRegion = &s_FrameGenerationScrollRegion;
+		const int OldMode = std::clamp(g_Config.m_GfxFrameGeneration - 1, 0, (int)std::size(apModes) - 1);
+		const int NewMode = Ui()->DoDropDown(&FrameGenerationDropDown, OldMode, apModes, std::size(apModes), s_FrameGenerationState);
+		if(NewMode != OldMode)
+			g_Config.m_GfxFrameGeneration = NewMode == 0 ? 0 : NewMode + 1;
+		GameClient()->m_Tooltips.DoToolTip(&s_FrameGenerationState, &FrameGenerationLabel, Localize("Adds intermediate frames. Requires a known monitor refresh rate. In game, set an FPS limit below it; generation pauses if the limit cannot be reached. In the editor, generation also works without a limit but can reduce source FPS. FPS counts source frames only."), 350.0f);
+	}
+	else
+	{
+		Ui()->DoLabel(&FrameGenerationDropDown, Localize("Unavailable", "Frame Generation"), 12.0f, TEXTALIGN_ML);
+		GameClient()->m_Tooltips.DoToolTip(&g_Config.m_GfxFrameGeneration, &FrameGenerationLabel, Localize("Requires a compatible Vulkan renderer."));
 	}
 
 	bool MultiSamplingChanged = false;

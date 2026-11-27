@@ -344,7 +344,11 @@ protected:
 	void GetTileData(unsigned char *pIndex, unsigned char *pFlags, int *pAngleRotate, unsigned int x, unsigned int y, int CurOverlay) const override;
 
 private:
+	void BuildTeleLinks();
+	void RenderTeleLinks(const CRenderLayerParams &Params, const ColorRGBA &Color);
+
 	std::optional<CRenderLayerTile::CTileLayerVisuals> m_VisualTeleNumbers;
+	std::vector<IGraphics::CLineItem> m_vTeleLinks;
 	CTeleTile *m_pTeleTiles;
 };
 

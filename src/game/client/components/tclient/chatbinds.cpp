@@ -242,6 +242,8 @@ void CChatBinds::OnReset()
 
 void CChatBinds::OnRender()
 {
+	UpdateStartTeam();
+
 	if(m_pProfileTask)
 	{
 		const EHttpState State = m_pProfileTask->State();
@@ -591,6 +593,140 @@ void CChatBinds::ConGotoTeleCursor(IConsole::IResult *pResult, void *pUserData)
 	pSelf->GameClient()->m_Controls.m_aMousePos[g_Config.m_ClDummy] = TargetPos;
 }
 
+void CChatBinds::StartTeam(int Preferred)
+{
+	if(Client()->State() != IClient::STATE_ONLINE)
+		return;
+	if(!GameClient()->m_GameInfo.m_DDRaceTeam)
+	{
+		FastPrint(GameClient(), "startteam", "This server does not support teams");
+		return;
+	}
+
+	int MaxTeam = GameClient()->m_Teams.m_NumDDRaceTeams - 2; // exclude the super team, it is not a game team
+	if(MaxTeam < 1)
+		MaxTeam = MAX_CLIENTS - 1;
+	Preferred = std::clamp(Preferred, 1, MaxTeam);
+
+	bool aUsed[MAX_CLIENTS] = {};
+	const int LocalId = GameClient()->m_aLocalIds[g_Config.m_ClDummy];
+	for(int i = 0; i < MAX_CLIENTS; i++)
+	{
+		if(i == LocalId || !GameClient()->m_aClients[i].m_Active)
+			continue;
+		const int Team = GameClient()->m_Teams.Team(i);
+		if(Team > 0 && Team < MAX_CLIENTS)
+			aUsed[Team] = true;
+	}
+
+	int Target = -1;
+	for(int d = 0; d <= MaxTeam && Target < 0; d++)
+	{
+		const int aCandidates[2] = {Preferred + d, Preferred - d};
+		for(int c = 0; c < 2; c++)
+		{
+			const int Candidate = aCandidates[c];
+			if(Candidate < 1 || Candidate > MaxTeam || aUsed[Candidate])
+				continue;
+			Target = Candidate;
+			break;
+		}
+	}
+	if(Target < 0)
+		Target = Preferred;
+
+	char aBuf[64];
+	str_format(aBuf, sizeof(aBuf), "/team %d", Target);
+	GameClient()->m_Chat.SendChat(0, aBuf);
+
+	m_StartTeamPhase = STARTTEAM_JOINING;
+	m_StartTeamNumber = Target;
+	m_StartTeamStamp = time_get();
+	m_StartTeamDeadline = time_get() + 60 * time_freq();
+	m_StartTeamInviteIds.clear();
+}
+
+void CChatBinds::UpdateStartTeam()
+{
+	if(m_StartTeamPhase == STARTTEAM_IDLE)
+		return;
+	if(Client()->State() != IClient::STATE_ONLINE)
+	{
+		m_StartTeamPhase = STARTTEAM_IDLE;
+		return;
+	}
+
+	const int64_t Now = time_get();
+	if(Now > m_StartTeamDeadline)
+	{
+		FastPrint(GameClient(), "startteam", "Timed out before finishing");
+		m_StartTeamPhase = STARTTEAM_IDLE;
+		return;
+	}
+
+	const int LocalId = GameClient()->m_aLocalIds[g_Config.m_ClDummy];
+	if(LocalId < 0 || LocalId >= MAX_CLIENTS)
+	{
+		m_StartTeamPhase = STARTTEAM_IDLE;
+		return;
+	}
+
+	if(m_StartTeamPhase == STARTTEAM_JOINING)
+	{
+		if(GameClient()->m_Teams.Team(LocalId) == m_StartTeamNumber)
+		{
+			GameClient()->m_Chat.SendChat(0, "/lock");
+			m_StartTeamPhase = STARTTEAM_LOCKING;
+			m_StartTeamStamp = Now;
+		}
+		return;
+	}
+
+	if(m_StartTeamPhase == STARTTEAM_LOCKING)
+	{
+		if(Now - m_StartTeamStamp < time_freq() / 2)
+			return;
+
+		m_StartTeamInviteIds.clear();
+		for(int i = 0; i < MAX_CLIENTS; i++)
+		{
+			if(i == LocalId || !GameClient()->m_aClients[i].m_Active || GameClient()->m_aClients[i].m_Spec)
+				continue;
+			if(GameClient()->m_HeartList.IsFriend(i) || GameClient()->m_aClients[i].m_Friend)
+				m_StartTeamInviteIds.push_back(i);
+		}
+
+		if(m_StartTeamInviteIds.empty())
+			m_StartTeamPhase = STARTTEAM_IDLE;
+		else
+		{
+			m_StartTeamPhase = STARTTEAM_INVITING;
+			m_StartTeamStamp = Now;
+		}
+		return;
+	}
+
+	if(Now - m_StartTeamStamp < (int64_t)(1.25 * time_freq()))
+		return;
+
+	while(!m_StartTeamInviteIds.empty())
+	{
+		const int Id = m_StartTeamInviteIds.front();
+		m_StartTeamInviteIds.erase(m_StartTeamInviteIds.begin());
+		if(Id < 0 || Id >= MAX_CLIENTS || !GameClient()->m_aClients[Id].m_Active ||
+			(!GameClient()->m_HeartList.IsFriend(Id) && !GameClient()->m_aClients[Id].m_Friend))
+			continue;
+
+		char aBuf[128];
+		str_format(aBuf, sizeof(aBuf), "/invite %s", GameClient()->m_aClients[Id].m_aName);
+		GameClient()->m_Chat.SendChat(0, aBuf);
+		break;
+	}
+	if(m_StartTeamInviteIds.empty())
+		m_StartTeamPhase = STARTTEAM_IDLE;
+	m_StartTeamStamp = Now;
+}
+
 bool CChatBinds::OnChatCommand(int Team, const char *pLine)
 {
 	if(Client()->State() != IClient::STATE_ONLINE)
@@ -627,6 +763,20 @@ bool CChatBinds::OnChatCommand(int Team, const char *pLine)
 		return true;
 	}
 
+	if(MatchChatCommand(pLine, "!startteam", &pRest))
+	{
+		int Preferred = 0;
+		if(*pRest != '\0')
+			Preferred = str_toint(pRest);
+		if(Preferred <= 0)
+		{
+			FastPrint(GameClient(), "startteam", "Usage: !startteam <team number>");
+			return true;
+		}
+		StartTeam(Preferred);
+		return true;
+	}
+
 	return false;
 }
 
@@ -655,6 +805,7 @@ void CChatBinds::OnStateChange(int NewState, int OldState)
 	m_vMarkers.clear();
 	if(NewState != IClient::STATE_ONLINE && NewState != IClient::STATE_DEMOPLAYBACK)
 	{
+		m_StartTeamPhase = STARTTEAM_IDLE;
 		if(m_pProfileTask)
 		{
 			m_pProfileTask->Abort();

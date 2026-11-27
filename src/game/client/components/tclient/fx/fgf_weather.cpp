@@ -25,6 +25,7 @@ void CFgfWeather::OnInit()
 	m_GlowTexture = FgfGlow::CreateGlowTexture(Graphics());
 	m_LeafTexture = FgfGlow::CreateLeafTexture(Graphics());
 	m_PetalTexture = FgfGlow::CreatePetalTexture(Graphics());
+	m_SnowflakeTexture = FgfGlow::CreateSnowflakeTexture(Graphics());
 }
 
 void CFgfWeather::OnReset()
@@ -32,6 +33,10 @@ void CFgfWeather::OnReset()
 	m_NumDrops = 0;
 	m_NumSplashes = 0;
 	m_SpawnAccumulator = 0.0f;
+	for(auto &Mote : m_aDust)
+		Mote.m_Active = false;
+	m_DustSpawnAccumulator = 0.0f;
+	m_LastDustTime = 0.0f;
 }
 
 CFgfWeather::CDrop *CFgfWeather::NewDrop()
@@ -298,9 +303,8 @@ void CFgfWeather::Draw(float Time)
 
 	if(m_Kind == FGF_WEATHER_SNOW)
 	{
-		const IGraphics::CTextureHandle FlakeTexture = GameClient()->m_ExtrasSkin.m_SpriteParticleSnowflake;
-		const bool Sprite = g_Config.m_TcWeatherSnowflakes != 0 && FlakeTexture.IsValid();
-		Graphics()->TextureSet(Sprite ? FlakeTexture : m_GlowTexture);
+		const bool Sprite = g_Config.m_TcWeatherSnowflakes != 0 && m_SnowflakeTexture.IsValid();
+		Graphics()->TextureSet(Sprite ? m_SnowflakeTexture : m_GlowTexture);
 		Graphics()->BlendNormal();
 		Graphics()->QuadsBegin();
 		Graphics()->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
@@ -346,44 +350,91 @@ void CFgfWeather::Draw(float Time)
 
 void CFgfWeather::AmbientDust()
 {
-	static int64_t s_LastUpdate = 0;
-	const int64_t Now = time_get();
-	const float Speed = 1.0f;
-	if((Now - s_LastUpdate) / (float)time_freq() * Speed <= 1.0f / 5.0f)
-		return;
-	s_LastUpdate = Now;
-
 	const vec2 Center = GameClient()->m_Camera.m_Center;
 	const CFxScreenRect View = FxMapScreenToWorld(Graphics(), Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0.0f, 0.0f, GameClient()->m_Camera.m_Zoom);
 	const ColorRGBA Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_TcAmbientDustColor));
-	const int Amount = round_to_int(6.0f * g_Config.m_TcAmbientDustAmount / 100.0f);
+	const int Amount = std::clamp(round_to_int(6.0f * g_Config.m_TcAmbientDustAmount / 100.0f), 1, 24);
 	const float DustSizeMul = g_Config.m_TcAmbientDustSize / 100.0f;
 	const float DustOpacityMul = g_Config.m_TcAmbientDustOpacity / 100.0f;
 
-	for(int i = 0; i < Amount; i++)
-	{
-		const float LifeSpan = random_float(4.0f, 8.0f);
-		const bool Sparkle = (i % 4) == 0;
+	const float Now = LocalTime();
+	const float Passed = m_LastDustTime > 0.0f ? std::clamp(Now - m_LastDustTime, 0.0f, 0.2f) : 0.0f;
+	m_LastDustTime = Now;
 
-		CParticle p;
-		p.SetDefault();
-		p.m_Spr = Sparkle ? SPRITE_PART_SPARKLE : SPRITE_PART_BALL;
-		p.m_Pos = vec2(random_float(View.m_TopLeft.x, View.m_BottomRight.x), random_float(View.m_TopLeft.y, View.m_BottomRight.y));
-		p.m_Vel = vec2(random_float(-14.0f, 14.0f), random_float(-18.0f, 6.0f));
-		p.m_LifeSpan = LifeSpan;
-		p.m_StartSize = (Sparkle ? random_float(8.0f, 16.0f) : random_float(5.0f, 14.0f)) * DustSizeMul;
-		p.m_EndSize = 0.0f;
-		p.m_Rot = random_angle();
-		p.m_Rotspeed = random_float(-0.2f, 0.2f);
-		p.m_Gravity = random_float(-4.0f, 2.0f);
-		p.m_Friction = 1.0f;
-		p.m_UseAlphaFading = true;
-		p.m_StartAlpha = 0.5f * DustOpacityMul;
-		p.m_EndAlpha = 0.0f;
-		p.m_Collides = false;
-		p.m_Color = Color;
-		GameClient()->m_Particles.Add(Sparkle ? CParticles::GROUP_TRAIL_EXTRA : CParticles::GROUP_PROJECTILE_TRAIL, &p, random_float(0.0f, LifeSpan));
+	for(auto &Mote : m_aDust)
+	{
+		if(!Mote.m_Active)
+			continue;
+		Mote.m_Life -= Passed;
+		if(Mote.m_Life <= 0.0f)
+		{
+			Mote.m_Active = false;
+			continue;
+		}
+		Mote.m_Vel.x += std::sin(Now * 0.6f + Mote.m_Phase) * 2.2f * Passed;
+		Mote.m_Vel.y += std::cos(Now * 0.45f + Mote.m_Phase * 1.4f) * 1.6f * Passed;
+		Mote.m_Pos += Mote.m_Vel * Passed;
 	}
+
+	m_DustSpawnAccumulator += Passed * (float)Amount * 0.55f;
+	while(m_DustSpawnAccumulator >= 1.0f)
+	{
+		m_DustSpawnAccumulator -= 1.0f;
+
+		CDustMote *pMote = nullptr;
+		for(auto &Mote : m_aDust)
+		{
+			if(!Mote.m_Active)
+			{
+				pMote = &Mote;
+				break;
+			}
+		}
+		if(!pMote)
+			break;
+
+		const bool Sparkle = random_float(0.0f, 1.0f) < 0.25f;
+		pMote->m_Active = true;
+		pMote->m_Sparkle = Sparkle;
+		pMote->m_Pos = vec2(random_float(View.m_TopLeft.x, View.m_BottomRight.x), random_float(View.m_TopLeft.y, View.m_BottomRight.y));
+		pMote->m_Vel = vec2(random_float(-14.0f, 14.0f), random_float(-18.0f, 6.0f));
+		pMote->m_LifeSpan = random_float(4.0f, 8.0f);
+		pMote->m_Life = pMote->m_LifeSpan;
+		pMote->m_Size = (Sparkle ? random_float(8.0f, 16.0f) : random_float(5.0f, 14.0f)) * DustSizeMul;
+		pMote->m_Phase = random_angle();
+	}
+
+	if(!m_GlowTexture.IsValid())
+		return;
+
+	Graphics()->TextureSet(m_GlowTexture);
+	Graphics()->BlendNormal();
+	Graphics()->QuadsBegin();
+	Graphics()->QuadsSetRotation(0.0f);
+	for(const auto &Mote : m_aDust)
+	{
+		if(!Mote.m_Active)
+			continue;
+
+		const float T = 1.0f - Mote.m_Life / Mote.m_LifeSpan;
+		const float Fade = std::clamp(std::min(T / 0.18f, (1.0f - T) / 0.28f), 0.0f, 1.0f);
+		float Alpha = 0.5f * Fade * DustOpacityMul;
+		float Size = Mote.m_Size;
+
+		if(Mote.m_Sparkle)
+		{
+			const float Twinkle = std::pow(0.5f + 0.5f * std::sin(Now * 2.4f + Mote.m_Phase), 3.0f);
+			Alpha *= 0.45f + 0.85f * Twinkle;
+			Size *= 1.0f + 0.35f * Twinkle;
+		}
+
+		Graphics()->SetColor(Color.r, Color.g, Color.b, Alpha);
+		const IGraphics::CQuadItem Quad(Mote.m_Pos.x - Size * 0.5f, Mote.m_Pos.y - Size * 0.5f, Size, Size);
+		Graphics()->QuadsDrawTL(&Quad, 1);
+	}
+	Graphics()->QuadsEnd();
+	Graphics()->BlendNormal();
+	Graphics()->TextureClear();
 }
 
 void CFgfWeather::OnRender()

@@ -139,6 +139,8 @@ void CCursorTrail::RenderTrail() const
 	const CScreenRect PrevScreen = Graphics()->GetScreen();
 	const CScreenRect WorldRect = Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->WorldAspect(), 1.0f);
 	Graphics()->TextureClear();
+	// the ingame cursor renders without rotation, so the trail must match
+	Graphics()->SetScreenRotation(0.0f);
 	Graphics()->MapScreen(WorldRect);
 
 	Graphics()->LinesBegin();
@@ -151,6 +153,7 @@ void CCursorTrail::RenderTrail() const
 	Graphics()->LinesEnd();
 
 	Graphics()->MapScreen(PrevScreen);
+	Graphics()->SetScreenRotation(GameClient()->m_Camera.TiltAngle());
 }
 
 void CCursorTrail::OnRender()

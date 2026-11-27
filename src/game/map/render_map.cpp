@@ -591,7 +591,7 @@ void CRenderMap::RenderTile(int x, int y, unsigned char Index, float Scale, Colo
 	Graphics()->MapScreen(ScreenRect);
 }
 
-void CRenderMap::RenderTilemap(CTile *pTiles, int w, int h, float Scale, ColorRGBA Color, int RenderFlags)
+void CRenderMap::RenderTilemap(CTile *pTiles, int w, int h, float Scale, ColorRGBA Color, int RenderFlags, bool SkipEmptyRuns)
 {
 	CScreenRect ScreenRect = Graphics()->GetScreen();
 
@@ -605,7 +605,7 @@ void CRenderMap::RenderTilemap(CTile *pTiles, int w, int h, float Scale, ColorRG
 	else
 		Graphics()->QuadsBegin();
 	Graphics()->SetColor(Color);
-	const bool ColorOpaque = Color.a > 254.0f / 255.0f;
+	const bool ColorOpaque = TileLayerHasOpaquePass(Color.a);
 
 	const bool ExtendTiles = (RenderFlags & TILERENDERFLAG_EXTEND) != 0;
 
@@ -625,6 +625,88 @@ void CRenderMap::RenderTilemap(CTile *pTiles, int w, int h, float Scale, ColorRG
 	float TexSize = 1024.0f;
 	float Frac = (1.25f / TexSize) * (1 / FinalTilesetScale);
 	float Nudge = (0.5f / TexSize) * (1 / FinalTilesetScale);
+
+	// reuse one texture state across a run of identical (Index, Flags) tiles
+	auto SetTileSubset = [&](unsigned char Index, unsigned char Flags) {
+		int tx = Index % 16;
+		int ty = Index / 16;
+		int Px0 = tx * (1024 / 16);
+		int Py0 = ty * (1024 / 16);
+		int Px1 = Px0 + (1024 / 16) - 1;
+		int Py1 = Py0 + (1024 / 16) - 1;
+
+		float x0 = Nudge + Px0 / TexSize + Frac;
+		float y0 = Nudge + Py0 / TexSize + Frac;
+		float x1 = Nudge + Px1 / TexSize - Frac;
+		float y1 = Nudge + Py0 / TexSize + Frac;
+		float x2 = Nudge + Px1 / TexSize - Frac;
+		float y2 = Nudge + Py1 / TexSize - Frac;
+		float x3 = Nudge + Px0 / TexSize + Frac;
+		float y3 = Nudge + Py1 / TexSize - Frac;
+
+		if(Graphics()->HasTextureArraysSupport())
+		{
+			x0 = 0;
+			y0 = 0;
+			x1 = x0 + 1;
+			y1 = y0;
+			x2 = x0 + 1;
+			y2 = y0 + 1;
+			x3 = x0;
+			y3 = y0 + 1;
+		}
+
+		if(Flags & TILEFLAG_XFLIP)
+		{
+			x0 = x2;
+			x1 = x3;
+			x2 = x3;
+			x3 = x0;
+		}
+
+		if(Flags & TILEFLAG_YFLIP)
+		{
+			y0 = y3;
+			y2 = y1;
+			y3 = y1;
+			y1 = y0;
+		}
+
+		if(Flags & TILEFLAG_ROTATE)
+		{
+			float Tmp = x0;
+			x0 = x3;
+			x3 = x2;
+			x2 = x1;
+			x1 = Tmp;
+			Tmp = y0;
+			y0 = y3;
+			y3 = y2;
+			y2 = y1;
+			y1 = Tmp;
+		}
+
+		if(Graphics()->HasTextureArraysSupport())
+			Graphics()->QuadsSetSubsetFree(x0, y0, x1, y1, x2, y2, x3, y3, Index);
+		else
+			Graphics()->QuadsSetSubsetFree(x0, y0, x1, y1, x2, y2, x3, y3);
+	};
+
+	CEditorTileQuadBatch TileBatch;
+	auto DrawTileBatch = [&](unsigned char Index, unsigned char Flags, const IGraphics::CQuadItem *pItems, int Num, bool ResetStream) {
+		if(ResetStream)
+		{
+			if(Graphics()->HasTextureArraysSupport())
+				Graphics()->FlushVerticesTex3D();
+			else
+				Graphics()->FlushVertices();
+		}
+		SetTileSubset(Index, Flags);
+		if(Graphics()->HasTextureArraysSupport())
+			Graphics()->QuadsTex3DDrawTL(pItems, Num);
+		else
+			Graphics()->QuadsDrawTL(pItems, Num);
+	};
 
 	for(int y = StartY; y < EndY; y++)
 	{
@@ -648,6 +730,15 @@ void CRenderMap::RenderTilemap(CTile *pTiles, int w, int h, float Scale, ColorRG
 			int c = mx + my * w;
 
 			unsigned char Index = pTiles[c].m_Index;
+			if(SkipEmptyRuns && !ExtendTiles && !Index && pTiles[c].m_Skip == 0 && EndX - x >= 4)
+			{
+				const int Skipped = SkipEmptyTileRun(pTiles + c, EndX - x);
+				if(Skipped > 0)
+				{
+					x += Skipped - 1;
+					continue;
+				}
+			}
 			if(Index)
 			{
 				unsigned char Flags = pTiles[c].m_Flags;
@@ -666,81 +757,25 @@ void CRenderMap::RenderTilemap(CTile *pTiles, int w, int h, float Scale, ColorRG
 
 				if(Render)
 				{
-					int tx = Index % 16;
-					int ty = Index / 16;
-					int Px0 = tx * (1024 / 16);
-					int Py0 = ty * (1024 / 16);
-					int Px1 = Px0 + (1024 / 16) - 1;
-					int Py1 = Py0 + (1024 / 16) - 1;
-
-					float x0 = Nudge + Px0 / TexSize + Frac;
-					float y0 = Nudge + Py0 / TexSize + Frac;
-					float x1 = Nudge + Px1 / TexSize - Frac;
-					float y1 = Nudge + Py0 / TexSize + Frac;
-					float x2 = Nudge + Px1 / TexSize - Frac;
-					float y2 = Nudge + Py1 / TexSize - Frac;
-					float x3 = Nudge + Px0 / TexSize + Frac;
-					float y3 = Nudge + Py1 / TexSize - Frac;
-
+					if(SkipEmptyRuns && !ExtendTiles)
+					{
+						TileBatch.Add(Index, Flags, IGraphics::CQuadItem(x * Scale, y * Scale, Scale, Scale), DrawTileBatch);
+						x += pTiles[c].m_Skip;
+						continue;
+					}
+					SetTileSubset(Index, Flags);
+					IGraphics::CQuadItem QuadItem(x * Scale, y * Scale, Scale, Scale);
 					if(Graphics()->HasTextureArraysSupport())
-					{
-						x0 = 0;
-						y0 = 0;
-						x1 = x0 + 1;
-						y1 = y0;
-						x2 = x0 + 1;
-						y2 = y0 + 1;
-						x3 = x0;
-						y3 = y0 + 1;
-					}
-
-					if(Flags & TILEFLAG_XFLIP)
-					{
-						x0 = x2;
-						x1 = x3;
-						x2 = x3;
-						x3 = x0;
-					}
-
-					if(Flags & TILEFLAG_YFLIP)
-					{
-						y0 = y3;
-						y2 = y1;
-						y3 = y1;
-						y1 = y0;
-					}
-
-					if(Flags & TILEFLAG_ROTATE)
-					{
-						float Tmp = x0;
-						x0 = x3;
-						x3 = x2;
-						x2 = x1;
-						x1 = Tmp;
-						Tmp = y0;
-						y0 = y3;
-						y3 = y2;
-						y2 = y1;
-						y1 = Tmp;
-					}
-
-					if(Graphics()->HasTextureArraysSupport())
-					{
-						Graphics()->QuadsSetSubsetFree(x0, y0, x1, y1, x2, y2, x3, y3, Index);
-						IGraphics::CQuadItem QuadItem(x * Scale, y * Scale, Scale, Scale);
 						Graphics()->QuadsTex3DDrawTL(&QuadItem, 1);
-					}
 					else
-					{
-						Graphics()->QuadsSetSubsetFree(x0, y0, x1, y1, x2, y2, x3, y3);
-						IGraphics::CQuadItem QuadItem(x * Scale, y * Scale, Scale, Scale);
 						Graphics()->QuadsDrawTL(&QuadItem, 1);
-					}
 				}
 			}
 			x += pTiles[c].m_Skip;
 		}
 	}
+
+	TileBatch.Flush(DrawTileBatch);
 
 	if(Graphics()->HasTextureArraysSupport())
 		Graphics()->QuadsTex3DEnd();

@@ -49,6 +49,21 @@ class CChatBinds : public CComponent
 	void FetchProfile(const char *pName);
 	void FinishProfile();
 
+	enum EStartTeamPhase
+	{
+		STARTTEAM_IDLE = 0,
+		STARTTEAM_JOINING,
+		STARTTEAM_LOCKING,
+		STARTTEAM_INVITING,
+	};
+	int m_StartTeamPhase = STARTTEAM_IDLE;
+	int m_StartTeamNumber = -1;
+	int64_t m_StartTeamStamp = 0;
+	int64_t m_StartTeamDeadline = 0;
+	std::vector<int> m_StartTeamInviteIds;
+	void StartTeam(int Preferred);
+	void UpdateStartTeam();
+
 public:
 	int Sizeof() const override { return sizeof(*this); }
 	void OnConsoleInit() override;

@@ -10,6 +10,7 @@
 #include <base/color.h>
 #include <base/vmath.h>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -344,6 +345,22 @@ public:
 	void MapScreenToSize(float Width, float Height);
 
 	virtual CScreenRect GetScreen() const = 0;
+	virtual float GetScreenRotation() const = 0;
+
+	// axis-aligned bounding box of the rotated screen, so visible content is not culled
+	CScreenRect GetScreenRectForCulling() const
+	{
+		const CScreenRect ScreenRect = GetScreen();
+		const float Rotation = GetScreenRotation();
+		if(Rotation == 0.0f)
+			return ScreenRect;
+		const float Cos = std::fabs(std::cos(Rotation));
+		const float Sin = std::fabs(std::sin(Rotation));
+		const vec2 Center = (ScreenRect.m_TopLeft + ScreenRect.m_BottomRight) * 0.5f;
+		const vec2 HalfSize = ScreenRect.Size() * 0.5f;
+		const vec2 ExpandedHalfSize(HalfSize.x * Cos + HalfSize.y * Sin, HalfSize.x * Sin + HalfSize.y * Cos);
+		return CScreenRect(Center - ExpandedHalfSize, Center + ExpandedHalfSize);
+	}
 
 	// TODO: These should perhaps not be virtuals
 	virtual void BlendNone() = 0;
@@ -581,7 +598,8 @@ public:
 	virtual void TakeCustomScreenshot(const char *pFilename) = 0;
 	virtual int GetVideoModes(CVideoMode *pModes, int MaxModes, int Screen) = 0;
 	virtual void GetCurrentVideoMode(CVideoMode &CurMode, int Screen) = 0;
-	virtual void Swap() = 0;
+	virtual void Swap(int FrameGenerationMultiplier = 1, int BaseRenderRate = 0, int OutputCount = 0, int DisplayRate = 0) = 0;
+	virtual bool SupportsFrameGeneration() const { return false; }
 	virtual int GetNumScreens() const = 0;
 	virtual const char *GetScreenName(int Screen) const = 0;
 

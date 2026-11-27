@@ -223,6 +223,7 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		DoLine_ColorPicker(&s_BackgroundColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Chat background color"), &g_Config.m_ClChatBackgroundColor, color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::ClChatBackgroundColor, true)), false, nullptr, true);
 
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcChatScroll, Localize("Scroll chat with mouse wheel"), &g_Config.m_TcChatScroll, &LeftView, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_FcGifChat, Localize("Render gif links in chat"), &g_Config.m_FcGifChat, &LeftView, LineSize);
 
 		// ***** Messages ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Messages"), HeadlineFontSize,

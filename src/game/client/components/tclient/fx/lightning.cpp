@@ -304,25 +304,19 @@ void CLightning::Impact(const CBolt &Bolt, const CPalette &Palette, float Power)
 
 	for(int i = 0; i < 10; i++)
 	{
-		CParticle p;
-		p.SetDefault();
-		p.m_Spr = SPRITE_PART_SNOWFLAKE;
-		p.m_Pos = Bolt.m_Target;
-		p.m_Vel = random_direction() * random_float(50.0f, 260.0f);
-		p.m_LifeSpan = random_float(0.6f, 1.2f);
-		p.m_StartSize = random_float(14.0f, 26.0f);
-		p.m_EndSize = 0.0f;
-		p.m_Rot = random_angle();
-		p.m_Rotspeed = random_float(-1.0f, 1.0f) * pi;
-		p.m_Gravity = 180.0f;
-		p.m_Friction = 0.9f;
-		p.m_UseAlphaFading = true;
-		p.m_StartAlpha = Alpha;
-		p.m_EndAlpha = 0.0f;
-		p.m_FlowAffected = 0.0f;
-		p.m_Collides = false;
-		p.m_Color = Palette.m_Primary;
-		GameClient()->m_Particles.Add(CParticles::GROUP_EXTRA, &p);
+		CGlowParticles::CSpark *pShard = m_Glow.NewSpark();
+		if(!pShard)
+			break;
+		pShard->m_Pos = Bolt.m_Target;
+		pShard->m_Vel = random_direction() * random_float(50.0f, 260.0f);
+		pShard->m_Gravity = 180.0f;
+		pShard->m_Drag = 0.9f;
+		pShard->m_LifeSpan = random_float(0.6f, 1.2f);
+		pShard->m_StartSize = random_float(14.0f, 26.0f);
+		pShard->m_EndSize = 0.0f;
+		pShard->m_StartAlpha = Alpha;
+		pShard->m_EndAlpha = 0.0f;
+		pShard->m_Color = Palette.m_Primary;
 	}
 }
 

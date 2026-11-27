@@ -35,6 +35,9 @@ namespace HudLayout
 			{200.0f, 129.0f, 100, 0, true, true, 0x66000000U},
 			{0.0f, 30.0f, 100, 0, true, true, 0x40000000U},
 			{2.1f, 8.3f, 100, 0, true, false, 0x40000000U},
+			{400.0f, 60.0f, 100, 0, true, false, 0x40000000U},
+			{100.0f, 3.0f, 100, 0, true, false, 0x40000000U},
+			{250.0f, 150.0f, 50, 0, true, false, 0x40000000U},
 		};
 
 		static const char *gs_apModuleNames[MODULE_COUNT] = {
@@ -54,6 +57,9 @@ namespace HudLayout
 			"Finish Prediction",
 			"Vote",
 			"VRAM / RAM Info",
+			"Above / Below Player",
+			"Last Alive",
+			"Emote Wheel",
 		};
 
 		static SModuleLayout gs_aRuntimeModuleLayouts[MODULE_COUNT];
@@ -103,6 +109,9 @@ namespace HudLayout
 			case MODULE_KEYSTROKES:
 			case MODULE_FINISH_PREDICTION:
 			case MODULE_VRAM_INFO:
+			case MODULE_ABOVE_BELOW:
+			case MODULE_LAST_NOTIFY:
+			case MODULE_EMOTE_WHEEL:
 				return true;
 			default:
 				return false;
@@ -165,6 +174,18 @@ namespace HudLayout
 			case MODULE_VRAM_INFO:
 				Layout.m_X = 2.1f;
 				Layout.m_Y = 8.3f;
+				break;
+			case MODULE_ABOVE_BELOW:
+				Layout.m_X = HudWidth * (5.0f / 6.0f) * g_Config.m_TcNotifyWhenPosPlayerPosX / 100.0f;
+				Layout.m_Y = (HudHeight - 10.0f) * g_Config.m_TcNotifyWhenPosPlayerPosY / 100.0f;
+				break;
+			case MODULE_LAST_NOTIFY:
+				Layout.m_X = HudWidth * g_Config.m_TcNotifyWhenLastX / 100.0f;
+				Layout.m_Y = HudHeight * g_Config.m_TcNotifyWhenLastY / 100.0f;
+				break;
+			case MODULE_EMOTE_WHEEL:
+				Layout.m_X = HudWidth * 0.5f;
+				Layout.m_Y = HudHeight * 0.5f;
 				break;
 			default:
 				break;

@@ -1856,6 +1856,9 @@ set(EXPECTED_DATA
   shader/tile.vert
   shader/tile_border.frag
   shader/tile_border.vert
+  shader/vulkan/frame_generation.frag
+  shader/vulkan/frame_generation.vert
+  shader/vulkan/frame_generation_motion.frag
   shader/vulkan/prim.frag
   shader/vulkan/prim.vert
   shader/vulkan/prim3d.frag
@@ -2727,6 +2730,7 @@ if(CLIENT)
     discord.cpp
     enums.h
     favorites.cpp
+    frame_generation.h
     friends.cpp
     friends.h
     ghost.cpp
@@ -2887,6 +2891,12 @@ if(CLIENT)
     components/tclient/bindchat.h
     components/tclient/bindwheel.cpp
     components/tclient/bindwheel.h
+    components/tclient/black_frost.cpp
+    components/tclient/black_frost.h
+    components/tclient/casino.cpp
+    components/tclient/casino.h
+    components/tclient/celestial_aura.cpp
+    components/tclient/celestial_aura.h
     components/tclient/colored_parts.h
     components/tclient/custom_communities.cpp
     components/tclient/cursor_trail.cpp
@@ -2913,6 +2923,8 @@ if(CLIENT)
     components/tclient/mumble.h
     components/tclient/outlines.cpp
     components/tclient/outlines.h
+    components/tclient/platform_render.cpp
+    components/tclient/platform_render.h
     components/tclient/pet.cpp
     components/tclient/pet.h
     components/tclient/player_indicator.cpp
@@ -2925,6 +2937,8 @@ if(CLIENT)
     components/tclient/swaptimer.h
     components/tclient/chatbinds.cpp
     components/tclient/chatbinds.h
+    components/tclient/gif_chat.cpp
+    components/tclient/gif_chat.h
     components/tclient/chat_log_browser.cpp
     components/tclient/chat_log_file.cpp
     components/tclient/chat_log_file.h
@@ -2958,6 +2972,8 @@ if(CLIENT)
     components/tclient/trails.h
     components/tclient/translate.cpp
     components/tclient/translate.h
+    components/tclient/uwu_chat.cpp
+    components/tclient/uwu_chat.h
     components/tclient/vignette.cpp
     components/tclient/vignette.h
     components/tclient/react_bypass.cpp
@@ -2973,6 +2989,8 @@ if(CLIENT)
     components/tclient/inputs.h
     components/tclient/weapon_vfx.cpp
     components/tclient/weapon_vfx.h
+    components/tclient/weapon_idle.cpp
+    components/tclient/weapon_idle.h
     components/tclient/laser_glow.cpp
     components/tclient/nuke_vfx.cpp
     components/tclient/rocket_glow.cpp
@@ -3737,6 +3755,7 @@ if((GTEST_FOUND OR DOWNLOAD_GTEST) AND SERVER)
     datafile_test.cpp
     dbg_test.cpp
     editor_test.cpp
+    frame_generation_test.cpp
     fs_test.cpp
     gameworld_test.cpp
     git_revision_test.cpp

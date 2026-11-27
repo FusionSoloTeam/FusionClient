@@ -53,15 +53,33 @@ private:
 		float m_Size;
 	};
 
+	static constexpr int MAX_DUST = 192;
+
+	struct CDustMote
+	{
+		vec2 m_Pos = vec2(0.0f, 0.0f);
+		vec2 m_Vel = vec2(0.0f, 0.0f);
+		float m_Life = 0.0f;
+		float m_LifeSpan = 1.0f;
+		float m_Size = 1.0f;
+		float m_Phase = 0.0f;
+		bool m_Sparkle = false;
+		bool m_Active = false;
+	};
+
 	IGraphics::CTextureHandle m_GlowTexture;
 	IGraphics::CTextureHandle m_LeafTexture;
 	IGraphics::CTextureHandle m_PetalTexture;
+	IGraphics::CTextureHandle m_SnowflakeTexture;
 
 	int m_Kind = FGF_WEATHER_SNOW;
 	CDrop m_aDrops[MAX_DROPS];
 	int m_NumDrops = 0;
 	CSplash m_aSplashes[MAX_SPLASHES];
 	int m_NumSplashes = 0;
+	CDustMote m_aDust[MAX_DUST];
+	float m_DustSpawnAccumulator = 0.0f;
+	float m_LastDustTime = 0.0f;
 	float m_SpawnAccumulator = 0.0f;
 	float m_LastTime = 0.0f;
 

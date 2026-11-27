@@ -79,6 +79,11 @@ endfunction()
 
 # Register all Vulkan shaders to compile
 
+# Frame generation
+generate_shader_file("" "" "frame_generation.vert" "frame_generation.vert.spv")
+generate_shader_file("" "" "frame_generation.frag" "frame_generation.frag.spv")
+generate_shader_file("" "" "frame_generation_motion.frag" "frame_generation_motion.frag.spv")
+
 # Primitives
 generate_shader_file("" "" "prim.frag" "prim.frag.spv")
 generate_shader_file("" "" "prim.vert" "prim.vert.spv")

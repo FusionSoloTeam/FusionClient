@@ -64,7 +64,7 @@ public:
 private:
 	void RunVideoThread(size_t ParentThreadIndex, size_t ThreadIndex) REQUIRES(!m_WriteLock);
 	void FillVideoFrame(size_t ThreadIndex) REQUIRES(!m_WriteLock);
-	void UpdateVideoBufferFromGraphics(size_t ThreadIndex);
+	bool UpdateVideoBufferFromGraphics(size_t ThreadIndex);
 
 	void RunAudioThread(size_t ParentThreadIndex, size_t ThreadIndex) REQUIRES(!m_WriteLock);
 	void FillAudioFrame(size_t ThreadIndex);
@@ -152,6 +152,8 @@ private:
 	{
 	public:
 		std::vector<uint8_t> m_vBuffer;
+		int m_Width = 0;
+		int m_Height = 0;
 	};
 	std::vector<CVideoBuffer> m_vVideoBuffers;
 	class CAudioBuffer

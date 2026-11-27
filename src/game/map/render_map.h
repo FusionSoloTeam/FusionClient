@@ -7,7 +7,11 @@
 #include <game/mapitems.h>
 
 #include <array>
+#include <bit>
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <memory>
 
 enum
@@ -21,6 +25,68 @@ enum
 	OVERLAYRENDERFLAG_EDITOR = 2,
 	OVERLAYRENDERFLAG_NO_SPRITE = 4,
 };
+
+inline constexpr bool TileLayerHasOpaquePass(float Alpha) { return Alpha > 254.0f / 255.0f; }
+
+class CEditorTileQuadBatch
+{
+public:
+	static constexpr int MAX_BATCH_QUADS = 1024;
+	// threaded renderer holds 32768 vertices, so 4096 six-vertex quads still fit
+	static constexpr int MAX_STREAM_QUADS = 4096;
+
+private:
+	std::array<IGraphics::CQuadItem, MAX_BATCH_QUADS> m_aItems;
+	int m_NumItems = 0;
+	int m_SubmittedQuads = MAX_STREAM_QUADS;
+	unsigned char m_Index = 0;
+	unsigned char m_Flags = 0;
+
+public:
+	template<typename TFlush>
+	void Add(unsigned char Index, unsigned char Flags, IGraphics::CQuadItem Item, TFlush &FlushItems)
+	{
+		if(m_NumItems > 0 && (Index != m_Index || Flags != m_Flags || m_NumItems == MAX_BATCH_QUADS))
+			Flush(FlushItems);
+		if(m_NumItems == 0)
+		{
+			m_Index = Index;
+			m_Flags = Flags;
+		}
+		m_aItems[m_NumItems++] = Item;
+	}
+
+	template<typename TFlush>
+	void Flush(TFlush &FlushItems)
+	{
+		if(m_NumItems == 0)
+			return;
+		const bool ResetStream = m_SubmittedQuads + m_NumItems > MAX_STREAM_QUADS;
+		if(ResetStream)
+			m_SubmittedQuads = 0;
+		m_SubmittedQuads += m_NumItems;
+		FlushItems(m_Index, m_Flags, m_aItems.data(), m_NumItems, ResetStream);
+		m_NumItems = 0;
+	}
+};
+
+// skip only complete empty runs, with MaxCount bounded to the visible row
+inline int SkipEmptyTileRun(const CTile *pTiles, int MaxCount)
+{
+	static_assert(sizeof(CTile) == 4 && offsetof(CTile, m_Index) == 0 && offsetof(CTile, m_Skip) == 2);
+	constexpr auto IndexAndSkipMask = std::bit_cast<uint64_t>(std::array<uint8_t, 8>{255, 0, 255, 0, 255, 0, 255, 0});
+	int Skipped = 0;
+	while(MaxCount - Skipped >= 4)
+	{
+		uint64_t First, Second;
+		std::memcpy(&First, pTiles + Skipped, sizeof(First));
+		std::memcpy(&Second, pTiles + Skipped + 2, sizeof(Second));
+		if(((First | Second) & IndexAndSkipMask) != 0)
+			break;
+		Skipped += 4;
+	}
+	return Skipped;
+}
 
 class IEnvelopePointAccess
 {
@@ -81,7 +147,7 @@ public:
 	static void RenderEvalEnvelope(const IEnvelopePointAccess *pPoints, std::chrono::nanoseconds TimeNanos, ColorRGBA &Result, size_t Channels);
 	void ForceRenderQuads(CQuad *pQuads, int NumQuads, int Flags, const IEnvelopeEval *pEnvEval, float Alpha = 1.0f);
 	void RenderTile(int x, int y, unsigned char Index, float Scale, ColorRGBA Color);
-	void RenderTilemap(CTile *pTiles, int w, int h, float Scale, ColorRGBA Color, int RenderFlags);
+	void RenderTilemap(CTile *pTiles, int w, int h, float Scale, ColorRGBA Color, int RenderFlags, bool SkipEmptyRuns = false);
 
 	// render a rectangle made of IndexIn tiles, over a background made of IndexOut tiles
 	// the rectangle include all tiles in [RectX, RectX+RectW-1] x [RectY, RectY+RectH-1]

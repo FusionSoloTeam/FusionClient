@@ -216,11 +216,50 @@ CUIRect CSwapTimer::GetHudEditorRect() const
 		return EmptyRect;
 	}
 
-	const float SwapTimerWidth = HudWidth / 4.0f;
-	const float SwapTimerHeight = 6.0f * (float)m_vSwapList.size();
 	const auto Layout = HudLayout::Get(HudLayout::MODULE_SWAP_TIMER, HudWidth, HudHeight);
 	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
-	CUIRect BoxRect = {Layout.m_X, Layout.m_Y, SwapTimerWidth * Scale, SwapTimerHeight * Scale};
+	constexpr float BaseFontSize = 4.0f;
+	constexpr float MinFontSize = 5.0f;
+	const float MaxLabelWidth = HudWidth / 4.0f;
+
+	float MaxTextW = 0.0f;
+	for(const auto &Entry : m_vSwapList)
+	{
+		if(!GameClient()->m_aClients[Entry.m_FromClientId].m_Active || !GameClient()->m_aClients[Entry.m_ToClientId].m_Active)
+			continue;
+		const int Seconds = (Client()->GameTick(0) - Entry.m_SwapTick) / Client()->GameTickSpeed();
+		const int SwapTime = g_Config.m_SvSaveSwapGamesDelay - Seconds;
+		const int ExpTime = g_Config.m_SvSwapTimeout - Seconds;
+		if(ExpTime < 0)
+			continue;
+
+		char aBuf[128];
+		if(SwapTime > 0)
+			str_format(aBuf, sizeof(aBuf), "%s → %s. In %d", GameClient()->m_aClients[Entry.m_FromClientId].m_aName, GameClient()->m_aClients[Entry.m_ToClientId].m_aName, SwapTime);
+		else
+			str_format(aBuf, sizeof(aBuf), "%s → %s. Exp %d", GameClient()->m_aClients[Entry.m_FromClientId].m_aName, GameClient()->m_aClients[Entry.m_ToClientId].m_aName, ExpTime);
+
+		float FontSize = std::max(BaseFontSize, MinFontSize);
+		float TextW = TextRender()->TextWidth(FontSize, aBuf);
+		while(TextW > MaxLabelWidth + 0.001f && FontSize > MinFontSize)
+		{
+			FontSize -= 1.0f;
+			TextW = TextRender()->TextWidth(FontSize, aBuf);
+		}
+		MaxTextW = maximum(MaxTextW, TextW);
+	}
+	if(MaxTextW <= 0.0f)
+	{
+		CUIRect EmptyRect = {0.0f, 0.0f, 0.0f, 0.0f};
+		return EmptyRect;
+	}
+
+	const int Count = (int)m_vSwapList.size();
+	const float BoxW = MaxTextW * Scale;
+	const float BoxH = (7.0f * Count - 1.0f) * Scale;
+	const float BoxX = g_Config.m_TcEnableSwapTimerOnLeftSide ? Layout.m_X : Layout.m_X + (HudWidth / 4.0f) * Scale - BoxW;
+	const float BoxY = Layout.m_Y - (Count - 1) * Scale;
+	CUIRect BoxRect = {BoxX, BoxY, BoxW, BoxH};
 	return BoxRect;
 }
 

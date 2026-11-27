@@ -1,51 +1,79 @@
 #include "vignette.h"
 
+#include <base/math.h>
+
 #include <engine/client.h>
 #include <engine/graphics.h>
+#include <engine/image.h>
 #include <engine/shared/config.h>
 
 #include <game/client/gameclient.h>
 
-enum
-{
-	VIGNETTE_SIDE_LEFT = 0,
-	VIGNETTE_SIDE_RIGHT = 1,
-	VIGNETTE_SIDE_TOP = 2,
-	VIGNETTE_SIDE_BOTTOM = 3,
-};
+#include <cmath>
 
-void CVignette::DrawBand(const CUIRect &Band, int Side, ColorRGBA Color, float Alpha) const
+void CVignette::EnsureVignetteTexture()
 {
-	ColorRGBA Edge = Color;
-	Edge.a = Alpha;
-	ColorRGBA Inner = Color;
-	Inner.a = 0.0f;
+	const int Mode = g_Config.m_TcVignetteMode;
+	const int Radius = g_Config.m_TcVignetteRadius;
+	const int Smoothness = g_Config.m_TcVignetteSmoothness;
+	const int Aspect = (int)(Graphics()->ScreenAspect() * 100.0f + 0.5f);
+	if(m_VignetteTexture.IsValid() && m_VignetteTextureMode == Mode && m_VignetteTextureRadius == Radius && m_VignetteTextureSmoothness == Smoothness && m_VignetteTextureAspect == Aspect)
+		return;
 
-	IGraphics::CQuadItem Quad(Band.x, Band.y, Band.w, Band.h);
-	if(Side == VIGNETTE_SIDE_TOP)
-		Graphics()->SetColor4(Edge, Edge, Inner, Inner);
-	else if(Side == VIGNETTE_SIDE_BOTTOM)
-		Graphics()->SetColor4(Inner, Inner, Edge, Edge);
-	else if(Side == VIGNETTE_SIDE_LEFT)
-		Graphics()->SetColor4(Edge, Inner, Edge, Inner);
-	else
-		Graphics()->SetColor4(Inner, Edge, Inner, Edge);
-	Graphics()->QuadsDrawTL(&Quad, 1);
-}
+	constexpr int Size = 256;
+	const float AspectF = Graphics()->ScreenAspect();
+	const float Norm = 0.5f * std::sqrt(AspectF * AspectF + 1.0f);
+	const float RadiusF = Radius / 100.0f;
+	const float SmoothF = Smoothness / 100.0f;
+	const float Inner = std::clamp(1.0f - RadiusF - SmoothF * 0.2f, 0.0f, 0.98f);
 
-void CVignette::DrawSide(int Side, float Width, ColorRGBA Color, float Alpha) const
-{
-	const CUIRect *pScreen = Ui()->Screen();
-	CUIRect Band;
-	if(Side == VIGNETTE_SIDE_LEFT)
-		Band = CUIRect(pScreen->x, pScreen->y, Width, pScreen->h);
-	else if(Side == VIGNETTE_SIDE_RIGHT)
-		Band = CUIRect(pScreen->x + pScreen->w - Width, pScreen->y, Width, pScreen->h);
-	else if(Side == VIGNETTE_SIDE_TOP)
-		Band = CUIRect(pScreen->x, pScreen->y, pScreen->w, Width);
-	else
-		Band = CUIRect(pScreen->x, pScreen->y + pScreen->h - Width, pScreen->w, Width);
-	DrawBand(Band, Side, Color, Alpha);
+	CImageInfo Image;
+	Image.m_Width = Size;
+	Image.m_Height = Size;
+	Image.m_Format = CImageInfo::FORMAT_RGBA;
+	Image.AllocateFillZero();
+
+	for(int y = 0; y < Size; y++)
+	{
+		const float V = (y + 0.5f) / Size - 0.5f;
+		for(int x = 0; x < Size; x++)
+		{
+			const float U = (x + 0.5f) / Size - 0.5f;
+			float T;
+			if(Mode == 1)
+				T = std::fabs(U) * 2.0f;
+			else if(Mode == 2)
+				T = std::fabs(V) * 2.0f;
+			else
+				T = std::sqrt(U * U * AspectF * AspectF + V * V) / Norm;
+
+			float S = 0.0f;
+			if(T > Inner)
+			{
+				const float St = std::clamp((T - Inner) / (1.0f - Inner), 0.0f, 1.0f);
+				S = St * St * (3.0f - 2.0f * St);
+			}
+			const uint8_t Alpha = (uint8_t)(std::pow(S, 0.8f) * 255.0f + 0.5f);
+			uint8_t *pPixel = Image.m_pData + ((size_t)y * Size + x) * 4;
+			pPixel[0] = 255;
+			pPixel[1] = 255;
+			pPixel[2] = 255;
+			pPixel[3] = Alpha;
+		}
+	}
+
+	const IGraphics::CTextureHandle NewTexture = Graphics()->LoadTextureRaw(Image, 0, "vignette-gradient");
+	Image.Free();
+	if(NewTexture.IsValid())
+	{
+		if(m_VignetteTexture.IsValid())
+			Graphics()->UnloadTexture(&m_VignetteTexture);
+		m_VignetteTexture = NewTexture;
+		m_VignetteTextureMode = Mode;
+		m_VignetteTextureRadius = Radius;
+		m_VignetteTextureSmoothness = Smoothness;
+		m_VignetteTextureAspect = Aspect;
+	}
 }
 
 void CVignette::OnRender()
@@ -63,53 +91,32 @@ void CVignette::OnRender()
 		return;
 
 	Ui()->MapScreen();
+	EnsureVignetteTexture();
+	if(!m_VignetteTexture.IsValid())
+		return;
+
 	const CUIRect *pScreen = Ui()->Screen();
 
-	const float Radius = g_Config.m_TcVignetteRadius / 100.0f;
-	const float Smooth = g_Config.m_TcVignetteSmoothness / 100.0f;
-	const float BandX = pScreen->w * Radius * 0.5f;
-	const float BandY = pScreen->h * Radius * 0.5f;
-
 	ColorRGBA Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_TcVignetteColor, true));
-	Color.a = 1.0f;
 
-	bool aSides[4] = {};
-	if(g_Config.m_TcVignetteMode == 1)
-	{
-		aSides[VIGNETTE_SIDE_LEFT] = true;
-		aSides[VIGNETTE_SIDE_RIGHT] = true;
-	}
-	else if(g_Config.m_TcVignetteMode == 2)
-	{
-		aSides[VIGNETTE_SIDE_TOP] = true;
-		aSides[VIGNETTE_SIDE_BOTTOM] = true;
-	}
-	else
-	{
-		for(bool &Side : aSides)
-			Side = true;
-	}
-
-	const float A0 = Strength * Darken * 0.55f;
-	const float A1 = Strength * Darken * (0.25f + 0.15f * Smooth);
-	const float A2 = Strength * Darken * (0.10f + 0.15f * Smooth);
-
-	Graphics()->TextureClear();
+	Graphics()->TextureSet(m_VignetteTexture);
 	Graphics()->QuadsBegin();
-
-	for(int Side = 0; Side < 4; Side++)
-	{
-		if(!aSides[Side])
-			continue;
-		const float Width = (Side == VIGNETTE_SIDE_LEFT || Side == VIGNETTE_SIDE_RIGHT) ? BandX : BandY;
-		if(Width <= 0.0f)
-			continue;
-		DrawSide(Side, Width, Color, A0);
-		DrawSide(Side, Width * (0.55f + 0.25f * Smooth), Color, A1);
-		DrawSide(Side, Width * (0.28f + 0.20f * Smooth), Color, A2);
-	}
-
-	Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+	Graphics()->SetColor(Color.r, Color.g, Color.b, std::clamp(Strength * Darken * 0.85f, 0.0f, 1.0f));
+	const IGraphics::CQuadItem Quad(pScreen->x, pScreen->y, pScreen->w, pScreen->h);
+	Graphics()->QuadsDrawTL(&Quad, 1);
 	Graphics()->QuadsEnd();
+	Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
 	Graphics()->TextureClear();
+}
+
+void CVignette::OnShutdown()
+{
+	if(m_VignetteTexture.IsValid())
+	{
+		Graphics()->UnloadTexture(&m_VignetteTexture);
+		m_VignetteTextureMode = -1;
+		m_VignetteTextureRadius = -1;
+		m_VignetteTextureSmoothness = -1;
+		m_VignetteTextureAspect = -1;
+	}
 }

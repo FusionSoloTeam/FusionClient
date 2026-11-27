@@ -154,6 +154,60 @@ IGraphics::CTextureHandle FgfGlow::CreatePetalTexture(IGraphics *pGraphics)
 	return pGraphics->LoadTextureRawMove(Image, 0, "fgf_petal");
 }
 
+IGraphics::CTextureHandle FgfGlow::CreateSnowflakeTexture(IGraphics *pGraphics)
+{
+	const int Size = 64;
+	CImageInfo Image;
+	Image.m_Width = Size;
+	Image.m_Height = Size;
+	Image.m_Format = CImageInfo::FORMAT_RGBA;
+	Image.m_pData = (uint8_t *)malloc((size_t)Image.m_Width * Image.m_Height * 4);
+
+	constexpr int ARMS = 6;
+	for(int y = 0; y < Size; y++)
+	{
+		for(int x = 0; x < Size; x++)
+		{
+			const float U = (x + 0.5f) / Size * 2.0f - 1.0f;
+			const float V = (y + 0.5f) / Size * 2.0f - 1.0f;
+			const float R = std::sqrt(U * U + V * V);
+			const float Ang = std::atan2(V, U);
+
+			float Alpha = 0.0f;
+			float Shade = 1.0f;
+
+			if(R < 0.96f)
+			{
+				const float ArmPhase = Ang * (float)ARMS;
+				const float ArmDist = std::abs(std::sin(ArmPhase * 0.5f));
+				const float ArmWidth = 0.085f * (1.0f - 0.45f * R);
+				const float Arm = std::clamp((ArmWidth - ArmDist * R) / 0.045f, 0.0f, 1.0f);
+
+				const float BranchR = std::fmod(R * 3.1f, 0.34f);
+				const float BranchArm = std::abs(std::sin(ArmPhase * 0.5f + 1.05f));
+				const float BranchWidth = 0.055f;
+				const float BranchMask = R > 0.22f && R < 0.82f ? 1.0f : 0.0f;
+				const float Branch = std::clamp((BranchWidth - BranchArm * BranchR) / 0.030f, 0.0f, 1.0f) * BranchMask;
+
+				const float Core = std::clamp((0.20f - R) / 0.08f, 0.0f, 1.0f);
+				const float Rim = std::clamp((0.96f - R) / 0.10f, 0.0f, 1.0f);
+
+				Alpha = std::max(std::max(Arm * 0.92f, Branch * 0.55f), Core);
+				Alpha *= Rim;
+				Shade = mix(0.82f, 1.0f, Core);
+			}
+
+			if(Alpha < 0.02f)
+				Alpha = 0.0f;
+
+			uint8_t *pPixel = &Image.m_pData[(y * Size + x) * 4];
+			pPixel[0] = pPixel[1] = pPixel[2] = (uint8_t)round_to_int(Shade * 255.0f);
+			pPixel[3] = (uint8_t)round_to_int(Alpha * 255.0f);
+		}
+	}
+	return pGraphics->LoadTextureRawMove(Image, 0, "fgf_snowflake");
+}
+
 void FgfGlow::BeginStrips(IGraphics *pGraphics, IGraphics::CTextureHandle BeamTexture)
 {
 	pGraphics->TextureSet(BeamTexture);

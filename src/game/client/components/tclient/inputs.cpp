@@ -7,14 +7,22 @@
 #include <algorithm>
 #include <cmath>
 
+#include <base/time.h>
+
 namespace
 {
+	float AscendSpeed = 0.0f;
+	float AscendFactor = 0.0f;
+	int64_t AscendLastTime = -1;
+
 	int InputMode()
 	{
 		if(g_Config.m_TcInputs >= TcInputs::INPUT_MODE_FAST && g_Config.m_TcInputs <= TcInputs::INPUT_MODE_BEST)
 			return g_Config.m_TcInputs;
 		if(g_Config.m_TcInputs == TcInputs::INPUT_MODE_FUSION)
 			return TcInputs::INPUT_MODE_FUSION;
+		if(g_Config.m_TcInputs == TcInputs::INPUT_MODE_ASCEND)
+			return TcInputs::INPUT_MODE_ASCEND;
 		if(g_Config.m_TcInputs == TcInputs::INPUT_MODE_OFF && g_Config.m_TcFastInput)
 			return TcInputs::INPUT_MODE_FAST;
 		return TcInputs::INPUT_MODE_OFF;
@@ -69,6 +77,29 @@ namespace
 			return 0.0f;
 		return g_Config.m_TcFInputAmount / 1000.0f;
 	}
+
+	float AscendModeOffsetTicks()
+	{
+		if(InputMode() != TcInputs::INPUT_MODE_ASCEND || g_Config.m_FcAscendInputAmount <= 0)
+		{
+			AscendFactor = 0.0f;
+			AscendLastTime = -1;
+			return 0.0f;
+		}
+
+		const int64_t Now = time_get();
+		float Dt = AscendLastTime < 0 ? 0.0f : (Now - AscendLastTime) / (float)time_freq();
+		AscendLastTime = Now;
+		Dt = std::clamp(Dt, 0.0f, 0.1f);
+
+		const float SpeedRef = std::max((float)g_Config.m_FcAscendInputSpeed, 1.0f);
+		const float SpeedT = std::clamp(AscendSpeed / SpeedRef, 0.0f, 1.0f);
+		const float Target = mix(g_Config.m_FcAscendInputIdle / 100.0f, 1.0f, SpeedT);
+		const float Rate = mix(30.0f, 2.0f, g_Config.m_FcAscendInputSmoothing / 100.0f);
+		AscendFactor += (Target - AscendFactor) * (1.0f - std::exp(-Rate * Dt));
+
+		return g_Config.m_FcAscendInputAmount / 100.0f * AscendFactor;
+	}
 }
 
 float TcInputs::EffectiveOffsetTicks()
@@ -81,6 +112,7 @@ float TcInputs::EffectiveOffsetTicks()
 	case TcInputs::INPUT_MODE_DELTA: return DeltaModeOffsetTicks();
 	case TcInputs::INPUT_MODE_F: return FModeOffsetTicks();
 	case TcInputs::INPUT_MODE_FUSION: return FusionModeOffsetTicks();
+	case TcInputs::INPUT_MODE_ASCEND: return AscendModeOffsetTicks();
 	default: return 0.0f;
 	}
 }
@@ -171,9 +203,14 @@ bool TcInputs::CloudOthers()
 	return InputMode() == TcInputs::INPUT_MODE_CLOUD && g_Config.m_TcCloudInputOthers != 0;
 }
 
+bool TcInputs::AscendOthers()
+{
+	return InputMode() == TcInputs::INPUT_MODE_ASCEND && g_Config.m_FcAscendInputOthers != 0;
+}
+
 bool TcInputs::AnyOthers()
 {
-	return FastOthers() || BestOthers() || SaikoOthers() || DeltaOthers() || FOthers() || CloudOthers();
+	return FastOthers() || BestOthers() || SaikoOthers() || DeltaOthers() || FOthers() || CloudOthers() || AscendOthers();
 }
 
 bool TcInputs::ImmediateOthers()
@@ -194,4 +231,9 @@ bool TcInputs::BestMode()
 bool TcInputs::FusionActive()
 {
 	return InputMode() == TcInputs::INPUT_MODE_FUSION && EffectiveOffsetTicks() > 0.0f;
+}
+
+void TcInputs::SetAscendSpeed(float Speed)
+{
+	AscendSpeed = std::max(Speed, 0.0f);
 }

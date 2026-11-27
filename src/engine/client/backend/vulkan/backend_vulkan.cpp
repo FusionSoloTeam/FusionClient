@@ -9,11 +9,15 @@
 #include <engine/client/backend/backend_base.h>
 #include <engine/client/backend/vulkan/backend_vulkan.h>
 #include <engine/client/backend_sdl.h>
+#include <engine/client/frame_generation.h>
 #include <engine/client/graphics_threaded.h>
 #include <engine/gfx/image_manipulation.h>
 #include <engine/graphics.h>
 #include <engine/shared/config.h>
 #include <engine/shared/vram_stats.h>
+#if defined(CONF_VIDEORECORDER)
+#include <engine/shared/video.h>
+#endif
 
 std::atomic<uint64_t> g_VramFallbackBytes{0};
 std::atomic<uint64_t> g_VramFallbackCount{0};
@@ -76,11 +80,6 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 	[[nodiscard]] bool IsVerbose()
 	{
 		return g_Config.m_DbgGfx == DEBUG_GFX_MODE_VERBOSE || g_Config.m_DbgGfx == DEBUG_GFX_MODE_ALL;
-	}
-
-	[[nodiscard]] bool IsFrameBlendEnabled()
-	{
-		return false;
 	}
 
 	[[nodiscard]] bool IsVignetteBlurEnabled()
@@ -905,13 +904,13 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 		VkImageView m_ImgView = VK_NULL_HANDLE;
 	};
 
-	struct SFrameBlendImage
+	struct SFrameGenerationImage
 	{
 		VkImage m_Image = VK_NULL_HANDLE;
-		SMemoryImageBlock<IMAGE_BUFFER_CACHE_ID> m_ImgMem;
-		VkImageView m_ImgView = VK_NULL_HANDLE;
-		SDeviceDescriptorSet m_DescriptorSet;
-		bool m_Valid = false;
+		VkDeviceMemory m_Memory = VK_NULL_HANDLE;
+		VkImageView m_View = VK_NULL_HANDLE;
+		VkDescriptorSet m_Descriptor = VK_NULL_HANDLE;
+		bool m_Initialized = false;
 	};
 
 	struct SVignetteBlurImage
@@ -921,6 +920,12 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 		VkImageView m_ImgView = VK_NULL_HANDLE;
 		SDeviceDescriptorSet m_DescriptorSet;
 		VkExtent2D m_Extent{};
+		bool m_Initialized = false;
+	};
+
+	struct SFrameReadback
+	{
+		std::optional<ivec2> m_PixelOffset;
 	};
 
 	/************************
@@ -958,9 +963,9 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 	VkExtent2D m_DynamicViewportSize;
 
 	bool m_AllowsLinearBlitting = false;
-	bool m_OptimalSwapChainImageBlitting = false;
+
 	bool m_OptimalRGBAImageBlitting = false;
-	bool m_LinearRGBAImageBlitting = false;
+
 
 	VkBuffer m_IndexBuffer;
 	SDeviceMemoryBlock m_IndexBufferMemory;
@@ -977,17 +982,14 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 
 	uint32_t m_MinUniformAlign;
 
-	std::vector<uint8_t> m_vReadPixelHelper;
-	std::vector<uint8_t> m_vScreenshotHelper;
-
-	SDeviceMemoryBlock m_GetPresentedImgDataHelperMem;
-	VkImage m_GetPresentedImgDataHelperImage = VK_NULL_HANDLE;
-	uint8_t *m_pGetPresentedImgDataHelperMappedMemory = nullptr;
-	VkDeviceSize m_GetPresentedImgDataHelperMappedLayoutOffset = 0;
-	VkDeviceSize m_GetPresentedImgDataHelperMappedLayoutPitch = 0;
-	uint32_t m_GetPresentedImgDataHelperWidth = 0;
-	uint32_t m_GetPresentedImgDataHelperHeight = 0;
-	VkFence m_GetPresentedImgDataHelperFence = VK_NULL_HANDLE;
+	VkBuffer m_ReadbackBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory m_ReadbackMemory = VK_NULL_HANDLE;
+	void *m_pReadbackData = nullptr;
+	VkDeviceSize m_ReadbackCapacity = 0;
+	VkExtent2D m_ReadbackExtent{};
+	ivec2 m_ReadbackOrigin{};
+	bool m_HasFrameReadback = false;
+	bool m_ReadbackIsBgra = false;
 
 	std::array<VkSampler, SUPPORTED_SAMPLER_TYPE_COUNT> m_aSamplers;
 
@@ -1026,7 +1028,21 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 private:
 	std::vector<VkImageView> m_vSwapChainImageViewList;
 	std::vector<SSwapChainMultiSampleImage> m_vSwapChainMultiSamplingImages;
-	std::vector<SFrameBlendImage> m_vFrameBlendImages;
+	std::array<SFrameGenerationImage, 2> m_aFrameGenerationHistory;
+	SFrameGenerationImage m_FrameGenerationMotion;
+	VkExtent2D m_FrameGenerationMotionExtent{};
+	VkDescriptorPool m_FrameGenerationPool = VK_NULL_HANDLE;
+	VkRenderPass m_FrameGenerationMotionPass = VK_NULL_HANDLE;
+	VkRenderPass m_FrameGenerationOutputPass = VK_NULL_HANDLE;
+	VkPipelineLayout m_FrameGenerationLayout = VK_NULL_HANDLE;
+	VkPipeline m_FrameGenerationMotionPipeline = VK_NULL_HANDLE;
+	VkPipeline m_FrameGenerationOutputPipeline = VK_NULL_HANDLE;
+	VkFramebuffer m_FrameGenerationMotionFramebuffer = VK_NULL_HANDLE;
+	std::vector<VkFramebuffer> m_vFrameGenerationFramebuffers;
+	SBackendCapabilities *m_pCapabilities = nullptr;
+	SFrameGenerationTiming m_LastFrameGenerationTiming;
+	std::chrono::nanoseconds m_LastFrameGenerationSourceTime{};
+	size_t m_FrameGenerationCurrent = 0;
 	std::vector<SVignetteBlurImage> m_vVignetteBlurImages;
 	std::vector<VkFramebuffer> m_vFramebufferList;
 	std::vector<VkCommandBuffer> m_vMainDrawCommandBuffers;
@@ -1034,7 +1050,6 @@ private:
 	std::vector<std::vector<VkCommandBuffer>> m_vvThreadDrawCommandBuffers;
 	std::vector<VkCommandBuffer> m_vHelperThreadDrawCommandBuffers;
 	std::vector<std::vector<bool>> m_vvUsedThreadDrawCommandBuffer;
-	std::vector<VkCommandBuffer> m_vFrameBlendCommandBuffers;
 
 	std::vector<VkCommandBuffer> m_vMemoryCommandBuffers;
 	std::vector<bool> m_vUsedMemoryCommandBuffer;
@@ -1048,9 +1063,7 @@ private:
 	uint64_t m_CurFrame = 0;
 	std::vector<uint64_t> m_vImageLastFrameCheck;
 
-	uint32_t m_LastPresentedSwapChainImageIndex;
-	bool m_FrameBlendEnabledLastFrame = false;
-	bool m_FrameBlendEnabledThisFrame = false;
+
 	bool m_VignetteBlurPass = false;
 	bool m_VignetteBlurPassBegun = false;
 	bool m_ForceInlineRecording = false;
@@ -1431,255 +1444,125 @@ protected:
 	 * VIDEO AND SCREENSHOT HELPER
 	 ******************************/
 
-	[[nodiscard]] bool PreparePresentedImageDataImage(uint8_t *&pResImageData, uint32_t Width, uint32_t Height)
+	void DestroyFrameReadbackBuffer()
 	{
-		bool NeedsNewImg = Width != m_GetPresentedImgDataHelperWidth || Height != m_GetPresentedImgDataHelperHeight;
-		if(m_GetPresentedImgDataHelperImage == VK_NULL_HANDLE || NeedsNewImg)
+		if(m_pReadbackData)
+			vkUnmapMemory(m_VKDevice, m_ReadbackMemory);
+		vkDestroyBuffer(m_VKDevice, m_ReadbackBuffer, nullptr);
+		vkFreeMemory(m_VKDevice, m_ReadbackMemory, nullptr);
+		m_ReadbackBuffer = VK_NULL_HANDLE;
+		m_ReadbackMemory = VK_NULL_HANDLE;
+		m_pReadbackData = nullptr;
+		m_ReadbackCapacity = 0;
+		m_HasFrameReadback = false;
+	}
+
+	[[nodiscard]] bool PrepareFrameReadbackBuffer(VkDeviceSize Size)
+	{
+		if(Size <= m_ReadbackCapacity)
+			return true;
+		DestroyFrameReadbackBuffer();
+
+		VkBufferCreateInfo BufferInfo{};
+		BufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		BufferInfo.size = Size;
+		BufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+		if(vkCreateBuffer(m_VKDevice, &BufferInfo, nullptr, &m_ReadbackBuffer) != VK_SUCCESS)
+			return false;
+
+		VkMemoryRequirements Requirements;
+		vkGetBufferMemoryRequirements(m_VKDevice, m_ReadbackBuffer, &Requirements);
+		VkPhysicalDeviceMemoryProperties Properties;
+		vkGetPhysicalDeviceMemoryProperties(m_VKGPU, &Properties);
+		std::optional<uint32_t> MemoryType;
+		for(uint32_t Index = 0; Index < Properties.memoryTypeCount; ++Index)
 		{
-			if(m_GetPresentedImgDataHelperImage != VK_NULL_HANDLE)
-			{
-				DeletePresentedImageDataImage();
-			}
-			m_GetPresentedImgDataHelperWidth = Width;
-			m_GetPresentedImgDataHelperHeight = Height;
-
-			VkImageCreateInfo ImageInfo{};
-			ImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-			ImageInfo.imageType = VK_IMAGE_TYPE_2D;
-			ImageInfo.extent.width = Width;
-			ImageInfo.extent.height = Height;
-			ImageInfo.extent.depth = 1;
-			ImageInfo.mipLevels = 1;
-			ImageInfo.arrayLayers = 1;
-			ImageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-			ImageInfo.tiling = VK_IMAGE_TILING_LINEAR;
-			ImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-			ImageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-			ImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-			ImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-			vkCreateImage(m_VKDevice, &ImageInfo, nullptr, &m_GetPresentedImgDataHelperImage);
-			// Create memory to back up the image
-			VkMemoryRequirements MemRequirements;
-			vkGetImageMemoryRequirements(m_VKDevice, m_GetPresentedImgDataHelperImage, &MemRequirements);
-
-			VkMemoryAllocateInfo MemAllocInfo{};
-			MemAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-			MemAllocInfo.allocationSize = MemRequirements.size;
-			MemAllocInfo.memoryTypeIndex = FindMemoryType(m_VKGPU, MemRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
-
-			vkAllocateMemory(m_VKDevice, &MemAllocInfo, nullptr, &m_GetPresentedImgDataHelperMem.m_Mem);
-			vkBindImageMemory(m_VKDevice, m_GetPresentedImgDataHelperImage, m_GetPresentedImgDataHelperMem.m_Mem, 0);
-
-			if(!ImageBarrier(m_GetPresentedImgDataHelperImage, 0, 1, 0, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL))
-				return false;
-
-			VkImageSubresource SubResource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0};
-			VkSubresourceLayout SubResourceLayout;
-			vkGetImageSubresourceLayout(m_VKDevice, m_GetPresentedImgDataHelperImage, &SubResource, &SubResourceLayout);
-
-			if(vkMapMemory(m_VKDevice, m_GetPresentedImgDataHelperMem.m_Mem, 0, VK_WHOLE_SIZE, 0, (void **)&m_pGetPresentedImgDataHelperMappedMemory) != VK_SUCCESS)
-				return false;
-			m_GetPresentedImgDataHelperMappedLayoutOffset = SubResourceLayout.offset;
-			m_GetPresentedImgDataHelperMappedLayoutPitch = SubResourceLayout.rowPitch;
-			m_pGetPresentedImgDataHelperMappedMemory += m_GetPresentedImgDataHelperMappedLayoutOffset;
-
-			VkFenceCreateInfo FenceInfo{};
-			FenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-			FenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-			vkCreateFence(m_VKDevice, &FenceInfo, nullptr, &m_GetPresentedImgDataHelperFence);
+			const auto Flags = Properties.memoryTypes[Index].propertyFlags;
+			if((Requirements.memoryTypeBits & (1u << Index)) == 0 || !(Flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+				continue;
+			MemoryType = Index;
+			if(Flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
+				break;
 		}
-		pResImageData = m_pGetPresentedImgDataHelperMappedMemory;
+
+		VkMemoryAllocateInfo Allocation{};
+		Allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		Allocation.allocationSize = Requirements.size;
+		Allocation.memoryTypeIndex = MemoryType.value_or(0);
+		if(!MemoryType || vkAllocateMemory(m_VKDevice, &Allocation, nullptr, &m_ReadbackMemory) != VK_SUCCESS ||
+			vkBindBufferMemory(m_VKDevice, m_ReadbackBuffer, m_ReadbackMemory, 0) != VK_SUCCESS ||
+			vkMapMemory(m_VKDevice, m_ReadbackMemory, 0, VK_WHOLE_SIZE, 0, &m_pReadbackData) != VK_SUCCESS)
+		{
+			DestroyFrameReadbackBuffer();
+			return false;
+		}
+		m_ReadbackCapacity = Size;
 		return true;
 	}
 
-	void DeletePresentedImageDataImage()
+	[[nodiscard]] bool RecordFrameReadback(VkCommandBuffer CommandBuffer, const SFrameReadback &Request)
 	{
-		if(m_GetPresentedImgDataHelperImage != VK_NULL_HANDLE)
-		{
-			vkDestroyFence(m_VKDevice, m_GetPresentedImgDataHelperFence, nullptr);
+		const auto Format = m_VKSurfFormat.format;
+		const bool Bgra = Format == VK_FORMAT_B8G8R8A8_UNORM || Format == VK_FORMAT_B8G8R8A8_SRGB;
+		if(!Bgra && Format != VK_FORMAT_R8G8B8A8_UNORM && Format != VK_FORMAT_R8G8B8A8_SRGB)
+			return false;
 
-			m_GetPresentedImgDataHelperFence = VK_NULL_HANDLE;
+		const auto Viewport = m_VKSwapImgAndViewportExtent.GetPresentedImageViewport();
+		const ivec2 Origin = Request.m_PixelOffset.value_or(ivec2(0, 0));
+		if(Origin.x < 0 || Origin.y < 0 || (uint32_t)Origin.x >= Viewport.width || (uint32_t)Origin.y >= Viewport.height)
+			return false;
+		const VkExtent2D Extent = Request.m_PixelOffset ? VkExtent2D{1, 1} : Viewport;
+		if(!PrepareFrameReadbackBuffer((VkDeviceSize)Extent.width * Extent.height * 4))
+			return false;
 
-			vkDestroyImage(m_VKDevice, m_GetPresentedImgDataHelperImage, nullptr);
-			vkUnmapMemory(m_VKDevice, m_GetPresentedImgDataHelperMem.m_Mem);
-			vkFreeMemory(m_VKDevice, m_GetPresentedImgDataHelperMem.m_Mem, nullptr);
+		const VkImage Image = m_vSwapChainImages[m_CurImageIndex];
+		const auto Offset = m_VKSwapImgAndViewportExtent.m_ForcedViewportOffset;
+		FrameBlendImageBarrier(CommandBuffer, Image, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+		VkBufferImageCopy Copy{};
+		Copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+		Copy.imageOffset = {Origin.x + Offset.x, Origin.y + Offset.y, 0};
+		Copy.imageExtent = {Extent.width, Extent.height, 1};
+		vkCmdCopyImageToBuffer(CommandBuffer, Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_ReadbackBuffer, 1, &Copy);
+		FrameBlendImageBarrier(CommandBuffer, Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
-			m_GetPresentedImgDataHelperImage = VK_NULL_HANDLE;
-			m_GetPresentedImgDataHelperMem = {};
-			m_pGetPresentedImgDataHelperMappedMemory = nullptr;
+		VkMemoryBarrier HostBarrier{};
+		HostBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+		HostBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		HostBarrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+		vkCmdPipelineBarrier(CommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &HostBarrier, 0, nullptr, 0, nullptr);
 
-			m_GetPresentedImgDataHelperWidth = 0;
-			m_GetPresentedImgDataHelperHeight = 0;
-		}
+		m_ReadbackExtent = Extent;
+		m_ReadbackOrigin = Origin;
+		m_ReadbackIsBgra = Bgra;
+		return true;
 	}
 
-	[[nodiscard]] bool GetPresentedImageDataImpl(uint32_t &Width, uint32_t &Height, CImageInfo::EImageFormat &Format, std::vector<uint8_t> &vDstData, bool ResetAlpha, std::optional<ivec2> PixelOffset)
+	void CopyFrameReadback(uint8_t *pDestination, bool Opaque) const
 	{
-		bool IsB8G8R8A8 = m_VKSurfFormat.format == VK_FORMAT_B8G8R8A8_UNORM;
-		bool UsesRGBALikeFormat = m_VKSurfFormat.format == VK_FORMAT_R8G8B8A8_UNORM || IsB8G8R8A8;
-		if(UsesRGBALikeFormat && m_LastPresentedSwapChainImageIndex != std::numeric_limits<decltype(m_LastPresentedSwapChainImageIndex)>::max())
+		const size_t Size = (size_t)m_ReadbackExtent.width * m_ReadbackExtent.height * 4;
+		mem_copy(pDestination, m_pReadbackData, Size);
+		if(m_ReadbackIsBgra || Opaque)
 		{
-			auto Viewport = m_VKSwapImgAndViewportExtent.GetPresentedImageViewport();
-			VkOffset3D SrcOffset;
-			if(PixelOffset.has_value())
+			for(size_t Index = 0; Index < Size; Index += 4)
 			{
-				SrcOffset.x = PixelOffset.value().x;
-				SrcOffset.y = PixelOffset.value().y;
-				Width = 1;
-				Height = 1;
+				if(m_ReadbackIsBgra)
+					std::swap(pDestination[Index], pDestination[Index + 2]);
+				if(Opaque)
+					pDestination[Index + 3] = 255;
 			}
-			else
-			{
-				SrcOffset.x = 0;
-				SrcOffset.y = 0;
-				Width = Viewport.width;
-				Height = Viewport.height;
-			}
-			SrcOffset.z = 0;
-			Format = CImageInfo::FORMAT_RGBA;
-
-			const size_t ImageTotalSize = (size_t)Width * Height * CImageInfo::PixelSize(Format);
-
-			uint8_t *pResImageData;
-			if(!PreparePresentedImageDataImage(pResImageData, Width, Height))
-				return false;
-
-			VkCommandBuffer *pCommandBuffer;
-			if(!GetMemoryCommandBuffer(pCommandBuffer))
-				return false;
-			VkCommandBuffer &CommandBuffer = *pCommandBuffer;
-
-			auto &SwapImg = m_vSwapChainImages[m_LastPresentedSwapChainImageIndex];
-
-			if(!ImageBarrier(m_GetPresentedImgDataHelperImage, 0, 1, 0, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL))
-				return false;
-			if(!ImageBarrier(SwapImg, 0, 1, 0, 1, m_VKSurfFormat.format, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL))
-				return false;
-
-			// If source and destination support blit we'll blit as this also does automatic format conversion (e.g. from BGR to RGB)
-			if(m_OptimalSwapChainImageBlitting && m_LinearRGBAImageBlitting)
-			{
-				VkOffset3D BlitSize;
-				BlitSize.x = Width;
-				BlitSize.y = Height;
-				BlitSize.z = 1;
-
-				VkImageBlit ImageBlitRegion{};
-				ImageBlitRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-				ImageBlitRegion.srcSubresource.layerCount = 1;
-				ImageBlitRegion.srcOffsets[0] = SrcOffset;
-				ImageBlitRegion.srcOffsets[1] = {SrcOffset.x + BlitSize.x, SrcOffset.y + BlitSize.y, SrcOffset.z + BlitSize.z};
-				ImageBlitRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-				ImageBlitRegion.dstSubresource.layerCount = 1;
-				ImageBlitRegion.dstOffsets[1] = BlitSize;
-
-				// Issue the blit command
-				vkCmdBlitImage(CommandBuffer, SwapImg, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-					m_GetPresentedImgDataHelperImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-					1, &ImageBlitRegion, VK_FILTER_NEAREST);
-
-				// transformed to RGBA
-				IsB8G8R8A8 = false;
-			}
-			else
-			{
-				// Otherwise use image copy (requires us to manually flip components)
-				VkImageCopy ImageCopyRegion{};
-				ImageCopyRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-				ImageCopyRegion.srcSubresource.layerCount = 1;
-				ImageCopyRegion.srcOffset = SrcOffset;
-				ImageCopyRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-				ImageCopyRegion.dstSubresource.layerCount = 1;
-				ImageCopyRegion.extent.width = Width;
-				ImageCopyRegion.extent.height = Height;
-				ImageCopyRegion.extent.depth = 1;
-
-				// Issue the copy command
-				vkCmdCopyImage(CommandBuffer, SwapImg, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-					m_GetPresentedImgDataHelperImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-					1, &ImageCopyRegion);
-			}
-
-			if(!ImageBarrier(m_GetPresentedImgDataHelperImage, 0, 1, 0, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL))
-				return false;
-			if(!ImageBarrier(SwapImg, 0, 1, 0, 1, m_VKSurfFormat.format, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR))
-				return false;
-
-			vkEndCommandBuffer(CommandBuffer);
-			m_vUsedMemoryCommandBuffer[m_CurImageIndex] = false;
-
-			VkSubmitInfo SubmitInfo{};
-			SubmitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-			SubmitInfo.commandBufferCount = 1;
-			SubmitInfo.pCommandBuffers = &CommandBuffer;
-
-			vkResetFences(m_VKDevice, 1, &m_GetPresentedImgDataHelperFence);
-			vkQueueSubmit(m_VKGraphicsQueue, 1, &SubmitInfo, m_GetPresentedImgDataHelperFence);
-			vkWaitForFences(m_VKDevice, 1, &m_GetPresentedImgDataHelperFence, VK_TRUE, std::numeric_limits<uint64_t>::max());
-
-			VkMappedMemoryRange MemRange{};
-			MemRange.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
-			MemRange.memory = m_GetPresentedImgDataHelperMem.m_Mem;
-			MemRange.offset = m_GetPresentedImgDataHelperMappedLayoutOffset;
-			MemRange.size = VK_WHOLE_SIZE;
-			vkInvalidateMappedMemoryRanges(m_VKDevice, 1, &MemRange);
-
-			size_t RealFullImageSize = std::max(ImageTotalSize, (size_t)(Height * m_GetPresentedImgDataHelperMappedLayoutPitch));
-			size_t ExtraRowSize = Width * 4;
-			if(vDstData.size() < RealFullImageSize + ExtraRowSize)
-				vDstData.resize(RealFullImageSize + ExtraRowSize);
-
-			mem_copy(vDstData.data(), pResImageData, RealFullImageSize);
-
-			// pack image data together without any offset that the driver might require
-			if(Width * 4 < m_GetPresentedImgDataHelperMappedLayoutPitch)
-			{
-				for(uint32_t Y = 0; Y < Height; ++Y)
-				{
-					size_t OffsetImagePacked = (Y * Width * 4);
-					size_t OffsetImageUnpacked = (Y * m_GetPresentedImgDataHelperMappedLayoutPitch);
-					mem_copy(vDstData.data() + RealFullImageSize, vDstData.data() + OffsetImageUnpacked, Width * 4);
-					mem_copy(vDstData.data() + OffsetImagePacked, vDstData.data() + RealFullImageSize, Width * 4);
-				}
-			}
-
-			if(IsB8G8R8A8 || ResetAlpha)
-			{
-				// swizzle
-				for(uint32_t Y = 0; Y < Height; ++Y)
-				{
-					for(uint32_t X = 0; X < Width; ++X)
-					{
-						size_t ImgOff = (Y * Width * 4) + (X * 4);
-						if(IsB8G8R8A8)
-						{
-							std::swap(vDstData[ImgOff], vDstData[ImgOff + 2]);
-						}
-						vDstData[ImgOff + 3] = 255;
-					}
-				}
-			}
-
-			return true;
-		}
-		else
-		{
-			if(!UsesRGBALikeFormat)
-			{
-				log_error("gfx/vulkan", "Swap chain image was not in an RGBA-like format.");
-			}
-			else
-			{
-				log_error("gfx/vulkan", "Swap chain image was not ready to be copied.");
-			}
-			return false;
 		}
 	}
 
 	[[nodiscard]] bool GetPresentedImageData(uint32_t &Width, uint32_t &Height, CImageInfo::EImageFormat &Format, std::vector<uint8_t> &vDstData) override
 	{
-		return GetPresentedImageDataImpl(Width, Height, Format, vDstData, false, {});
+		if(!m_HasFrameReadback)
+			return false;
+		Width = m_ReadbackExtent.width;
+		Height = m_ReadbackExtent.height;
+		Format = CImageInfo::FORMAT_RGBA;
+		vDstData.resize((size_t)Width * Height * 4);
+		CopyFrameReadback(vDstData.data(), false);
+		return true;
 	}
 
 	/************************
@@ -2426,7 +2309,7 @@ protected:
 		ShrinkUnusedCaches();
 	}
 
-	[[nodiscard]] bool WaitFrame()
+	[[nodiscard]] bool WaitFrame(const SFrameGenerationTiming &FrameGeneration = {}, bool *pGenerated = nullptr, const SFrameReadback *pReadback = nullptr)
 	{
 		FinishRenderThreads();
 		m_LastCommandsInPipeThreadIndex = 0;
@@ -2468,25 +2351,11 @@ protected:
 			}
 		}
 
-		const bool FrameBlendEnabled = m_FrameBlendEnabledThisFrame;
-		if(FrameBlendEnabled != m_FrameBlendEnabledLastFrame)
-		{
-			ResetFrameBlendHistory();
-			m_FrameBlendEnabledLastFrame = FrameBlendEnabled;
-		}
-
 		vkCmdEndRenderPass(CommandBuffer);
 
 		if(!m_VignetteBlurPassBegun)
 		{
-			if(FrameBlendEnabled)
-				CopyFrameToFrameBlendHistory(CommandBuffer);
-
 			BeginFrameBlendOverlayPass(CommandBuffer);
-
-			if(FrameBlendEnabled && !RenderFrameBlend(CommandBuffer))
-				return false;
-
 			vkCmdEndRenderPass(CommandBuffer);
 		}
 
@@ -2494,6 +2363,42 @@ protected:
 		m_VignetteBlurPassBegun = false;
 		m_ForceInlineRecording = false;
 
+#if defined(CONF_VIDEORECORDER)
+		const SFrameReadback VideoReadback;
+		if(IVideo::Current())
+			pReadback = &VideoReadback;
+#endif
+		m_HasFrameReadback = false;
+		const bool Captured = pReadback && RecordFrameReadback(CommandBuffer, *pReadback);
+		if(!pReadback && pGenerated && FrameGeneration.m_Multiplier > 1 && !m_RecreateSwapChain && EnsureFrameGenerationResources())
+		{
+			const auto Now = time_get_nanoseconds();
+			const auto MaxSourceGap = FrameGenerationSourceGapLimit(FrameGeneration.m_BaseRate);
+			*pGenerated = FrameGeneration.OutputCount() > 1 && FrameGeneration.m_Multiplier == m_LastFrameGenerationTiming.m_Multiplier &&
+				Now - m_LastFrameGenerationSourceTime <= MaxSourceGap;
+			m_LastFrameGenerationTiming = FrameGeneration;
+			m_LastFrameGenerationSourceTime = Now;
+			m_FrameGenerationCurrent ^= 1;
+			CaptureFrameGenerationSource(CommandBuffer);
+			if(*pGenerated)
+			{
+				RenderFrameGenerationMotion(CommandBuffer);
+				RenderFrameGenerationOutput(CommandBuffer, FrameGeneration.Phase(1));
+			}
+			else
+			{
+				FrameBlendImageBarrier(CommandBuffer, m_vSwapChainImages[m_CurImageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+			}
+		}
+		else
+		{
+			m_LastFrameGenerationTiming = {};
+		}
+		return SubmitAndPresentFrame(CommandBuffer, Captured);
+	}
+
+	[[nodiscard]] bool SubmitAndPresentFrame(VkCommandBuffer CommandBuffer, bool Captured = false)
+	{
 		if(vkEndCommandBuffer(CommandBuffer) != VK_SUCCESS)
 		{
 			SetError(EGfxErrorType::GFX_ERROR_TYPE_RENDER_RECORDING, "Command buffer cannot be ended anymore.");
@@ -2559,10 +2464,10 @@ protected:
 
 		PresentInfo.pImageIndices = &m_CurImageIndex;
 
-		m_LastPresentedSwapChainImageIndex = m_CurImageIndex;
-
 		VkResult QueuePresentRes = vkQueuePresentKHR(m_VKPresentQueue, &PresentInfo);
-		if(QueuePresentRes != VK_SUCCESS && QueuePresentRes != VK_SUBOPTIMAL_KHR)
+		if(QueuePresentRes == VK_SUBOPTIMAL_KHR)
+			m_RecreateSwapChain = true;
+		else if(QueuePresentRes != VK_SUCCESS)
 		{
 			const char *pCritErrorMsg = CheckVulkanCriticalError(QueuePresentRes);
 			if(pCritErrorMsg != nullptr)
@@ -2572,10 +2477,25 @@ protected:
 			}
 		}
 
+		if(Captured)
+		{
+			const VkResult Result = vkWaitForFences(m_VKDevice, 1, &m_vQueueSubmitFences[m_CurImageIndex], VK_TRUE, std::numeric_limits<uint64_t>::max());
+			if(Result != VK_SUCCESS)
+			{
+				SetError(EGfxErrorType::GFX_ERROR_TYPE_SWAP_FAILED, "Waiting for frame readback failed.", CheckVulkanCriticalError(Result));
+				return false;
+			}
+			VkMappedMemoryRange Range{};
+			Range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+			Range.memory = m_ReadbackMemory;
+			Range.size = VK_WHOLE_SIZE;
+			m_HasFrameReadback = vkInvalidateMappedMemoryRanges(m_VKDevice, 1, &Range) == VK_SUCCESS;
+		}
+
 		return true;
 	}
 
-	[[nodiscard]] bool PrepareFrame()
+	[[nodiscard]] bool AcquireFrame()
 	{
 		if(m_RecreateSwapChain)
 		{
@@ -2584,11 +2504,14 @@ protected:
 			{
 				log_debug("gfx/vulkan", "Recreating swap chain requested by user (prepare frame).");
 			}
-			RecreateSwapChain();
+			if(RecreateSwapChain() != 0)
+				return false;
 		}
 
 		auto AcqResult = vkAcquireNextImageKHR(m_VKDevice, m_VKSwapChain, std::numeric_limits<uint64_t>::max(), m_AcquireImageSemaphore, VK_NULL_HANDLE, &m_CurImageIndex);
-		if(AcqResult != VK_SUCCESS)
+		if(AcqResult == VK_SUBOPTIMAL_KHR)
+			m_RecreateSwapChain = true;
+		if(AcqResult != VK_SUCCESS && AcqResult != VK_SUBOPTIMAL_KHR)
 		{
 			if(AcqResult == VK_ERROR_OUT_OF_DATE_KHR || m_RecreateSwapChain)
 			{
@@ -2597,8 +2520,7 @@ protected:
 				{
 					log_debug("gfx/vulkan", "Recreating swap chain requested by acquire next image (prepare frame).");
 				}
-				RecreateSwapChain();
-				return PrepareFrame();
+				return RecreateSwapChain() == 0 && AcquireFrame();
 			}
 			else
 			{
@@ -2651,20 +2573,22 @@ protected:
 			return false;
 		}
 
-		m_FrameBlendEnabledThisFrame = IsFrameBlendEnabled();
-		if(m_FrameBlendEnabledThisFrame && !m_vFrameBlendImages.empty())
-		{
-			const uint64_t Ring = (uint64_t)m_vFrameBlendImages.size();
-			for(int Source = 0; Source < 3; ++Source)
-			{
-				auto &HistoryImage = m_vFrameBlendImages[(size_t)((m_CurFrame + Ring - 1 - (uint64_t)Source) % Ring)];
-				if(!HistoryImage.m_Valid)
-					break;
-				FrameBlendImageBarrier(CommandBuffer, HistoryImage.m_Image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-			}
-		}
+		return true;
+	}
 
-		m_VignetteBlurPass = IsVignetteBlurEnabled() && !m_FrameBlendEnabledThisFrame;
+	[[nodiscard]] bool PrepareFrame()
+	{
+		if(!AcquireFrame())
+			return false;
+		if(!m_RenderingPaused)
+			BeginGameRenderPass();
+		return true;
+	}
+
+	void BeginGameRenderPass()
+	{
+		auto &CommandBuffer = GetMainGraphicCommandBuffer();
+		m_VignetteBlurPass = IsVignetteBlurEnabled();
 		m_ForceInlineRecording = m_VignetteBlurPass && m_ThreadCount > 1;
 
 		VkRenderPassBeginInfo RenderPassInfo{};
@@ -2682,8 +2606,6 @@ protected:
 
 		for(auto &LastPipe : m_vLastPipeline)
 			LastPipe = VK_NULL_HANDLE;
-
-		return true;
 	}
 
 	void UploadStagingBuffers()
@@ -2721,23 +2643,45 @@ protected:
 		return true;
 	}
 
-	[[nodiscard]] bool NextFrame()
+	[[nodiscard]] bool NextFrame(const SFrameGenerationTiming &FrameGeneration = {}, const SFrameReadback *pReadback = nullptr)
 	{
-		if(!m_RenderingPaused)
+		if(m_RenderingPaused)
 		{
-			if(!WaitFrame())
-				return false;
-			if(!PrepareFrame())
-				return false;
-		}
-		// else only execute the memory command buffer
-		else
-		{
-			if(!PureMemoryFrame())
-				return false;
+			m_LastFrameGenerationTiming = {};
+			m_HasFrameReadback = false;
+			return PureMemoryFrame();
 		}
 
-		return true;
+		bool Generated = false;
+		if(!WaitFrame(FrameGeneration, &Generated, pReadback))
+			return false;
+
+		if(Generated)
+		{
+			const auto Interval = FrameGeneration.PresentInterval();
+			auto Deadline = time_get_nanoseconds() + Interval;
+			// extra outputs must not re-run the game renderer
+			for(int Step = 2; Step <= FrameGeneration.OutputCount(); ++Step)
+			{
+				if(!AcquireFrame())
+					return false;
+				if(m_RenderingPaused)
+					return true;
+				if(m_LastFrameGenerationTiming.m_Multiplier == 1)
+				{
+					// recreated swapchain has no source images to blend from
+					BeginGameRenderPass();
+					return true;
+				}
+				auto &CommandBuffer = GetMainGraphicCommandBuffer();
+				RenderFrameGenerationOutput(CommandBuffer, FrameGeneration.Phase(Step));
+				std::this_thread::sleep_for(Deadline - time_get_nanoseconds());
+				if(!SubmitAndPresentFrame(CommandBuffer))
+					return false;
+				Deadline += Interval;
+			}
+		}
+		return PrepareFrame();
 	}
 
 	/************************
@@ -3144,7 +3088,6 @@ protected:
 
 		VkMemoryRequirements MemRequirements;
 		vkGetImageMemoryRequirements(m_VKDevice, Image, &MemRequirements);
-
 		if(!GetImageMemory(ImageMemory, MemRequirements.size, MemRequirements.alignment, MemRequirements.memoryTypeBits))
 			return false;
 
@@ -4740,17 +4683,10 @@ public:
 		return true;
 	}
 
-	void ResetFrameBlendHistory()
-	{
-		for(auto &FrameBlendImage : m_vFrameBlendImages)
-			FrameBlendImage.m_Valid = false;
-	}
-
-	template<typename TImage>
-	[[nodiscard]] bool CreateFrameBlendDescriptorSet(TImage &FrameBlendImage)
+	[[nodiscard]] bool CreateVignetteBlurDescriptorSet(SVignetteBlurImage &BlurImage)
 	{
 		VkDescriptorPool DescriptorPool;
-		if(!GetDescriptorPoolForAlloc(DescriptorPool, m_StandardTextureDescrPool, &FrameBlendImage.m_DescriptorSet, 1))
+		if(!GetDescriptorPoolForAlloc(DescriptorPool, m_StandardTextureDescrPool, &BlurImage.m_DescriptorSet, 1))
 			return false;
 
 		VkDescriptorSetAllocateInfo DesAllocInfo{};
@@ -4759,20 +4695,20 @@ public:
 		DesAllocInfo.descriptorSetCount = 1;
 		DesAllocInfo.pSetLayouts = &m_StandardTexturedDescriptorSetLayout;
 
-		if(vkAllocateDescriptorSets(m_VKDevice, &DesAllocInfo, &FrameBlendImage.m_DescriptorSet.m_Descriptor) != VK_SUCCESS)
+		if(vkAllocateDescriptorSets(m_VKDevice, &DesAllocInfo, &BlurImage.m_DescriptorSet.m_Descriptor) != VK_SUCCESS)
 		{
-			SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Creating the frame blend descriptor set failed.");
+			SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Creating the vignette blur descriptor set failed.");
 			return false;
 		}
 
 		VkDescriptorImageInfo ImageInfo{};
 		ImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		ImageInfo.imageView = FrameBlendImage.m_ImgView;
+		ImageInfo.imageView = BlurImage.m_ImgView;
 		ImageInfo.sampler = GetTextureSampler(SUPPORTED_SAMPLER_TYPE_CLAMP_TO_EDGE);
 
 		std::array<VkWriteDescriptorSet, 1> aDescriptorWrites{};
 		aDescriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		aDescriptorWrites[0].dstSet = FrameBlendImage.m_DescriptorSet.m_Descriptor;
+		aDescriptorWrites[0].dstSet = BlurImage.m_DescriptorSet.m_Descriptor;
 		aDescriptorWrites[0].dstBinding = 0;
 		aDescriptorWrites[0].dstArrayElement = 0;
 		aDescriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -4781,46 +4717,6 @@ public:
 
 		vkUpdateDescriptorSets(m_VKDevice, static_cast<uint32_t>(aDescriptorWrites.size()), aDescriptorWrites.data(), 0, nullptr);
 		return true;
-	}
-
-	[[nodiscard]] bool CreateFrameBlendImages()
-	{
-		m_vFrameBlendImages.resize(4);
-
-		for(auto &FrameBlendImage : m_vFrameBlendImages)
-		{
-			if(!CreateImage(m_VKSwapImgAndViewportExtent.m_SwapImageViewport.width, m_VKSwapImgAndViewportExtent.m_SwapImageViewport.height, 1, 1, m_VKSurfFormat.format, VK_IMAGE_TILING_OPTIMAL, FrameBlendImage.m_Image, FrameBlendImage.m_ImgMem, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
-				return false;
-			FrameBlendImage.m_ImgView = CreateImageView(FrameBlendImage.m_Image, m_VKSurfFormat.format, VK_IMAGE_VIEW_TYPE_2D, 1, 1);
-			if(!ImageBarrier(FrameBlendImage.m_Image, 0, 1, 0, 1, m_VKSurfFormat.format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL))
-				return false;
-			if(!ImageBarrier(FrameBlendImage.m_Image, 0, 1, 0, 1, m_VKSurfFormat.format, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
-				return false;
-			if(!CreateFrameBlendDescriptorSet(FrameBlendImage))
-				return false;
-		}
-
-		ResetFrameBlendHistory();
-		m_FrameBlendEnabledLastFrame = false;
-		return true;
-	}
-
-	void DestroyFrameBlendImages()
-	{
-		for(auto &FrameBlendImage : m_vFrameBlendImages)
-		{
-			if(FrameBlendImage.m_DescriptorSet.m_Descriptor != VK_NULL_HANDLE)
-				FreeDescriptorSetFromPool(FrameBlendImage.m_DescriptorSet);
-			if(FrameBlendImage.m_ImgView != VK_NULL_HANDLE)
-				vkDestroyImageView(m_VKDevice, FrameBlendImage.m_ImgView, nullptr);
-			if(FrameBlendImage.m_Image != VK_NULL_HANDLE)
-				vkDestroyImage(m_VKDevice, FrameBlendImage.m_Image, nullptr);
-			if(FrameBlendImage.m_ImgMem.m_BufferMem.m_Mem != VK_NULL_HANDLE)
-				FreeImageMemBlock(FrameBlendImage.m_ImgMem);
-		}
-
-		m_vFrameBlendImages.clear();
-		m_FrameBlendEnabledLastFrame = false;
 	}
 
 	[[nodiscard]] bool CreateVignetteBlurImages()
@@ -4841,11 +4737,7 @@ public:
 			if(!CreateImage(BlurImage.m_Extent.width, BlurImage.m_Extent.height, 1, 1, m_VKSurfFormat.format, VK_IMAGE_TILING_OPTIMAL, BlurImage.m_Image, BlurImage.m_ImgMem, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
 				return false;
 			BlurImage.m_ImgView = CreateImageView(BlurImage.m_Image, m_VKSurfFormat.format, VK_IMAGE_VIEW_TYPE_2D, 1, 1);
-			if(!ImageBarrier(BlurImage.m_Image, 0, 1, 0, 1, m_VKSurfFormat.format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL))
-				return false;
-			if(!ImageBarrier(BlurImage.m_Image, 0, 1, 0, 1, m_VKSurfFormat.format, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
-				return false;
-			if(!CreateFrameBlendDescriptorSet(BlurImage))
+			if(BlurImage.m_ImgView == VK_NULL_HANDLE || !CreateVignetteBlurDescriptorSet(BlurImage))
 				return false;
 		}
 
@@ -5000,7 +4892,7 @@ public:
 		m_vFramebufferList.clear();
 	}
 
-	[[nodiscard]] bool CreateShaderModule(const std::vector<uint8_t> &vCode, VkShaderModule &ShaderModule)
+	[[nodiscard]] bool CreateShaderModule(const std::vector<uint8_t> &vCode, VkShaderModule &ShaderModule, bool Required)
 	{
 		VkShaderModuleCreateInfo CreateInfo{};
 		CreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -5009,7 +4901,8 @@ public:
 
 		if(vkCreateShaderModule(m_VKDevice, &CreateInfo, nullptr, &ShaderModule) != VK_SUCCESS)
 		{
-			SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Shader module was not created.");
+			if(Required)
+				SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Shader module was not created.");
 			return false;
 		}
 
@@ -5074,7 +4967,7 @@ public:
 		return true;
 	}
 
-	[[nodiscard]] bool CreateShaders(const char *pVertName, const char *pFragName, VkPipelineShaderStageCreateInfo (&aShaderStages)[2], SShaderModule &ShaderModule)
+	[[nodiscard]] bool CreateShaders(const char *pVertName, const char *pFragName, VkPipelineShaderStageCreateInfo (&aShaderStages)[2], SShaderModule &ShaderModule, bool Required = true)
 	{
 		bool ShaderLoaded = true;
 
@@ -5087,14 +4980,15 @@ public:
 
 		if(!ShaderLoaded)
 		{
-			SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "A shader file could not load correctly.");
+			if(Required)
+				SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "A shader file could not load correctly.");
 			return false;
 		}
 
-		if(!CreateShaderModule(*pvVertBuff, ShaderModule.m_VertShaderModule))
+		if(!CreateShaderModule(*pvVertBuff, ShaderModule.m_VertShaderModule, Required))
 			return false;
 
-		if(!CreateShaderModule(*pvFragBuff, ShaderModule.m_FragShaderModule))
+		if(!CreateShaderModule(*pvFragBuff, ShaderModule.m_FragShaderModule, Required))
 			return false;
 
 		VkPipelineShaderStageCreateInfo &VertShaderStageInfo = aShaderStages[0];
@@ -5111,6 +5005,247 @@ public:
 		FragShaderStageInfo.module = ShaderModule.m_FragShaderModule;
 		FragShaderStageInfo.pName = "main";
 		return true;
+	}
+
+	[[nodiscard]] bool CreateFrameGenerationImage(SFrameGenerationImage &Image, VkExtent2D Extent, VkFormat Format, VkImageUsageFlags Usage)
+	{
+		VkImageCreateInfo Info{};
+		Info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		Info.imageType = VK_IMAGE_TYPE_2D;
+		Info.format = Format;
+		Info.extent = {Extent.width, Extent.height, 1};
+		Info.mipLevels = 1;
+		Info.arrayLayers = 1;
+		Info.samples = VK_SAMPLE_COUNT_1_BIT;
+		Info.tiling = VK_IMAGE_TILING_OPTIMAL;
+		Info.usage = Usage | VK_IMAGE_USAGE_SAMPLED_BIT;
+		if(vkCreateImage(m_VKDevice, &Info, nullptr, &Image.m_Image) != VK_SUCCESS)
+			return false;
+
+		VkMemoryRequirements Requirements;
+		vkGetImageMemoryRequirements(m_VKDevice, Image.m_Image, &Requirements);
+		VkMemoryAllocateInfo Allocation{};
+		Allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		Allocation.allocationSize = Requirements.size;
+		Allocation.memoryTypeIndex = FindMemoryType(m_VKGPU, Requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		// must stay off the OOM recovery path, which advances the swapchain
+		if((Requirements.memoryTypeBits & (1u << Allocation.memoryTypeIndex)) == 0 ||
+			vkAllocateMemory(m_VKDevice, &Allocation, nullptr, &Image.m_Memory) != VK_SUCCESS ||
+			vkBindImageMemory(m_VKDevice, Image.m_Image, Image.m_Memory, 0) != VK_SUCCESS)
+			return false;
+
+		Image.m_View = CreateImageView(Image.m_Image, Format, VK_IMAGE_VIEW_TYPE_2D, 1, 1);
+		return Image.m_View != VK_NULL_HANDLE;
+	}
+
+	[[nodiscard]] bool CreateFrameGenerationPass(VkFormat Format, bool MotionPass, VkRenderPass &Pass)
+	{
+		VkAttachmentDescription Attachment{};
+		Attachment.format = Format;
+		Attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		Attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		Attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		Attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		Attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		Attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		Attachment.finalLayout = MotionPass ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+		const VkAttachmentReference Reference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+		VkSubpassDescription Subpass{};
+		Subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		Subpass.colorAttachmentCount = 1;
+		Subpass.pColorAttachments = &Reference;
+
+		// both the reused motion and the just-read swap image need a dependency
+		std::array<VkSubpassDependency, 2> aDependencies{};
+		aDependencies[0] = {VK_SUBPASS_EXTERNAL, 0,
+			MotionPass ? VkPipelineStageFlags(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT) : VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0};
+		aDependencies[1] = {0, VK_SUBPASS_EXTERNAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, 0};
+
+		VkRenderPassCreateInfo Info{};
+		Info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		Info.attachmentCount = 1;
+		Info.pAttachments = &Attachment;
+		Info.subpassCount = 1;
+		Info.pSubpasses = &Subpass;
+		Info.dependencyCount = MotionPass ? 2 : 1;
+		Info.pDependencies = aDependencies.data();
+		return vkCreateRenderPass(m_VKDevice, &Info, nullptr, &Pass) == VK_SUCCESS;
+	}
+
+	[[nodiscard]] bool CreateFrameGenerationFramebuffer(VkRenderPass Pass, VkImageView View, VkExtent2D Extent, VkFramebuffer &Framebuffer)
+	{
+		VkFramebufferCreateInfo Info{};
+		Info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+		Info.renderPass = Pass;
+		Info.attachmentCount = 1;
+		Info.pAttachments = &View;
+		Info.width = Extent.width;
+		Info.height = Extent.height;
+		Info.layers = 1;
+		return vkCreateFramebuffer(m_VKDevice, &Info, nullptr, &Framebuffer) == VK_SUCCESS;
+	}
+
+	[[nodiscard]] bool CreateFrameGenerationPipeline(const char *pFragment, VkRenderPass Pass, VkPipeline &Pipeline)
+	{
+		VkPipelineShaderStageCreateInfo aShaders[2];
+		SShaderModule Modules;
+		if(!CreateShaders("shader/vulkan/frame_generation.vert.spv", pFragment, aShaders, Modules, false))
+			return false;
+
+		VkPipelineInputAssemblyStateCreateInfo InputAssembly{};
+		VkViewport Viewport{};
+		VkRect2D Scissor{};
+		VkPipelineViewportStateCreateInfo ViewportState{};
+		VkPipelineRasterizationStateCreateInfo Rasterizer{};
+		VkPipelineMultisampleStateCreateInfo Multisampling{};
+		VkPipelineColorBlendAttachmentState BlendAttachment{};
+		VkPipelineColorBlendStateCreateInfo Blending{};
+		GetStandardPipelineInfo(InputAssembly, Viewport, Scissor, ViewportState, Rasterizer, Multisampling, BlendAttachment, Blending);
+		Multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+		BlendAttachment.blendEnable = VK_FALSE;
+
+		const std::array<VkDynamicState, 2> aDynamic = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+		VkPipelineDynamicStateCreateInfo Dynamic{};
+		Dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		Dynamic.dynamicStateCount = aDynamic.size();
+		Dynamic.pDynamicStates = aDynamic.data();
+		VkPipelineVertexInputStateCreateInfo VertexInput{};
+		VertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+		VkGraphicsPipelineCreateInfo Info{};
+		Info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		Info.stageCount = std::size(aShaders);
+		Info.pStages = aShaders;
+		Info.pVertexInputState = &VertexInput;
+		Info.pInputAssemblyState = &InputAssembly;
+		Info.pViewportState = &ViewportState;
+		Info.pRasterizationState = &Rasterizer;
+		Info.pMultisampleState = &Multisampling;
+		Info.pColorBlendState = &Blending;
+		Info.pDynamicState = &Dynamic;
+		Info.layout = m_FrameGenerationLayout;
+		Info.renderPass = Pass;
+		return vkCreateGraphicsPipelines(m_VKDevice, VK_NULL_HANDLE, 1, &Info, nullptr, &Pipeline) == VK_SUCCESS;
+	}
+
+	[[nodiscard]] bool CreateFrameGenerationResources()
+	{
+		const VkExtent2D Extent = m_VKSwapImgAndViewportExtent.m_SwapImageViewport;
+		constexpr VkFormat MOTION_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
+		const VkFormatFeatureFlags SamplingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+		VkFormatProperties SourceProperties, MotionProperties;
+		vkGetPhysicalDeviceFormatProperties(m_VKGPU, m_VKSurfFormat.format, &SourceProperties);
+		vkGetPhysicalDeviceFormatProperties(m_VKGPU, MOTION_FORMAT, &MotionProperties);
+		const auto MotionFeatures = SamplingFeatures | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+		if((SourceProperties.optimalTilingFeatures & SamplingFeatures) != SamplingFeatures ||
+			(MotionProperties.optimalTilingFeatures & MotionFeatures) != MotionFeatures)
+			return false;
+
+		for(auto &Source : m_aFrameGenerationHistory)
+		{
+			if(!CreateFrameGenerationImage(Source, Extent, m_VKSurfFormat.format, VK_IMAGE_USAGE_TRANSFER_DST_BIT))
+				return false;
+		}
+		// one estimate per 8x8 block, shared across every frame
+		m_FrameGenerationMotionExtent = {(Extent.width + 7) / 8, (Extent.height + 7) / 8};
+		if(!CreateFrameGenerationImage(m_FrameGenerationMotion, m_FrameGenerationMotionExtent, MOTION_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT))
+			return false;
+
+		const VkDescriptorPoolSize PoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3};
+		VkDescriptorPoolCreateInfo Pool{};
+		Pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		Pool.maxSets = PoolSize.descriptorCount;
+		Pool.poolSizeCount = 1;
+		Pool.pPoolSizes = &PoolSize;
+		if(vkCreateDescriptorPool(m_VKDevice, &Pool, nullptr, &m_FrameGenerationPool) != VK_SUCCESS)
+			return false;
+
+		const std::array<VkDescriptorSetLayout, 3> aLayouts = {m_StandardTexturedDescriptorSetLayout, m_StandardTexturedDescriptorSetLayout, m_StandardTexturedDescriptorSetLayout};
+		VkDescriptorSetAllocateInfo Allocate{};
+		Allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		Allocate.descriptorPool = m_FrameGenerationPool;
+		Allocate.descriptorSetCount = aLayouts.size();
+		Allocate.pSetLayouts = aLayouts.data();
+		std::array<VkDescriptorSet, 3> aDescriptors;
+		if(vkAllocateDescriptorSets(m_VKDevice, &Allocate, aDescriptors.data()) != VK_SUCCESS)
+			return false;
+		const std::array<SFrameGenerationImage *, 3> apImages = {&m_aFrameGenerationHistory[0], &m_aFrameGenerationHistory[1], &m_FrameGenerationMotion};
+		for(size_t Index = 0; Index < apImages.size(); ++Index)
+		{
+			auto &Image = *apImages[Index];
+			Image.m_Descriptor = aDescriptors[Index];
+			const VkDescriptorImageInfo ImageInfo{GetTextureSampler(SUPPORTED_SAMPLER_TYPE_CLAMP_TO_EDGE), Image.m_View, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+			VkWriteDescriptorSet Write{};
+			Write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			Write.dstSet = Image.m_Descriptor;
+			Write.descriptorCount = 1;
+			Write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			Write.pImageInfo = &ImageInfo;
+			vkUpdateDescriptorSets(m_VKDevice, 1, &Write, 0, nullptr);
+		}
+
+		const VkPushConstantRange Phase{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float)};
+		VkPipelineLayoutCreateInfo Layout{};
+		Layout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		Layout.setLayoutCount = aLayouts.size();
+		Layout.pSetLayouts = aLayouts.data();
+		Layout.pushConstantRangeCount = 1;
+		Layout.pPushConstantRanges = &Phase;
+		if(vkCreatePipelineLayout(m_VKDevice, &Layout, nullptr, &m_FrameGenerationLayout) != VK_SUCCESS ||
+			!CreateFrameGenerationPass(MOTION_FORMAT, true, m_FrameGenerationMotionPass) ||
+			!CreateFrameGenerationPass(m_VKSurfFormat.format, false, m_FrameGenerationOutputPass) ||
+			!CreateFrameGenerationFramebuffer(m_FrameGenerationMotionPass, m_FrameGenerationMotion.m_View, m_FrameGenerationMotionExtent, m_FrameGenerationMotionFramebuffer) ||
+			!CreateFrameGenerationPipeline("shader/vulkan/frame_generation_motion.frag.spv", m_FrameGenerationMotionPass, m_FrameGenerationMotionPipeline) ||
+			!CreateFrameGenerationPipeline("shader/vulkan/frame_generation.frag.spv", m_FrameGenerationOutputPass, m_FrameGenerationOutputPipeline))
+			return false;
+		m_vFrameGenerationFramebuffers.resize(m_vSwapChainImageViewList.size(), VK_NULL_HANDLE);
+		for(size_t Index = 0; Index < m_vFrameGenerationFramebuffers.size(); ++Index)
+		{
+			if(!CreateFrameGenerationFramebuffer(m_FrameGenerationOutputPass, m_vSwapChainImageViewList[Index], Extent, m_vFrameGenerationFramebuffers[Index]))
+				return false;
+		}
+		return true;
+	}
+
+	void DestroyFrameGenerationResources()
+	{
+		for(auto Framebuffer : m_vFrameGenerationFramebuffers)
+			vkDestroyFramebuffer(m_VKDevice, Framebuffer, nullptr);
+		m_vFrameGenerationFramebuffers.clear();
+		vkDestroyFramebuffer(m_VKDevice, std::exchange(m_FrameGenerationMotionFramebuffer, VK_NULL_HANDLE), nullptr);
+		vkDestroyPipeline(m_VKDevice, std::exchange(m_FrameGenerationMotionPipeline, VK_NULL_HANDLE), nullptr);
+		vkDestroyPipeline(m_VKDevice, std::exchange(m_FrameGenerationOutputPipeline, VK_NULL_HANDLE), nullptr);
+		vkDestroyPipelineLayout(m_VKDevice, std::exchange(m_FrameGenerationLayout, VK_NULL_HANDLE), nullptr);
+		vkDestroyRenderPass(m_VKDevice, std::exchange(m_FrameGenerationMotionPass, VK_NULL_HANDLE), nullptr);
+		vkDestroyRenderPass(m_VKDevice, std::exchange(m_FrameGenerationOutputPass, VK_NULL_HANDLE), nullptr);
+		vkDestroyDescriptorPool(m_VKDevice, std::exchange(m_FrameGenerationPool, VK_NULL_HANDLE), nullptr);
+		const auto DestroyImage = [this](SFrameGenerationImage &Image) {
+			vkDestroyImageView(m_VKDevice, Image.m_View, nullptr);
+			vkDestroyImage(m_VKDevice, Image.m_Image, nullptr);
+			vkFreeMemory(m_VKDevice, Image.m_Memory, nullptr);
+			Image = {};
+		};
+		for(auto &Source : m_aFrameGenerationHistory)
+			DestroyImage(Source);
+		DestroyImage(m_FrameGenerationMotion);
+		m_LastFrameGenerationTiming = {};
+		m_FrameGenerationCurrent = 0;
+	}
+
+	[[nodiscard]] bool EnsureFrameGenerationResources()
+	{
+		if(!m_pCapabilities->m_FrameGeneration.load(std::memory_order_relaxed))
+			return false;
+		if(m_FrameGenerationOutputPipeline != VK_NULL_HANDLE || CreateFrameGenerationResources())
+			return true;
+
+		DestroyFrameGenerationResources();
+		m_pCapabilities->m_FrameGeneration.store(false, std::memory_order_relaxed);
+		log_warn("gfx/vulkan", "Frame generation is unavailable: could not initialize the interpolation passes.");
+		return false;
 	}
 
 	bool GetStandardPipelineInfo(VkPipelineInputAssemblyStateCreateInfo &InputAssembly,
@@ -5810,15 +5945,6 @@ public:
 				}
 			}
 
-			m_vFrameBlendCommandBuffers.resize(m_SwapChainImageCount);
-			AllocInfo.commandPool = m_vCommandPools[0];
-			AllocInfo.commandBufferCount = (uint32_t)m_vFrameBlendCommandBuffers.size();
-			AllocInfo.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
-			if(vkAllocateCommandBuffers(m_VKDevice, &AllocInfo, m_vFrameBlendCommandBuffers.data()) != VK_SUCCESS)
-			{
-				SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Allocating frame blend command buffers failed.");
-				return false;
-			}
 		}
 
 		return true;
@@ -5835,7 +5961,7 @@ public:
 				++Count;
 			}
 
-			vkFreeCommandBuffers(m_VKDevice, m_vCommandPools[0], static_cast<uint32_t>(m_vFrameBlendCommandBuffers.size()), m_vFrameBlendCommandBuffers.data());
+
 		}
 
 		vkFreeCommandBuffers(m_VKDevice, m_vCommandPools[0], static_cast<uint32_t>(m_vMemoryCommandBuffers.size()), m_vMemoryCommandBuffers.data());
@@ -5844,7 +5970,7 @@ public:
 		m_vvThreadDrawCommandBuffers.clear();
 		m_vvUsedThreadDrawCommandBuffer.clear();
 		m_vHelperThreadDrawCommandBuffers.clear();
-		m_vFrameBlendCommandBuffers.clear();
+
 
 		m_vMainDrawCommandBuffers.clear();
 		m_vMemoryCommandBuffers.clear();
@@ -5941,7 +6067,7 @@ public:
 
 		DestroyRenderPass();
 
-		DestroyFrameBlendImages();
+		DestroyFrameGenerationResources();
 		DestroyVignetteBlurImages();
 
 		DestroyMultiSamplerImageAttachments();
@@ -6021,7 +6147,7 @@ public:
 			DestroyTextureSamplers();
 			DestroyDescriptorPools();
 
-			DeletePresentedImageDataImage();
+			DestroyFrameReadbackBuffer();
 		}
 
 		DestroySyncObjects();
@@ -6082,24 +6208,25 @@ public:
 		if(!m_SwapchainCreated)
 			Ret = InitVulkanSwapChain(OldSwapChain);
 
-		if(Ret == 0 && OldSwapChainImageCount == m_SwapChainImageCount)
+		if(Ret == 0)
 		{
-			if(!CreateFrameBlendImages())
+			if(OldSwapChainImageCount != m_SwapChainImageCount)
+			{
+				CleanupVulkan<false>(OldSwapChainImageCount);
+				m_CurImageIndex = 0;
+				Ret = InitVulkan<false>();
+			}
+			else if(!CreateVignetteBlurImages())
+			{
 				Ret = -1;
-			if(Ret == 0 && !CreateVignetteBlurImages())
-				Ret = -1;
-		}
-
-		if(OldSwapChainImageCount != m_SwapChainImageCount)
-		{
-			CleanupVulkan<false>(OldSwapChainImageCount);
-			InitVulkan<false>();
+			}
 		}
 
 		if(OldSwapChain != VK_NULL_HANDLE)
 		{
 			vkDestroySwapchainKHR(m_VKDevice, OldSwapChain, nullptr);
 		}
+
 
 		if(Ret != 0 && IsVerbose())
 		{
@@ -6369,22 +6496,6 @@ public:
 		}
 	}
 
-	[[nodiscard]] bool FlushManualVertexBufferRange(const SDeviceMemoryBlock &BufferMem, size_t Offset, size_t DataSize)
-	{
-		VkMappedMemoryRange MemRange{};
-		MemRange.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
-		MemRange.memory = BufferMem.m_Mem;
-		MemRange.offset = Offset;
-		auto AlignmentMod = ((VkDeviceSize)DataSize % m_NonCoherentMemAlignment);
-		auto AlignmentReq = (m_NonCoherentMemAlignment - AlignmentMod);
-		if(AlignmentMod == 0)
-			AlignmentReq = 0;
-		MemRange.size = DataSize + AlignmentReq;
-		if(MemRange.offset + MemRange.size > BufferMem.m_Size)
-			MemRange.size = VK_WHOLE_SIZE;
-		return vkFlushMappedMemoryRanges(m_VKDevice, 1, &MemRange) == VK_SUCCESS;
-	}
-
 	void FrameBlendImageBarrier(VkCommandBuffer &CommandBuffer, VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout)
 	{
 		VkImageMemoryBarrier Barrier{};
@@ -6459,12 +6570,11 @@ public:
 			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 			DestinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 		}
-		else if(OldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+		else if(OldLayout == VK_IMAGE_LAYOUT_UNDEFINED && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
 		{
-			Barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-			Barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-			DestinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+			Barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			SourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 		}
 		else
 		{
@@ -6672,8 +6782,6 @@ public:
 			return -1;
 		}
 
-		m_LastPresentedSwapChainImageIndex = std::numeric_limits<decltype(m_LastPresentedSwapChainImageIndex)>::max();
-
 		if(!CreateRenderPass(true, m_VKRenderPass))
 			return -1;
 
@@ -6790,9 +6898,6 @@ public:
 				return -1;
 		}
 
-		if(!CreateFrameBlendImages())
-			return -1;
-
 		if(!CreateVignetteBlurImages())
 			return -1;
 
@@ -6830,17 +6935,7 @@ public:
 			{
 				m_OptimalRGBAImageBlitting = true;
 			}
-			// check if image format supports blitting to linear tiled images
-			if((FormatProperties.linearTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0)
-			{
-				m_LinearRGBAImageBlitting = true;
-			}
 
-			vkGetPhysicalDeviceFormatProperties(m_VKGPU, m_VKSurfFormat.format, &FormatProperties);
-			if((FormatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) != 0)
-			{
-				m_OptimalSwapChainImageBlitting = true;
-			}
 		}
 
 		return 0;
@@ -7183,6 +7278,7 @@ public:
 
 	[[nodiscard]] bool Cmd_Init(const SCommand_Init *pCommand)
 	{
+		m_pCapabilities = pCommand->m_pCapabilities;
 		pCommand->m_pCapabilities->m_TileBuffering = true;
 		pCommand->m_pCapabilities->m_QuadBuffering = true;
 		pCommand->m_pCapabilities->m_TextBuffering = true;
@@ -7228,6 +7324,7 @@ public:
 			*pCommand->m_pInitError = -2;
 			return false;
 		}
+		m_pCapabilities->m_FrameGeneration.store(true, std::memory_order_relaxed);
 
 		std::array<uint32_t, (size_t)CCommandBuffer::MAX_VERTICES / 4 * 6> aIndices;
 		int Primq = 0;
@@ -7419,152 +7516,6 @@ public:
 		return RenderStandard<CCommandBuffer::SVertex, false>(ExecBuffer, pCommand->m_State, pCommand->m_PrimType, pCommand->m_pVertices, pCommand->m_PrimCount);
 	}
 
-	[[nodiscard]] bool RenderFrameBlend(VkCommandBuffer &MainCommandBuffer)
-	{
-		if(m_vFrameBlendImages.empty())
-			return true;
-
-		const uint64_t Ring = (uint64_t)m_vFrameBlendImages.size();
-		size_t aSourceSlots[3] = {0, 0, 0};
-		float aSourceWeights[3] = {0.0f, 0.0f, 0.0f};
-		int SourceCount = 0;
-		float WeightSum = 0.0f;
-		float Weight = 1.0f;
-		for(int Source = 0; Source < 3; ++Source)
-		{
-			const size_t Slot = (size_t)((m_CurFrame + Ring - 1 - (uint64_t)Source) % Ring);
-			if(!m_vFrameBlendImages[Slot].m_Valid)
-				break;
-			aSourceSlots[SourceCount] = Slot;
-			aSourceWeights[SourceCount] = Weight;
-			WeightSum += Weight;
-			Weight *= 0.7f;
-			SourceCount++;
-		}
-		if(SourceCount <= 0)
-			return true;
-
-		const float Strength = (float)g_Config.m_TcMotionBlurStrength;
-		const float TotalBlendStrength = 0.90f * std::sqrt(std::min(Strength, 95.0f) / 95.0f);
-		if(TotalBlendStrength <= 0.0f)
-			return true;
-		float aSourceAlphas[3] = {0.0f, 0.0f, 0.0f};
-		for(int Source = 0; Source < SourceCount; ++Source)
-			aSourceAlphas[Source] = TotalBlendStrength * (aSourceWeights[Source] / WeightSum);
-
-		const bool UseSecondaryCommandBuffer = m_ThreadCount > 1;
-		VkCommandBuffer CommandBuffer = MainCommandBuffer;
-		if(UseSecondaryCommandBuffer)
-		{
-			CommandBuffer = m_vFrameBlendCommandBuffers[m_CurImageIndex];
-			vkResetCommandBuffer(CommandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
-
-			VkCommandBufferInheritanceInfo InheritanceInfo{};
-			InheritanceInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO;
-			InheritanceInfo.framebuffer = m_vFramebufferList[m_CurImageIndex];
-			InheritanceInfo.occlusionQueryEnable = VK_FALSE;
-			InheritanceInfo.renderPass = m_VKRenderPassBlendOverlay;
-			InheritanceInfo.subpass = 0;
-
-			VkCommandBufferBeginInfo BeginInfo{};
-			BeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-			BeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
-			BeginInfo.pInheritanceInfo = &InheritanceInfo;
-
-			if(vkBeginCommandBuffer(CommandBuffer, &BeginInfo) != VK_SUCCESS)
-			{
-				SetError(EGfxErrorType::GFX_ERROR_TYPE_RENDER_RECORDING, "Frame blend command buffer cannot be filled anymore.");
-				return false;
-			}
-		}
-
-		CCommandBuffer::SState State{};
-		State.m_BlendMode = EBlendMode::ALPHA;
-		State.m_WrapMode = EWrapMode::CLAMP;
-		State.m_Texture = 0;
-		State.m_ScreenTL = vec2(0.0f, 0.0f);
-		auto Viewport = m_VKSwapImgAndViewportExtent.GetPresentedImageViewport();
-		State.m_ScreenBR = vec2((float)Viewport.width, (float)Viewport.height);
-		State.m_ClipEnable = false;
-
-		SRenderCommandExecuteBuffer ExecBuffer{};
-		ExecBuffer.m_ThreadIndex = MAIN_THREAD_INDEX;
-		ExecBuffer.m_IndexBuffer = m_IndexBuffer;
-		ExecBufferFillDynamicStates(State, ExecBuffer);
-
-		bool IsTextured;
-		size_t BlendModeIndex;
-		size_t DynamicIndex;
-		size_t AddressModeIndex;
-		GetStateIndices(ExecBuffer, State, IsTextured, BlendModeIndex, DynamicIndex, AddressModeIndex);
-
-		auto &PipeLayout = GetStandardPipeLayout(false, true, BlendModeIndex, DynamicIndex);
-		auto &PipeLine = GetStandardPipe(false, true, BlendModeIndex, DynamicIndex);
-		vkCmdBindPipeline(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, PipeLine);
-		if(ExecBuffer.m_HasDynamicState)
-		{
-			vkCmdSetViewport(CommandBuffer, 0, 1, &ExecBuffer.m_Viewport);
-			vkCmdSetScissor(CommandBuffer, 0, 1, &ExecBuffer.m_Scissor);
-		}
-
-		std::array<CCommandBuffer::SVertex, 4 * 3> aVertices{};
-		for(int Source = 0; Source < SourceCount; ++Source)
-		{
-			auto *pQuadVertices = &aVertices[(size_t)Source * 4];
-			pQuadVertices[0].m_Pos = vec2(0.0f, 0.0f);
-			pQuadVertices[1].m_Pos = vec2((float)Viewport.width, 0.0f);
-			pQuadVertices[2].m_Pos = vec2((float)Viewport.width, (float)Viewport.height);
-			pQuadVertices[3].m_Pos = vec2(0.0f, (float)Viewport.height);
-			pQuadVertices[0].m_Tex = vec2(0.0f, 0.0f);
-			pQuadVertices[1].m_Tex = vec2(1.0f, 0.0f);
-			pQuadVertices[2].m_Tex = vec2(1.0f, 1.0f);
-			pQuadVertices[3].m_Tex = vec2(0.0f, 1.0f);
-			const uint8_t Alpha = (uint8_t)std::round(aSourceAlphas[Source] * 255.0f);
-			for(int VertexIndex = 0; VertexIndex < 4; ++VertexIndex)
-			{
-				pQuadVertices[VertexIndex].m_Color.r = 255;
-				pQuadVertices[VertexIndex].m_Color.g = 255;
-				pQuadVertices[VertexIndex].m_Color.b = 255;
-				pQuadVertices[VertexIndex].m_Color.a = Alpha;
-			}
-		}
-		const size_t UsedVertexCount = (size_t)SourceCount * 4;
-
-		VkBuffer VKBuffer;
-		SDeviceMemoryBlock VKBufferMem;
-		size_t BufferOff = 0;
-		if(!CreateStreamVertexBuffer(MAIN_THREAD_INDEX, VKBuffer, VKBufferMem, BufferOff, aVertices.data(), sizeof(CCommandBuffer::SVertex) * UsedVertexCount))
-			return false;
-		if(!FlushManualVertexBufferRange(VKBufferMem, BufferOff, sizeof(CCommandBuffer::SVertex) * UsedVertexCount))
-			return false;
-
-		std::array<VkBuffer, 1> aVertexBuffers = {VKBuffer};
-		std::array<VkDeviceSize, 1> aOffsets = {(VkDeviceSize)BufferOff};
-		vkCmdBindVertexBuffers(CommandBuffer, 0, 1, aVertexBuffers.data(), aOffsets.data());
-		vkCmdBindIndexBuffer(CommandBuffer, ExecBuffer.m_IndexBuffer, 0, VK_INDEX_TYPE_UINT32);
-
-		std::array<float, 4 * 2> aMatrix;
-		GetStateMatrix(State, aMatrix);
-		vkCmdPushConstants(CommandBuffer, PipeLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(SUniformGPos), aMatrix.data());
-		for(int Source = SourceCount - 1; Source >= 0; --Source)
-		{
-			vkCmdBindDescriptorSets(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, PipeLayout, 0, 1, &m_vFrameBlendImages[aSourceSlots[Source]].m_DescriptorSet.m_Descriptor, 0, nullptr);
-			vkCmdDrawIndexed(CommandBuffer, 6, 1, 0, Source * 4, 0);
-		}
-
-		if(UseSecondaryCommandBuffer)
-		{
-			if(vkEndCommandBuffer(CommandBuffer) != VK_SUCCESS)
-			{
-				SetError(EGfxErrorType::GFX_ERROR_TYPE_RENDER_RECORDING, "Frame blend command buffer cannot be ended anymore.");
-				return false;
-			}
-			vkCmdExecuteCommands(MainCommandBuffer, 1, &CommandBuffer);
-		}
-
-		return true;
-	}
-
 	[[nodiscard]] bool RenderVignetteBlur()
 	{
 		if(m_vVignetteBlurImages.empty())
@@ -7726,36 +7677,55 @@ public:
 		vkCmdBeginRenderPass(CommandBuffer, &RenderPassInfo, m_ThreadCount > 1 && !m_ForceInlineRecording ? VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS : VK_SUBPASS_CONTENTS_INLINE);
 	}
 
-	void CopyFrameToFrameBlendHistory(VkCommandBuffer &CommandBuffer)
+	void CaptureFrameGenerationSource(VkCommandBuffer &CommandBuffer)
 	{
-		if(m_vFrameBlendImages.empty())
-			return;
-
-		auto &FrameBlendImage = m_vFrameBlendImages[m_CurFrame % m_vFrameBlendImages.size()];
-		auto &SwapImage = m_vSwapChainImages[m_CurImageIndex];
-
-		FrameBlendImageBarrier(CommandBuffer, FrameBlendImage.m_Image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-		FrameBlendImageBarrier(CommandBuffer, SwapImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-
+		auto &Source = m_aFrameGenerationHistory[m_FrameGenerationCurrent];
+		const VkImage SwapImage = m_vSwapChainImages[m_CurImageIndex];
+		const auto OldLayout = Source.m_Initialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+		FrameBlendImageBarrier(CommandBuffer, Source.m_Image, OldLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		FrameBlendImageBarrier(CommandBuffer, SwapImage, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+		const auto Extent = m_VKSwapImgAndViewportExtent.m_SwapImageViewport;
 		VkImageCopy Region{};
-		Region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		Region.srcSubresource.mipLevel = 0;
-		Region.srcSubresource.baseArrayLayer = 0;
-		Region.srcSubresource.layerCount = 1;
-		Region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		Region.dstSubresource.mipLevel = 0;
-		Region.dstSubresource.baseArrayLayer = 0;
-		Region.dstSubresource.layerCount = 1;
-		Region.extent.width = m_VKSwapImgAndViewportExtent.m_SwapImageViewport.width;
-		Region.extent.height = m_VKSwapImgAndViewportExtent.m_SwapImageViewport.height;
-		Region.extent.depth = 1;
+		Region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+		Region.dstSubresource = Region.srcSubresource;
+		Region.extent = {Extent.width, Extent.height, 1};
+		vkCmdCopyImage(CommandBuffer, SwapImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Source.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &Region);
+		FrameBlendImageBarrier(CommandBuffer, Source.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		Source.m_Initialized = true;
+	}
 
-		vkCmdCopyImage(CommandBuffer, SwapImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, FrameBlendImage.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &Region);
+	void BeginFrameGenerationPass(VkCommandBuffer CommandBuffer, VkRenderPass Pass, VkFramebuffer Framebuffer, VkPipeline Pipeline, VkExtent2D Extent)
+	{
+		const VkRect2D Rect{{0, 0}, Extent};
+		VkRenderPassBeginInfo Info{};
+		Info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		Info.renderPass = Pass;
+		Info.framebuffer = Framebuffer;
+		Info.renderArea = Rect;
+		vkCmdBeginRenderPass(CommandBuffer, &Info, VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdBindPipeline(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, Pipeline);
+		const VkViewport Viewport{0.0f, 0.0f, (float)Extent.width, (float)Extent.height, 0.0f, 1.0f};
+		vkCmdSetViewport(CommandBuffer, 0, 1, &Viewport);
+		vkCmdSetScissor(CommandBuffer, 0, 1, &Rect);
+	}
 
-		FrameBlendImageBarrier(CommandBuffer, FrameBlendImage.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-		FrameBlendImageBarrier(CommandBuffer, SwapImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+	void RenderFrameGenerationMotion(VkCommandBuffer CommandBuffer)
+	{
+		BeginFrameGenerationPass(CommandBuffer, m_FrameGenerationMotionPass, m_FrameGenerationMotionFramebuffer, m_FrameGenerationMotionPipeline, m_FrameGenerationMotionExtent);
+		const std::array<VkDescriptorSet, 2> aSources = {m_aFrameGenerationHistory[m_FrameGenerationCurrent ^ 1].m_Descriptor, m_aFrameGenerationHistory[m_FrameGenerationCurrent].m_Descriptor};
+		vkCmdBindDescriptorSets(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_FrameGenerationLayout, 0, aSources.size(), aSources.data(), 0, nullptr);
+		vkCmdDraw(CommandBuffer, 3, 1, 0, 0);
+		vkCmdEndRenderPass(CommandBuffer);
+	}
 
-		FrameBlendImage.m_Valid = true;
+	void RenderFrameGenerationOutput(VkCommandBuffer CommandBuffer, float Phase)
+	{
+		BeginFrameGenerationPass(CommandBuffer, m_FrameGenerationOutputPass, m_vFrameGenerationFramebuffers[m_CurImageIndex], m_FrameGenerationOutputPipeline, m_VKSwapImgAndViewportExtent.m_SwapImageViewport);
+		const std::array<VkDescriptorSet, 3> aSources = {m_aFrameGenerationHistory[m_FrameGenerationCurrent ^ 1].m_Descriptor, m_aFrameGenerationHistory[m_FrameGenerationCurrent].m_Descriptor, m_FrameGenerationMotion.m_Descriptor};
+		vkCmdBindDescriptorSets(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_FrameGenerationLayout, 0, aSources.size(), aSources.data(), 0, nullptr);
+		vkCmdPushConstants(CommandBuffer, m_FrameGenerationLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(Phase), &Phase);
+		vkCmdDraw(CommandBuffer, 3, 1, 0, 0);
+		vkCmdEndRenderPass(CommandBuffer);
 	}
 
 	void PrepareVignetteBlur(VkCommandBuffer &CommandBuffer)
@@ -7771,7 +7741,8 @@ public:
 		{
 			if(!SrcIsSwapImage)
 				FrameBlendImageBarrier(CommandBuffer, SrcImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-			FrameBlendImageBarrier(CommandBuffer, BlurImage.m_Image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+			const auto OldLayout = BlurImage.m_Initialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+			FrameBlendImageBarrier(CommandBuffer, BlurImage.m_Image, OldLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
 			VkImageBlit BlitRegion{};
 			BlitRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -7790,6 +7761,7 @@ public:
 			if(!SrcIsSwapImage)
 				FrameBlendImageBarrier(CommandBuffer, SrcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 			FrameBlendImageBarrier(CommandBuffer, BlurImage.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			BlurImage.m_Initialized = true;
 
 			SrcImage = BlurImage.m_Image;
 			SrcExtent = BlurImage.m_Extent;
@@ -7823,16 +7795,16 @@ public:
 
 	[[nodiscard]] bool Cmd_ReadPixel(const CCommandBuffer::SCommand_TrySwapAndReadPixel *pCommand)
 	{
-		if(!*pCommand->m_pSwapped && !NextFrame())
+		const SFrameReadback Request{pCommand->m_Position};
+		if(!*pCommand->m_pSwapped && !NextFrame({}, &Request))
 			return false;
 		*pCommand->m_pSwapped = true;
 
-		uint32_t Width;
-		uint32_t Height;
-		CImageInfo::EImageFormat Format;
-		if(GetPresentedImageDataImpl(Width, Height, Format, m_vReadPixelHelper, false, pCommand->m_Position))
+		const ivec2 Offset = pCommand->m_Position - m_ReadbackOrigin;
+		if(m_HasFrameReadback && Offset.x >= 0 && Offset.y >= 0 && (uint32_t)Offset.x < m_ReadbackExtent.width && (uint32_t)Offset.y < m_ReadbackExtent.height)
 		{
-			*pCommand->m_pColor = ColorRGBA(m_vReadPixelHelper[0] / 255.0f, m_vReadPixelHelper[1] / 255.0f, m_vReadPixelHelper[2] / 255.0f, 1.0f);
+			const auto *pPixel = static_cast<const uint8_t *>(m_pReadbackData) + ((size_t)Offset.y * m_ReadbackExtent.width + Offset.x) * 4;
+			*pCommand->m_pColor = ColorRGBA(pPixel[m_ReadbackIsBgra ? 2 : 0] / 255.0f, pPixel[1] / 255.0f, pPixel[m_ReadbackIsBgra ? 0 : 2] / 255.0f, 1.0f);
 		}
 		else
 		{
@@ -7844,21 +7816,18 @@ public:
 
 	[[nodiscard]] bool Cmd_Screenshot(const CCommandBuffer::SCommand_TrySwapAndScreenshot *pCommand)
 	{
-		if(!*pCommand->m_pSwapped && !NextFrame())
+		const SFrameReadback Request;
+		if(!*pCommand->m_pSwapped && !NextFrame({}, &Request))
 			return false;
 		*pCommand->m_pSwapped = true;
 
-		uint32_t Width;
-		uint32_t Height;
-		CImageInfo::EImageFormat Format;
-
-		if(GetPresentedImageDataImpl(Width, Height, Format, m_vScreenshotHelper, true, {}))
+		if(m_HasFrameReadback)
 		{
-			pCommand->m_pImage->m_Width = (int)Width;
-			pCommand->m_pImage->m_Height = (int)Height;
-			pCommand->m_pImage->m_Format = Format;
+			pCommand->m_pImage->m_Width = (int)m_ReadbackExtent.width;
+			pCommand->m_pImage->m_Height = (int)m_ReadbackExtent.height;
+			pCommand->m_pImage->m_Format = CImageInfo::FORMAT_RGBA;
 			pCommand->m_pImage->Allocate();
-			mem_copy(pCommand->m_pImage->m_pData, m_vScreenshotHelper.data(), pCommand->m_pImage->DataSize());
+			CopyFrameReadback(pCommand->m_pImage->m_pData, true);
 		}
 		else
 		{
@@ -7961,7 +7930,7 @@ public:
 
 	[[nodiscard]] bool Cmd_Swap(const CCommandBuffer::SCommand_Swap *pCommand)
 	{
-		return NextFrame();
+		return NextFrame({pCommand->m_FrameGenerationMultiplier, pCommand->m_BaseRenderRate, pCommand->m_OutputCount, pCommand->m_DisplayRate});
 	}
 
 	[[nodiscard]] bool Cmd_CreateBufferObject(const CCommandBuffer::SCommand_CreateBufferObject *pCommand)

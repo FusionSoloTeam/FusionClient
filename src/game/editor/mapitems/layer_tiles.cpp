@@ -185,10 +185,13 @@ void CLayerTiles::Render(const CEditorMap *pRenderMap)
 	pRenderMap->m_EnvelopeEvaluator.EnvelopeEval(m_ColorEnvOffset, m_ColorEnv, ColorEnv, 4);
 	const ColorRGBA Color = ColorRGBA(m_Color.r / 255.0f, m_Color.g / 255.0f, m_Color.b / 255.0f, m_Color.a / 255.0f).Multiply(ColorEnv);
 
-	Graphics()->BlendNone();
-	Editor()->RenderMap()->RenderTilemap(m_pTiles, m_Width, m_Height, 32.0f, Color, LAYERRENDERFLAG_OPAQUE);
+	if(TileLayerHasOpaquePass(Color.a))
+	{
+		Graphics()->BlendNone();
+		Editor()->RenderMap()->RenderTilemap(m_pTiles, m_Width, m_Height, 32.0f, Color, LAYERRENDERFLAG_OPAQUE, true);
+	}
 	Graphics()->BlendNormal();
-	Editor()->RenderMap()->RenderTilemap(m_pTiles, m_Width, m_Height, 32.0f, Color, LAYERRENDERFLAG_TRANSPARENT);
+	Editor()->RenderMap()->RenderTilemap(m_pTiles, m_Width, m_Height, 32.0f, Color, LAYERRENDERFLAG_TRANSPARENT, true);
 
 	// Render DDRace Layers
 	if(m_RenderOverlays)

@@ -16,6 +16,10 @@
 #include <engine/shared/config.h>
 #include <engine/shared/snapshot.h>
 
+#include <map>
+#include <string>
+#include <utility>
+
 #include <generated/protocol7.h>
 #include <generated/protocolglue.h>
 
@@ -82,7 +86,11 @@
 #include "components/tclient/mumble.h"
 #include "components/tclient/lyrics.h"
 #include "components/tclient/outlines.h"
+#include "components/tclient/platform_render.h"
 #include "components/tclient/above_below_player.h"
+#include "components/tclient/black_frost.h"
+#include "components/tclient/casino.h"
+#include "components/tclient/celestial_aura.h"
 #include "components/tclient/pet.h"
 #include "components/tclient/player_indicator.h"
 #include "components/tclient/practice_tags.h"
@@ -100,12 +108,14 @@
 #include "components/tclient/heartlist.h"
 #include "components/tclient/inputs.h"
 #include "components/tclient/weapon_vfx.h"
+#include "components/tclient/weapon_idle.h"
 #include "components/tclient/fx/components.h"
 #include "components/tclient/notify_on_move.h"
 #include "components/tclient/afk_aura.h"
 #include "components/tclient/animated_assets.h"
 #include "components/tclient/hover_notification.h"
 #include "components/tclient/fast_practice.h"
+#include "components/tclient/gif_chat.h"
 #include "components/tooltips.h"
 #include "components/touch_controls.h"
 #include "components/voting.h"
@@ -261,13 +271,18 @@ public:
 	CAfkAura m_AFKAura;
 	CTranslate m_Translate;
 	CPet m_Pet;
+	CCelestialAura m_CelestialAura;
+	CBlackFrost m_BlackFrost;
+	CCasino m_Casino;
 	CAboveBelowPlayer m_AboveBelowPlayer;
 	CSwapTimer m_SwapTimer;
 	CChatBinds m_ChatBinds;
+	CGifChat m_GifChat;
 	CDeathTracker m_DeathTracker;
 	CFastPractice m_FastPractice;
 	CBcGradient m_BcGradient;
 	CPlayerIndicator m_PlayerIndicator;
+	CPlatformRender m_PlatformRender;
 	COutlines m_Outlines;
 	CLyrics m_Lyrics;
 	CMumble m_Mumble;
@@ -286,6 +301,7 @@ public:
 	CTileUnderCursor m_TileUnderCursor;
 
 	CWeaponVfx m_WeaponVfx;
+	CWeaponIdle m_WeaponIdle;
 	CFgfWeather m_FgfWeather;
 	CLightning m_Lightning;
 	CHookWind m_HookWind;
@@ -610,8 +626,8 @@ public:
 
 		// shitty fusion input <<3
 		CCharacterCore m_PrevRegularPredicted;
-		float m_FusionLeadX = 0.0f;
-		float m_FusionLeadY = 0.0f;
+		vec2 m_FusionShownPos = vec2(0.0f, 0.0f);
+		bool m_FusionPosInit = false;
 
 		bool m_LagInit = false;
 		vec2 m_LagShownPos = vec2(0.0f, 0.0f);
@@ -888,6 +904,7 @@ public:
 	int SwitchStateTeam() const;
 	bool IsLocalCharSuper() const;
 	bool CanDisplayWarning() const override;
+	bool AllowsFrameGeneration() const override;
 
 	IMap *Map() override { return m_pMap.get(); }
 	const IMap *Map() const override { return m_pMap.get(); }
@@ -999,8 +1016,10 @@ public:
 	SClientGameSkin m_DummyGameSkin;
 	bool m_DummyGameSkinLoaded = false;
 
+	std::map<std::string, std::pair<SClientGameSkin, bool>> m_PlayerGameSkins;
+
 	void LoadGameSkinInto(const char *pPath, bool AsDir, SClientGameSkin &Skin, bool &SkinLoaded, const char *pAnimatedName);
-	const SClientGameSkin &GameSkinForClient(int ClientId) const;
+	SClientGameSkin &GameSkinForClient(int ClientId);
 
 	struct SClientParticlesSkin
 	{

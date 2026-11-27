@@ -121,6 +121,10 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 	}
 
 	Left.HSplitTop(20.0f, &Button, &Left);
+	if(DoButton_CheckBox(&g_Config.m_FcTeleLinks, Localize("Connect tele tiles with lines"), g_Config.m_FcTeleLinks, &Button))
+		g_Config.m_FcTeleLinks ^= 1;
+
+	Left.HSplitTop(20.0f, &Button, &Left);
 	Button.VSplitMid(&LeftLeft, &Button);
 
 	if(DoButton_CheckBox(&g_Config.m_ClShowOthers, Localize("Show others"), g_Config.m_ClShowOthers == SHOW_OTHERS_ON, &LeftLeft))

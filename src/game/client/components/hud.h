@@ -146,6 +146,7 @@ public:
 	CUIRect GetFpsPingHudEditorRect() const;
 	CUIRect GetFrozenTextHudEditorRect() const;
 	CUIRect GetFrozenHudEditorRect() const;
+	CUIRect GetLastNotifyHudEditorRect() const;
 	void RenderKeystrokes();
 	CUIRect GetKeystrokesHudEditorRect() const;
 	void RenderFinishPrediction();
@@ -198,8 +199,12 @@ private:
 	float m_FinishPredictionWindowDistance = -1.0f;
 	float m_FinishPredictionMeasuredSpeed = -1.0f;
 	float m_FinishPredictionLastRemaining = -1.0f;
+	char m_FinishPredictionText[96] = "";
+	bool m_HasFinishPredictionText = false;
 
 	float m_CrosshairAngle = 0.0f;
+	float m_LastCrosshairMoveAngle = 0.0f;
+	bool m_HasCrosshairMoveAngle = false;
 
 	int m_aAmmoOffset[NUM_WEAPONS];
 	int m_HealthOffset;

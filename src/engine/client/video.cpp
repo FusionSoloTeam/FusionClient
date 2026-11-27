@@ -21,6 +21,7 @@ extern "C" {
 };
 
 #include <chrono>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -262,6 +263,8 @@ bool CVideo::Start()
 			const int *pMatrixCoefficients = sws_getCoefficients(COLOR_SPACE);
 			sws_setColorspaceDetails(m_VideoStream.m_vpSwsContexts[i], pMatrixCoefficients, 0, pMatrixCoefficients, 0, 0, 1 << 16, 1 << 16);
 		}
+		m_vVideoBuffers[i].m_Width = m_VideoStream.m_pCodecContext->width;
+		m_vVideoBuffers[i].m_Height = m_VideoStream.m_pCodecContext->height;
 	}
 
 	/* Write the stream header, if any. */
@@ -359,8 +362,6 @@ void CVideo::NextVideoFrameThread()
 		m_VideoFrameIndex += 1;
 		if(m_VideoFrameIndex >= 2)
 		{
-			m_ProcessingVideoFrame.fetch_add(1);
-
 			size_t NextVideoThreadIndex = m_CurVideoThreadIndex + 1;
 			if(NextVideoThreadIndex == m_VideoThreads)
 				NextVideoThreadIndex = 0;
@@ -386,7 +387,9 @@ void CVideo::NextVideoFrameThread()
 					pVideoThread->m_Cond.wait(Lock, [&pVideoThread]() -> bool { return !pVideoThread->m_HasVideoFrame; });
 				}
 
-				UpdateVideoBufferFromGraphics(m_CurVideoThreadIndex);
+				if(!UpdateVideoBufferFromGraphics(m_CurVideoThreadIndex))
+					return;
+				m_ProcessingVideoFrame.fetch_add(1);
 
 				pVideoThread->m_HasVideoFrame = true;
 				{
@@ -624,20 +627,41 @@ void CVideo::RunVideoThread(size_t ParentThreadIndex, size_t ThreadIndex)
 
 void CVideo::FillVideoFrame(size_t ThreadIndex)
 {
-	const int InLineSize = 4 * m_VideoStream.m_pCodecContext->width;
-	auto *pRGBAData = m_vVideoBuffers[ThreadIndex].m_vBuffer.data();
+	const auto &VideoBuffer = m_vVideoBuffers[ThreadIndex];
+	const int InLineSize = 4 * VideoBuffer.m_Width;
+	const auto *pRGBAData = VideoBuffer.m_vBuffer.data();
 	sws_scale(m_VideoStream.m_vpSwsContexts[ThreadIndex], (const uint8_t *const *)&pRGBAData, &InLineSize, 0,
-		m_VideoStream.m_pCodecContext->height, m_VideoStream.m_vpFrames[ThreadIndex]->data, m_VideoStream.m_vpFrames[ThreadIndex]->linesize);
+		VideoBuffer.m_Height, m_VideoStream.m_vpFrames[ThreadIndex]->data, m_VideoStream.m_vpFrames[ThreadIndex]->linesize);
 }
 
-void CVideo::UpdateVideoBufferFromGraphics(size_t ThreadIndex)
+bool CVideo::UpdateVideoBufferFromGraphics(size_t ThreadIndex)
 {
 	uint32_t Width;
 	uint32_t Height;
 	CImageInfo::EImageFormat Format;
-	m_pGraphics->GetReadPresentedImageDataFuncUnsafe()(Width, Height, Format, m_vVideoBuffers[ThreadIndex].m_vBuffer);
-	dbg_assert((int)Width == m_Width && (int)Height == m_Height, "Size mismatch between video (%d x %d) and graphics (%d x %d)", m_Width, m_Height, Width, Height);
-	dbg_assert(Format == CImageInfo::FORMAT_RGBA, "Unexpected image format %d", (int)Format);
+	auto &VideoBuffer = m_vVideoBuffers[ThreadIndex];
+	if(!m_pGraphics->GetReadPresentedImageDataFuncUnsafe()(Width, Height, Format, VideoBuffer.m_vBuffer))
+		return false;
+	if(Format != CImageInfo::FORMAT_RGBA || Width == 0 || Height == 0 ||
+		Width > (uint32_t)std::numeric_limits<int>::max() / 4 || Height > (uint32_t)std::numeric_limits<int>::max() ||
+		VideoBuffer.m_vBuffer.size() / 4 / Width < Height)
+		return false;
+
+	const int SourceHeight = (int)Height == m_Height ? m_VideoStream.m_pCodecContext->height : (int)Height;
+	if(VideoBuffer.m_Width != (int)Width || VideoBuffer.m_Height != SourceHeight || !m_VideoStream.m_vpSwsContexts[ThreadIndex])
+	{
+		auto *&pContext = m_VideoStream.m_vpSwsContexts[ThreadIndex];
+		pContext = sws_getCachedContext(pContext, Width, SourceHeight, AV_PIX_FMT_RGBA,
+			m_VideoStream.m_pCodecContext->width, m_VideoStream.m_pCodecContext->height, AV_PIX_FMT_YUV420P,
+			SWS_BILINEAR | SWS_FULL_CHR_H_INT | SWS_FULL_CHR_H_INP | SWS_ACCURATE_RND | SWS_BITEXACT, nullptr, nullptr, nullptr);
+		if(!pContext)
+			return false;
+		const int *pMatrixCoefficients = sws_getCoefficients(COLOR_SPACE);
+		sws_setColorspaceDetails(pContext, pMatrixCoefficients, 0, pMatrixCoefficients, 0, 0, 1 << 16, 1 << 16);
+		VideoBuffer.m_Width = (int)Width;
+		VideoBuffer.m_Height = SourceHeight;
+	}
+	return true;
 }
 
 AVFrame *CVideo::AllocPicture(enum AVPixelFormat PixFmt, int Width, int Height)

@@ -4,6 +4,7 @@
 #include "client.h"
 
 #include "demoedit.h"
+#include "frame_generation.h"
 #include "friends.h"
 #include "serverbrowser.h"
 
@@ -1018,7 +1019,7 @@ void CClient::RenderDebug()
 	str_format(aBuffer, sizeof(aBuffer), "Prediction time: %d ms", GetPredictionTime());
 	Graphics()->QuadsText(2, 2 + FontSize, FontSize, aBuffer);
 
-	str_format(aBuffer, sizeof(aBuffer), "FPS: %3d", round_to_int(1.0f / m_FrameTimeAverage));
+	str_format(aBuffer, sizeof(aBuffer), "SRC FPS: %3d", round_to_int(1.0f / m_FrameTimeAverage));
 	Graphics()->QuadsText(20.0f * FontSize, 2, FontSize, aBuffer);
 
 	str_format(aBuffer, sizeof(aBuffer), "Frametime: %4d us", round_to_int(m_FrameTimeAverage * 1000000.0f));
@@ -3470,6 +3471,12 @@ void CClient::Run()
 
 	int64_t NextUpdateTime = time_get();
 	int64_t NextRenderTime = time_get();
+	int LastFrameGenerationMultiplier = 1;
+	int64_t NextDisplayRefreshRateCheck = 0;
+	int DisplayRefreshRate = 0;
+	CFrameGenerationRateGate FrameGenerationRateGate;
+	CFrameGenerationCadence FrameGenerationCadence;
+	CFrameGenerationSourceRate FrameGenerationSourceRate;
 
 	while(true)
 	{
@@ -3550,6 +3557,7 @@ void CClient::Run()
 
 		// render
 		{
+			const bool WasEditorActive = m_EditorActive;
 			if(g_Config.m_ClEditor)
 			{
 				if(!m_EditorActive)
@@ -3563,6 +3571,14 @@ void CClient::Run()
 			else if(m_EditorActive)
 			{
 				m_EditorActive = false;
+			}
+			if(WasEditorActive != m_EditorActive)
+			{
+				// fps estimates must not cross the editor/game boundary
+				FrameGenerationRateGate.Reset();
+				FrameGenerationCadence.Reset();
+				FrameGenerationSourceRate = {};
+				LastFrameGenerationMultiplier = 1;
 			}
 
 			Update();
@@ -3590,6 +3606,49 @@ void CClient::Run()
 			int GfxRefreshRate = g_Config.m_GfxRefreshRate;
 			if(RefreshRate && GfxRefreshRate >= RefreshRate)
 				GfxRefreshRate = 0;
+
+			const auto CanGenerateFrames = [this]() {
+				if(g_Config.m_GfxFrameGeneration < 2 || !m_pGraphics->SupportsFrameGeneration() ||
+					!m_pGraphics->WindowActive())
+					return false;
+#if defined(CONF_VIDEORECORDER)
+				if(IVideo::Current())
+					return false;
+#endif
+				const bool GameActive = State() == IClient::STATE_ONLINE || (State() == IClient::STATE_DEMOPLAYBACK && !m_DemoPlayer.BaseInfo()->m_Paused);
+				return FrameGenerationAllowedInScene(m_EditorActive, GameClient()->AllowsFrameGeneration(), GameActive);
+			};
+			SFrameGenerationTiming FrameGeneration;
+			if(CanGenerateFrames())
+			{
+				if(Now >= NextDisplayRefreshRateCheck)
+				{
+					CVideoMode Mode{};
+					m_pGraphics->GetCurrentVideoMode(Mode, g_Config.m_GfxScreen);
+					DisplayRefreshRate = Mode.m_RefreshRate;
+					NextDisplayRefreshRateCheck = Now + time_freq();
+				}
+				const bool SourceHasRoom = FrameGenerationRateGate.Allow(DisplayRefreshRate, m_FrameTimeAverage, time_get_nanoseconds());
+				FrameGeneration = FrameGenerationTiming(g_Config.m_GfxFrameGeneration, DisplayRefreshRate, g_Config.m_GfxRefreshRate, RefreshRate, g_Config.m_GfxVsync);
+				const int SourceRate = FrameGenerationSourceRate.Update(FrameGeneration.m_BaseRate, m_FrameTimeAverage, LastFrameGenerationMultiplier > 1, time_get_nanoseconds());
+				if(SourceHasRoom && FrameGenerationAllowsSourceRate(m_EditorActive, FrameGenerationSourceRate.HasRenderHeadroom()))
+				{
+					FrameGeneration.m_BaseRate = SourceRate;
+				}
+				else
+				{
+					FrameGeneration.m_Multiplier = 1;
+					if(!FrameGenerationAllowsSourceRate(m_EditorActive, FrameGenerationSourceRate.HasRenderHeadroom()))
+						FrameGenerationRateGate.Reset();
+				}
+			}
+			else
+				FrameGenerationRateGate.Reset();
+			if(FrameGeneration.m_Multiplier != LastFrameGenerationMultiplier)
+			{
+				NextRenderTime = Now;
+				LastFrameGenerationMultiplier = FrameGeneration.m_Multiplier;
+			}
 
 #if defined(CONF_VIDEORECORDER)
 			// keep rendering synced
@@ -3629,7 +3688,16 @@ void CClient::Run()
 				m_LastRenderTime = Now;
 
 				Render();
-				m_pGraphics->Swap();
+				if(FrameGeneration.m_Multiplier > 1 && CanGenerateFrames())
+				{
+					const int OutputCount = FrameGenerationCadence.NextOutputCount(FrameGeneration.m_Multiplier, DisplayRefreshRate, FrameGeneration.m_BaseRate);
+					m_pGraphics->Swap(FrameGeneration.m_Multiplier, FrameGeneration.m_BaseRate, OutputCount, g_Config.m_GfxVsync ? DisplayRefreshRate : 0);
+				}
+				else
+				{
+					FrameGenerationCadence.Reset();
+					m_pGraphics->Swap();
+				}
 			}
 
 			// Wake up for the next update or frame, whichever comes first. While playing, also wake up for
@@ -3638,7 +3706,11 @@ void CClient::Run()
 			if(RefreshRate)
 				WakeTime = NextUpdateTime;
 			if(IsRenderActive && GfxRefreshRate)
-				WakeTime = std::min(WakeTime, NextRenderTime);
+			{
+				// do not sleep through an expired deadline while graphics is busy
+				const bool WaitingForGraphics = AsyncRenderOld && !m_pGraphics->IsIdle() && NextRenderTime <= Now;
+				WakeTime = std::min(WakeTime, WaitingForGraphics ? Now + time_freq() / 1000 : NextRenderTime);
+			}
 			if(State() == IClient::STATE_ONLINE && m_aPredTick[g_Config.m_ClDummy] > 0 && !Inactive && WakeTime != std::numeric_limits<int64_t>::max())
 				WakeTime = std::min(WakeTime, Now + (m_aPredTick[g_Config.m_ClDummy] * time_freq() / GameTickSpeed() - m_PredictedTime.Get(Now)));
 		}

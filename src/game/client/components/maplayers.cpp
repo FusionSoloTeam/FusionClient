@@ -67,6 +67,10 @@ void CMapLayers::OnRender()
 	if(m_OnlineOnly && Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
 		return;
 
+	// a custom background map replaces the native layers, so they are skipped
+	if(m_Type == ERenderType::RENDERTYPE_BACKGROUND && GameClient()->m_Background.ReplacesMapBackground())
+		return;
+
 	// dynamic parameters for ingame rendering
 	m_Params.m_EntityOverlayVal = m_Type == RENDERTYPE_FULL_DESIGN ? 0 : g_Config.m_ClOverlayEntities;
 	m_Params.m_Center = GetCurCamera()->m_Center;

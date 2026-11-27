@@ -17,9 +17,12 @@ enum
 	INPUT_MODE_F,
 	INPUT_MODE_CLOUD,
 	INPUT_MODE_FUSION = 7,
+	INPUT_MODE_ASCEND = 8,
 };
 
 	float EffectiveOffsetTicks();
+
+	void SetAscendSpeed(float Speed);
 
 	int PredictionTicks(float OffsetTicks);
 	int PredictionTicksOthers(float OffsetTicks);
@@ -36,6 +39,7 @@ enum
 	bool DeltaOthers();
 	bool FOthers();
 	bool CloudOthers();
+	bool AscendOthers();
 	bool AnyOthers();
 	bool ImmediateOthers();
 

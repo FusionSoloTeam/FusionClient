@@ -415,6 +415,23 @@ Use team colors for name plates
 V-Sync
 == V-Sync
 
+Frame Generation
+== Генерация кадров
+
+[Frame Generation]
+Off
+== Выкл.
+
+[Frame Generation]
+Unavailable
+== Недоступно
+
+Requires a compatible Vulkan renderer.
+== Требуется совместимый рендерер Vulkan.
+
+Adds intermediate frames. Requires a known monitor refresh rate. In game, set an FPS limit below it; generation pauses if the limit cannot be reached. In the editor, generation also works without a limit but can reduce source FPS. FPS counts source frames only.
+== Добавляет промежуточные кадры. Требуется известная герцовка монитора. В игре установите лимит FPS ниже неё: если лимит не достигается, генерация приостанавливается. В редакторе генерация работает и без лимита, но может снижать исходный FPS. Счётчик показывает только исходные кадры.
+
 Version
 == Версия
 
