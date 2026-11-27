@@ -247,7 +247,7 @@ jobs:
           pacman -Syu --noconfirm --needed --refresh \
             base-devel cmake ninja pkgconf rust python3 \
             curl openssl zlib tar gzip \
-            ffmpeg libcurl freetype2 glew libminiupnpc libnotify libogg opus opusfile libpng \
+            ffmpeg freetype2 glew miniupnpc libnotify libogg opus opusfile libpng \
             sdl2 sqlite libwebsockets x264 wavpack
 
       - name: Configure
